@@ -1,0 +1,447 @@
+/* ============================================================
+   ACCOUNT.CSS
+   Styles for Account Settings & Profile page (account.php).
+   Fully aligned to Dashboard layout system.
+============================================================ */
+
+.account-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 992px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ════════════════════════════
+   PROFILE HERO CARD (Left Column)
+════════════════════════════ */
+.profile-hero-card {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  border: 1px solid #e2e8f0;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.avatar-large {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #1a3a8c 0%, #2563eb 100%);
+  color: #fff;
+  font-size: 2.5rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(37,99,235,0.25);
+  margin-bottom: 16px;
+}
+
+.profile-user-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0 0 4px;
+}
+
+.profile-user-role {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #2563eb;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  padding: 4px 12px;
+  border-radius: 14px;
+  margin-bottom: 20px;
+}
+
+.profile-details-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 16px;
+}
+
+.profile-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: #475569;
+  text-align: left;
+}
+
+.profile-detail-item i {
+  color: #2563eb;
+  font-size: 0.95rem;
+  width: 16px;
+  text-align: center;
+}
+
+.btn-cct-download {
+  width: 100%;
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(22,163,74,0.25);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.btn-cct-download:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(22,163,74,0.35);
+}
+
+/* ════════════════════════════
+   PROFILE FORMS COLUMN (Right)
+════════════════════════════ */
+.profile-forms-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.settings-card {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+}
+
+.settings-card-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f8fafc;
+}
+
+.settings-card-header i {
+  font-size: 1.1rem;
+}
+
+.settings-card-header h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0;
+}
+
+.settings-card-body {
+  padding: 24px;
+}
+
+.settings-card-footer {
+  padding: 14px 24px;
+  border-top: 1px solid #f1f5f9;
+  background: #f8fafc;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Form inputs & grid */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 20px;
+}
+
+@media (max-width: 600px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field.full {
+  grid-column: 1 / -1;
+}
+
+.form-field label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.form-field label span {
+  color: #ef4444;
+}
+
+.form-field input,
+.form-field select {
+  height: 42px;
+  border: 1.5px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 0.88rem;
+  outline: none;
+  background: #fff;
+  color: #1a1a2e;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.form-field input:focus,
+.form-field select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+}
+
+.form-field input.input-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.12);
+}
+
+.password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-wrap input {
+  width: 100%;
+  padding-right: 42px;
+}
+
+.toggle-pw {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 4px;
+}
+
+.toggle-pw:hover {
+  color: #2563eb;
+}
+
+.field-error {
+  font-size: 0.72rem;
+  color: #ef4444;
+  display: none;
+}
+
+.form-field.has-error .field-error {
+  display: block;
+}
+
+/* Save Buttons */
+.btn-save {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(37,99,235,0.2);
+  transition: background 0.15s, transform 0.15s;
+}
+
+.btn-save:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+/* Danger Zone */
+.danger-zone {
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.danger-info h3 {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin: 0 0 2px;
+}
+
+.danger-info p {
+  font-size: 0.8rem;
+  color: #64748b;
+  margin: 0;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  background: #1e293b;
+  color: #fff;
+  border-radius: 10px;
+  padding: 14px 20px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2000;
+  opacity: 0;
+  transform: translateY(15px);
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.toast.success { border-left: 4px solid #16a34a; }
+.toast.error   { border-left: 4px solid #ef4444; }
+
+.toast-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.toast-msg {
+  font-size: 0.88rem;
+  color: #f8fafc;
+}
+
+/* QR Modal */
+.qr-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10,12,30,0.65);
+  z-index: 1500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.qr-modal-overlay.active {
+  display: flex;
+}
+
+.qr-modal-card {
+  background: #fff;
+  border-radius: 20px;
+  width: 100%;
+  max-width: 380px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.3);
+  text-align: center;
+}
+
+.qr-modal-header {
+  padding: 16px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.qr-modal-header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  color: #1a1a2e;
+}
+
+.qr-modal-body {
+  padding: 24px;
+}
+
+.qr-code-frame {
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 16px;
+  border: 2px solid #2563eb;
+  border-radius: 12px;
+  padding: 8px;
+  background: #fff;
+  position: relative;
+}
+
+.qr-code-frame img {
+  width: 100%;
+  height: 100%;
+}
+
+.qr-student-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
+.qr-student-id {
+  font-size: 0.82rem;
+  color: #2563eb;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.qr-subtext {
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-top: 12px;
+}
