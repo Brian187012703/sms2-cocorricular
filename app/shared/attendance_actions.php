@@ -4,7 +4,8 @@
 //  Actions: list_mine, list_event, log_qr, log_manual, analytics
 // ============================================================
 header('Content-Type: application/json');
-session_start();
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
 
@@ -20,26 +21,9 @@ function aRespond(bool $ok, string $msg, array $extra = []): void {
 
 switch ($action) {
 
-    // ── LIST my attendance history ────────────────────────────
-    case 'list_mine': {
-        $stmt = $conn->prepare(
-            "SELECT al.id, al.check_in, al.method,
-                    e.title AS event_name, e.event_date, e.venue
-             FROM attendance_logs al
-             JOIN events e ON e.id = al.event_id
-             WHERE al.user_id = ?
-             ORDER BY al.check_in DESC"
-        );
-        $stmt->bind_param('i', $user_id);
-        $stmt->execute();
-        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-        $stmt->close();
-        aRespond(true, 'OK', ['logs' => $rows]);
-    }
-
     // ── LIST all attendees for an event (Adviser / above) ────
     case 'list_event': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             aRespond(false, 'Not authorized.');
         $event_id = (int)($_GET['event_id'] ?? 0);
         if ($event_id <= 0) aRespond(false, 'Invalid event ID.');
@@ -58,58 +42,59 @@ switch ($action) {
         $stmt->close();
         aRespond(true, 'OK', ['attendees' => $rows]);
     }
-
-    // ── LOG via QR scan (Adviser / OSA / Admin) ──────────────
+    // -- LOG via QR scan -------------------------------------------------------
+    // Student: scan event QR (BCP-EVENT-{id}) to self-register attendance
+    // Staff:   scan student QR (BCP-STUDENT-{id}) to log attendance
     case 'log_qr': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
-            aRespond(false, 'Scanner access not permitted for your role.');
-
         $qr_data  = trim($_POST['qr_data']  ?? '');
         $event_id = (int)($_POST['event_id'] ?? 0);
+        if (!$qr_data) aRespond(false, 'QR data is required.');
 
-        if (!$qr_data || $event_id <= 0) aRespond(false, 'QR data and event ID are required.');
-
-        // Parse BCP-STUDENT-{id} format
-        if (preg_match('/BCP-STUDENT-(\d+)/', $qr_data, $m)) {
-            $target_user_id = (int)$m[1];
-        } else {
-            aRespond(false, 'Unrecognized QR format. Expected: BCP-STUDENT-{id}');
+        // Student scanning an event QR code (BCP-EVENT-{id})
+        if ($user_role === 'student' && preg_match('/BCP-EVENT-(\d+)/', $qr_data, $m)) {
+            $target_event_id = (int)$m[1];
+            $ev = $conn->query("SELECT id, title FROM events WHERE id=$target_event_id AND status IN ('Approved','Upcoming')")->fetch_assoc();
+            if (!$ev) aRespond(false, 'Event QR is invalid or the event is not active.');
+            $dup = $conn->query("SELECT id FROM attendance_logs WHERE event_id=$target_event_id AND user_id=$user_id");
+            if ($dup && $dup->num_rows > 0)
+                aRespond(false, "You are already checked in to \"{$ev['title']}\".", ['already_logged' => true]);
+            $method = 'QR_SELF';
+            $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, method, logged_by) VALUES (?, ?, ?, ?)");
+            $stmt->bind_param('iisi', $target_event_id, $user_id, $method, $user_id);
+            if (!$stmt->execute()) aRespond(false, 'Failed to register: ' . $stmt->error);
+            $stmt->close();
+            aRespond(true, "Checked in to \"{$ev['title']}\" successfully!");
         }
 
-        // Verify user exists
+        // Staff scanning a student QR code (BCP-STUDENT-{id})
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
+            aRespond(false, 'Scanner access not permitted for your role.');
+        if ($event_id <= 0) aRespond(false, 'Please select an event first.');
+
+        if (preg_match('/BCP-STUDENT-(\d+)/', $qr_data, $m)) {
+            $target_user_id = (int)$m[1];
+        } else { aRespond(false, 'Unrecognized QR format. Expected: BCP-STUDENT-{id}'); }
+
         $u = $conn->query("SELECT first_name, last_name FROM users WHERE id = $target_user_id")->fetch_assoc();
         if (!$u) aRespond(false, 'Student not found in system.');
-
-        // Check for duplicate
         $dup = $conn->query("SELECT id FROM attendance_logs WHERE event_id=$event_id AND user_id=$target_user_id");
         if ($dup && $dup->num_rows > 0)
             aRespond(false, "{$u['first_name']} {$u['last_name']} is already checked in.", ['already_logged' => true]);
 
         $method = 'QR';
-        $stmt = $conn->prepare(
-            "INSERT INTO attendance_logs (event_id, user_id, method, logged_by) VALUES (?, ?, ?, ?)"
-        );
+        $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, method, logged_by) VALUES (?, ?, ?, ?)");
         $stmt->bind_param('iisi', $event_id, $target_user_id, $method, $user_id);
         if (!$stmt->execute()) aRespond(false, 'Failed to log attendance: ' . $stmt->error);
         $stmt->close();
-
-        // Notify the student
         $ev = $conn->query("SELECT title FROM events WHERE id = $event_id")->fetch_assoc();
-        if ($ev) {
-            push_notification($conn, $target_user_id, 'Attendance Logged',
-                "Your attendance for \"{$ev['title']}\" was recorded via QR scan.", 'info');
-        }
-        log_audit($conn, $user_id, 'attendance_qr', 'attendance_logs', $target_user_id,
-            "Checked in user #$target_user_id for event #$event_id via QR");
-
-        aRespond(true, "{$u['first_name']} {$u['last_name']} checked in successfully!", [
-            'student_name' => $u['first_name'] . ' ' . $u['last_name']
-        ]);
+        if ($ev) push_notification($conn, $target_user_id, 'Attendance Logged', "Your attendance for \"{$ev['title']}\" was recorded via QR scan.", 'info');
+        log_audit($conn, $user_id, 'attendance_qr', 'attendance_logs', $target_user_id, "Checked in user #$target_user_id for event #$event_id via QR");
+        aRespond(true, "{$u['first_name']} {$u['last_name']} checked in successfully!", ['student_name' => $u['first_name'] . ' ' . $u['last_name']]);
     }
 
     // ── LOG manual override (OSA / Admin) ────────────────────
     case 'log_manual': {
-        if (!in_array($user_role, ['osa_director','admin']))
+        if (!in_array($user_role, ['ssc','admin']))
             aRespond(false, 'Only OSA Directors and Admins can do manual overrides.');
 
         $target_user_id = (int)($_POST['user_id']   ?? 0);
@@ -136,7 +121,7 @@ switch ($action) {
 
     // ── ANALYTICS summary ────────────────────────────────────
     case 'analytics': {
-        if (!in_array($user_role, ['osa_director','admin','club_adviser']))
+        if (!in_array($user_role, ['ssc','admin','club_adviser']))
             aRespond(false, 'Not authorized.');
 
         $total_events  = (int)$conn->query("SELECT COUNT(*) FROM events WHERE status IN ('Approved','Completed')")->fetch_row()[0];

@@ -4,7 +4,8 @@
 //  Actions: list, create, edit, approve, reject, delete
 // ============================================================
 header('Content-Type: application/json');
-session_start();
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
 
@@ -36,7 +37,7 @@ switch ($action) {
 
     // ── CREATE event proposal (Adviser / OSA / Admin) ─────────
     case 'create': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             eRespond(false, 'Only Club Advisers and above can create events.');
 
         $title       = trim($_POST['title']       ?? '');
@@ -51,27 +52,27 @@ switch ($action) {
 
         $stmt = $conn->prepare(
             "INSERT INTO events (club_id, title, description, event_date, venue, status, created_by)
-             VALUES (?, ?, ?, ?, ?, 'Pending OSA', ?)"
+             VALUES (?, ?, ?, ?, ?, 'Pending SSC', ?)"
         );
         $stmt->bind_param('issssi', $club_id, $title, $description, $event_date, $venue, $user_id);
         if (!$stmt->execute()) eRespond(false, 'Failed to create event: ' . $stmt->error);
         $new_id = $conn->insert_id;
         $stmt->close();
 
-        // Notify OSA directors
-        $osas = $conn->query("SELECT id FROM users WHERE role = 'osa_director'");
+        // Notify SSC officers/directors
+        $osas = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
         while ($o = $osas->fetch_assoc()) {
             push_notification($conn, (int)$o['id'], 'New Event Proposal',
-                "A new event \"$title\" on " . date('M d, Y', strtotime($event_date)) . " was submitted for your approval.", 'event');
+                "A new event \"$title\" on " . date('M d, Y', strtotime($event_date)) . " was submitted for SSC review & approval.", 'event');
         }
-        log_audit($conn, $user_id, 'event_create', 'events', $new_id, "Created event: $title");
+        log_audit($conn, $user_id, 'event_create', 'events', $new_id, "Created event proposal: $title");
 
-        eRespond(true, 'Event proposal submitted successfully.', ['id' => $new_id]);
+        eRespond(true, 'Event proposal submitted to SSC for review & approval.', ['id' => $new_id]);
     }
 
     // ── EDIT event (Adviser / OSA / Admin) ────────────────────
     case 'edit': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             eRespond(false, 'Not authorized to edit events.');
 
         $id          = (int)($_POST['id']          ?? 0);
@@ -95,7 +96,7 @@ switch ($action) {
 
     // ── APPROVE event (OSA Director / Admin) ─────────────────
     case 'approve': {
-        if (!in_array($user_role, ['osa_director','admin'])) eRespond(false, 'Only OSA Directors can approve events.');
+        if (!in_array($user_role, ['ssc','admin'])) eRespond(false, 'Only OSA Directors can approve events.');
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) eRespond(false, 'Invalid event ID.');
 
@@ -115,7 +116,7 @@ switch ($action) {
 
     // ── REJECT event (OSA Director / Admin) ──────────────────
     case 'reject': {
-        if (!in_array($user_role, ['osa_director','admin'])) eRespond(false, 'Only OSA Directors can reject events.');
+        if (!in_array($user_role, ['ssc','admin'])) eRespond(false, 'Only OSA Directors can reject events.');
         $id   = (int)($_POST['id'] ?? 0);
         $note = trim($_POST['note'] ?? 'Event proposal was rejected.');
         if ($id <= 0) eRespond(false, 'Invalid event ID.');
@@ -180,6 +181,31 @@ switch ($action) {
         $stmt->close();
         log_audit($conn, $user_id, 'event_delete', 'events', $id, "Deleted event #$id");
         eRespond(true, 'Event deleted.');
+    }
+
+    // ── LIST REGISTRATIONS for event (Adviser / OSA / Admin) ─
+    case 'list_registrations': {
+        if (!in_array($user_role, ['club_adviser', 'ssc', 'admin'])) eRespond(false, 'Unauthorized.');
+        $event_id = (int)($_POST['event_id'] ?? $_GET['event_id'] ?? 0);
+        if (!$event_id) eRespond(false, 'Invalid event ID.');
+
+        $sql = "SELECT er.id, er.registered_at, er.status,
+                       u.first_name, u.last_name, u.email,
+                       s.course, s.year_level, s.phone
+                FROM event_registrations er
+                JOIN users u ON u.id = er.user_id
+                LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+                WHERE er.event_id = ?
+                ORDER BY er.registered_at ASC";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param('i', $event_id);
+        $stmt->execute();
+        $registrations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        $ev = $conn->query("SELECT title, event_date, venue FROM events WHERE id=$event_id")->fetch_assoc();
+
+        eRespond(true, 'OK', ['registrations' => $registrations, 'event' => $ev]);
     }
 
     default:

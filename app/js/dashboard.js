@@ -1,40 +1,38 @@
 // ============================================================
 //  DASHBOARD.JS
-//  All the interactive behaviour for dashboard.php.
+//  Interactive behaviour for all dashboard pages.
 //
 //  SECTIONS (use Ctrl+F to jump):
-//    1. SIDEBAR TOGGLE
+//    1. SIDEBAR TOGGLE & OUTSIDE-CLICK CLOSE
 //    2. SIDEBAR DROPDOWNS
-//    3. BIRTHDAY DROPDOWNS
-//    4. CHART DATA   ← edit chart labels and numbers here
-//    5. QUICK-ADD FORM
-//    6. MODAL HELPERS
-//    7. TOAST NOTIFICATIONS
-//    8. BULK SELECTION
-//    9. VIEW MODAL
-//   10. ADD MODAL
-//   11. EDIT MODAL
-//   12. DELETE (single)
+//    3. CHART DATA
+//    4. MODAL HELPERS
+//    5. TOAST NOTIFICATIONS
+//    6. BELL / NOTIFICATION PANEL
 // ============================================================
 
 
 // ============================================================
-//  1. SIDEBAR TOGGLE
+//  1. SIDEBAR TOGGLE & OUTSIDE-CLICK CLOSE
 //  Clicking the hamburger icon collapses/expands the sidebar.
+//  On mobile (<= 900px), clicking outside the sidebar also closes it.
 // ============================================================
 const hamburgerBtn   = document.getElementById('hamburgerBtn');
 const sidebar        = document.getElementById('sidebar');
 const sidebarOverlay = document.getElementById('sidebarOverlay');
 
 // On mobile (<= 900px) the sidebar is collapsed by default
-if (window.innerWidth <= 900) {
+if (window.innerWidth <= 900 && sidebar) {
     sidebar.classList.add('collapsed');
 }
 
-hamburgerBtn.addEventListener('click', () => {
-    sidebar.classList.toggle('collapsed');
-    if (sidebarOverlay) {
-        sidebarOverlay.classList.toggle('active', !sidebar.classList.contains('collapsed'));
+hamburgerBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (sidebar) {
+        sidebar.classList.toggle('collapsed');
+        if (sidebarOverlay) {
+            sidebarOverlay.classList.toggle('active', !sidebar.classList.contains('collapsed'));
+        }
     }
 });
 
@@ -45,6 +43,19 @@ if (sidebarOverlay) {
         sidebarOverlay.classList.remove('active');
     });
 }
+
+// Prevent sidebar clicks from bubbling up to document
+if (sidebar) {
+    sidebar.addEventListener('click', (e) => e.stopPropagation());
+}
+
+// Close sidebar when clicking anywhere in main content on mobile overlay mode
+document.addEventListener('click', () => {
+    if (window.innerWidth <= 900 && sidebar && !sidebar.classList.contains('collapsed')) {
+        sidebar.classList.add('collapsed');
+        if (sidebarOverlay) sidebarOverlay.classList.remove('active');
+    }
+});
 
 
 // ============================================================
@@ -69,30 +80,6 @@ document.querySelectorAll('.dropdown-trigger').forEach(button => {
 });
 
 
-// ============================================================
-//  3. BIRTHDAY DROPDOWNS
-//  Fills the Day and Year <select> options with JavaScript
-//  so we don't have to write them all out in HTML.
-// ============================================================
-const daySelect  = document.getElementById('bdDay');
-const yearSelect = document.getElementById('bdYear');
-
-if (daySelect) {
-    for (let day = 1; day <= 31; day++) {
-        const option = new Option(day, day);
-        if (day === 20) option.selected = true; // default selected day
-        daySelect.appendChild(option);
-    }
-}
-
-if (yearSelect) {
-    const currentYear = new Date().getFullYear();
-    for (let year = currentYear; year >= 1950; year--) {
-        const option = new Option(year, year);
-        if (year === 2006) option.selected = true; // default selected year
-        yearSelect.appendChild(option);
-    }
-}
 
 
 // ============================================================
@@ -151,187 +138,11 @@ if (dashboardChart) {
     });
 }
 
-// Report Chart (Legacy - old enrollment system data)
-const reportChart = document.getElementById('reportChart');
-
-if (reportChart) {
-    // ── EDIT CHART LABELS HERE (x-axis categories) ──────────
-    const chartLabels = [
-        'English', 'Science', 'ICT', 'PE',
-        'Constitution', 'Humanity', 'Center',
-        'Core1', 'Core2', 'Elective', 'Final'
-    ];
-
-    // ── EDIT CHART DATA HERE (one object per year/group) ────
-    const chartDatasets = [
-        {
-            label: '2020',
-            data: [75, 68, 82, 55, 15, 62, 78, 45, 50, 38, 72],
-            backgroundColor: '#a78bfa'  // purple
-        },
-        {
-            label: '2021',
-            data: [60, 80, 70, 65, 30, 55, 85, 35, 60, 25, 80],
-            backgroundColor: '#38bdf8'  // blue
-        },
-        {
-            label: '2022',
-            data: [50, 72, 60, 78, 45, 48, 55, 68, 42, 55, 45],
-            backgroundColor: '#f9a8d4'  // pink
-        }
-    ];
-
-    new Chart(reportChart.getContext('2d'), {
-        type: 'bar',
-        data: { labels: chartLabels, datasets: chartDatasets },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: { boxWidth: 12, font: { size: 11 } }
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: 100,
-                    ticks: { font: { size: 10 } },
-                    grid:  { color: '#f0f0f0' }
-                },
-                x: {
-                    ticks: { font: { size: 10 } },
-                    grid:  { display: false }
-                }
-            }
-        }
-    });
-}
 
 
-// ============================================================
-//  5. QUICK-ADD FORM [DEAD CODE - From old enrollment system]
-//  This code is preserved for reference but is not used in the
-//  Co-Curricular Management System.
-// ============================================================
-/*
 
-// ── Shared form validation ───────────────────────────────────
-// Pass a <form> element and a map of { inputName: 'Label text' }.
-// Returns true if all fields are filled, false otherwise.
-// Also highlights empty fields red and shows an error message.
-function validateForm(form, requiredFields) {
-    let valid = true;
 
-    Object.entries(requiredFields).forEach(([name, label]) => {
-        const input = form.querySelector(`[name="${name}"]`);
-        if (!input) return;
 
-        const field = input.closest('.form-field');
-        const value = input.value.trim();
-
-        // Ensure the error <span> exists below the input
-        let errorEl = field?.querySelector('.field-error');
-        if (field && !errorEl) {
-            errorEl = document.createElement('span');
-            errorEl.className = 'field-error';
-            field.appendChild(errorEl);
-        }
-
-        if (!value) {
-            input.classList.add('input-error');
-            field?.classList.add('has-error');
-            if (errorEl) errorEl.textContent = `${label} is required.`;
-            valid = false;
-        } else {
-            input.classList.remove('input-error');
-            field?.classList.remove('has-error');
-            if (errorEl) errorEl.textContent = '';
-        }
-    });
-
-    return valid;
-}
-
-// ── Live input listeners — clears error as soon as user types ─
-function attachLiveValidation(form) {
-    form.querySelectorAll('input, select').forEach(input => {
-        // Blue ring on focus
-        input.addEventListener('focus', () => {
-            if (!input.classList.contains('input-error')) {
-                input.style.borderColor = '#2563eb';
-            }
-        });
-
-        // Reset border on blur (CSS handles :focus, this covers the gap)
-        input.addEventListener('blur', () => {
-            if (!input.classList.contains('input-error')) {
-                input.style.borderColor = '';
-            }
-        });
-
-        // Clear error the moment the user starts typing / changing
-        input.addEventListener('input', () => clearFieldError(input));
-        input.addEventListener('change', () => clearFieldError(input));
-    });
-}
-
-function clearFieldError(input) {
-    if (input.value.trim()) {
-        input.classList.remove('input-error');
-        const field = input.closest('.form-field');
-        field?.classList.remove('has-error');
-        const errorEl = field?.querySelector('.field-error');
-        if (errorEl) errorEl.textContent = '';
-    }
-}
-
-const quickAddForm = document.getElementById('quickAddForm');
-
-// Required fields for the quick-add form
-const quickAddRequired = {
-    first_name : 'First Name',
-    last_name  : 'Last Name',
-    course     : 'Course',
-    year_level : 'Year Level',
-    section    : 'Section',
-    phone      : 'Phone'
-};
-
-if (quickAddForm) {
-    attachLiveValidation(quickAddForm);
-
-    quickAddForm.addEventListener('submit', function (event) {
-        event.preventDefault();
-
-        if (!validateForm(this, quickAddRequired)) return; // stop if invalid
-
-        const formData = new FormData(this);
-
-        // Convert the 3 birthday dropdowns into one "YYYY-MM-DD" value
-        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        const monthNum   = String(monthNames.indexOf(formData.get('bday_month')) + 1).padStart(2, '0');
-        const day        = String(formData.get('bday_day')).padStart(2, '0');
-        const year       = formData.get('bday_year');
-        formData.set('birthday', `${year}-${monthNum}-${day}`);
-        formData.set('action', 'add');
-
-        fetch(typeof STUDENT_API !== 'undefined' ? STUDENT_API : 'student_actions.php', { method: 'POST', body: formData })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    quickAddForm.reset();
-                    reloadWithToast(data.message, 'success');
-                } else {
-                    showToast(data.message, 'error');
-                }
-            })
-            .catch(() => showToast('Request failed.', 'error'));
-    });
-}
-
-*/
 
 
 // ============================================================
@@ -342,24 +153,71 @@ if (quickAddForm) {
 
 // Opens a modal by its HTML id
 function openModal(modalId) {
-    document.getElementById(modalId).classList.add('active');
+    const el = document.getElementById(modalId);
+    if (el) {
+        el.classList.add('active');
+        el.style.display = 'flex';
+    }
 }
 
 // Closes a modal by its HTML id
 function closeModal(modalId) {
-    document.getElementById(modalId).classList.remove('active');
+    const el = document.getElementById(modalId);
+    if (el) {
+        el.classList.remove('active');
+        el.style.display = 'none';
+    }
 }
 
-// Listen for any click on a [data-close] button or the overlay background
+// Listen for any click on a close button or the overlay background
 document.addEventListener('click', event => {
-    const closeButton = event.target.closest('[data-close]');
-    if (closeButton) {
-        closeModal(closeButton.dataset.close);
+    // 1. Check data-close attribute
+    const dataCloseBtn = event.target.closest('[data-close]');
+    if (dataCloseBtn) {
+        closeModal(dataCloseBtn.dataset.close);
         return;
     }
-    // Click directly on the dark overlay (not the modal box)
-    if (event.target.classList.contains('modal-overlay')) {
-        event.target.classList.remove('active');
+
+    // 2. Check any button/element with close classes
+    const closeBtn = event.target.closest('.modal-close, .notif-close, .close-modal, .opm-close, .afm-close, .btn-modal-close, [data-dismiss="modal"], #closeQrModalBtn, #notifClose, #closeAchModal, #cancelAchBtn, #closeOverrideModal, #cancelOverride');
+    if (closeBtn) {
+        if (closeBtn.id === 'closeQrModalBtn' || closeBtn.matches('[data-close-qr]')) {
+            if (typeof window.closeGlobalQrModal === 'function') {
+                window.closeGlobalQrModal();
+            }
+        }
+        const parentModal = closeBtn.closest('.modal-overlay, .qr-modal-overlay, .org-profile-overlay, .app-form-overlay, .notif-panel, .notif-overlay');
+        if (parentModal) {
+            parentModal.classList.remove('active', 'open');
+            parentModal.style.display = 'none';
+        }
+        return;
+    }
+
+    // 3. Click directly on the dark overlay (not the modal box)
+    if (event.target.classList.contains('modal-overlay') || 
+        event.target.classList.contains('qr-modal-overlay') ||
+        event.target.classList.contains('org-profile-overlay') ||
+        event.target.classList.contains('app-form-overlay') ||
+        event.target.classList.contains('modal-backdrop')) {
+        event.target.classList.remove('active', 'open');
+        event.target.style.display = 'none';
+        if (event.target.id === 'qrModalOverlay' && typeof window.closeGlobalQrModal === 'function') {
+            window.closeGlobalQrModal();
+        }
+    }
+});
+
+// ESC key to close all open modals/drawers
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay.active, .qr-modal-overlay.active, .org-profile-overlay.active, .app-form-overlay.active, .notif-panel.active, .notif-panel.open, .modal-overlay[style*="display: flex"], [id$="Modal"][style*="display: flex"]').forEach(m => {
+            m.classList.remove('active', 'open');
+            m.style.display = 'none';
+        });
+        if (typeof window.closeGlobalQrModal === 'function') {
+            window.closeGlobalQrModal();
+        }
     }
 });
 
@@ -495,187 +353,7 @@ notifMarkAll?.addEventListener('click', () => {
 });
 
 
-// ============================================================
-//  8. BULK SELECTION [DEAD CODE - From old enrollment system]
-//  Bulk action checkboxes and toolbar are not used in the
-//  Co-Curricular Management System.
-// ============================================================
-/*
-
-    const formData = new FormData();
-    formData.set('action', 'bulk_status');
-    formData.set('ids', ids.join(','));
-    formData.set('status', 'Inactive');
-
-    fetch(typeof STUDENT_API !== 'undefined' ? STUDENT_API : 'student_actions.php', { method: 'POST', body: formData })
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) reloadWithToast(data.message, 'updated');
-            else showToast(data.message, 'error');
-        })
-        .catch(() => showToast('Request failed.', 'error'));
-});
-
-*/
-
-// ============================================================
-//  9. VIEW/EDIT/DELETE MODALS [DEAD CODE - From old enrollment system]
-//  Student CRUD operations are not used in the Co-Curricular system.
-// ============================================================
-/*
-document.querySelectorAll('.btn-view').forEach(button => {
-    button.addEventListener('click', function () {
-        const studentId = this.dataset.id;
-
-        fetch(`${typeof STUDENT_API !== 'undefined' ? STUDENT_API : 'student_actions.php'}?action=get&id=${studentId}`)
-            .then(response => response.json())
-            .then(data => {
-                if (!data.success) { showToast(data.message, 'error'); return; }
-
-                const s = data.student;
-                // Fill in the modal fields
-                document.getElementById('vName').textContent    = `${s.first_name} ${s.last_name}`;
-                document.getElementById('vBirthday').textContent = s.birthday;
-                document.getElementById('vPhone').textContent   = s.phone;
-                document.getElementById('vCourse').textContent  = s.course;
-                document.getElementById('vYear').textContent    = s.year_level;
-                document.getElementById('vSection').textContent = s.section;
-
-                openModal('viewModal');
-            })
-            .catch(() => showToast('Failed to load student.', 'error'));
-    });
-});
 
 
-// ============================================================
-//  10. ADD MODAL
-//  Clicking "Add" clears the form and opens the modal.
-// ============================================================
-
-// Required fields for the Add/Edit modal form
-const modalRequired = {
-    first_name : 'First Name',
-    last_name  : 'Last Name',
-    birthday   : 'Birthday',
-    course     : 'Course',
-    year_level : 'Year Level',
-    section    : 'Section',
-    phone      : 'Phone'
-};
-
-document.getElementById('btnAddStudent')?.addEventListener('click', () => {
-    const crudForm = document.getElementById('studentCrudForm');
-    document.getElementById('formModalTitle').textContent = 'Add Student';
-    crudForm.reset();
-    // Clear any leftover error states from a previous open
-    crudForm.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
-    crudForm.querySelectorAll('.form-field.has-error').forEach(el => el.classList.remove('has-error'));
-    crudForm.querySelectorAll('.field-error').forEach(el => { el.textContent = ''; });
-    document.getElementById('crudId').value     = '';
-    document.getElementById('crudAction').value = 'add';
-    attachLiveValidation(crudForm);
-    openModal('formModal');
-});
 
 
-// ============================================================
-//  11. EDIT MODAL
-//  Clicking the pencil icon pre-fills the form with the student's data.
-// ============================================================
-document.querySelectorAll('.btn-edit').forEach(button => {
-    button.addEventListener('click', function () {
-        const studentId = this.dataset.id;
-
-        fetch(`${typeof STUDENT_API !== 'undefined' ? STUDENT_API : 'student_actions.php'}?action=get&id=${studentId}`)
-            .then(response => response.json())
-            .then(data => {
-                if (!data.success) { showToast(data.message, 'error'); return; }
-
-                const s        = data.student;
-                const crudForm = document.getElementById('studentCrudForm');
-
-                // Set the hidden fields so student_actions.php knows this is an edit
-                document.getElementById('formModalTitle').textContent = 'Edit Student';
-                document.getElementById('crudId').value     = s.id;
-                document.getElementById('crudAction').value = 'edit';
-
-                // Pre-fill each form field with the student's current values
-                document.getElementById('cFirst').value   = s.first_name;
-                document.getElementById('cLast').value    = s.last_name;
-                document.getElementById('cBday').value    = s.birthday;
-                document.getElementById('cCourse').value  = s.course;
-                document.getElementById('cYear').value    = s.year_level;
-                document.getElementById('cSection').value = s.section;
-                document.getElementById('cPhone').value   = s.phone;
-                document.getElementById('cStatus').value  = s.status;
-
-                // Clear any leftover error states
-                crudForm.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
-                crudForm.querySelectorAll('.form-field.has-error').forEach(el => el.classList.remove('has-error'));
-                crudForm.querySelectorAll('.field-error').forEach(el => { el.textContent = ''; });
-
-                attachLiveValidation(crudForm);
-                openModal('formModal');
-            })
-            .catch(() => showToast('Failed to load student.', 'error'));
-    });
-});
-
-// The Submit button inside the Add/Edit modal sends the form data
-document.getElementById('btnCrudSubmit')?.addEventListener('click', () => {
-    const crudForm = document.getElementById('studentCrudForm');
-    const isEdit   = document.getElementById('crudAction').value === 'edit';
-
-    if (!validateForm(crudForm, modalRequired)) return; // stop if invalid
-
-    const formData = new FormData(crudForm);
-
-    fetch(typeof STUDENT_API !== 'undefined' ? STUDENT_API : 'student_actions.php', { method: 'POST', body: formData })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                closeModal('formModal');
-                reloadWithToast(data.message, isEdit ? 'updated' : 'success');
-            } else {
-                showToast(data.message, 'error');
-            }
-        })
-        .catch(() => showToast('Request failed.', 'error'));
-});
-
-*/
-
-// ============================================================
-//  12. DELETE (single student)
-//  Clicking the trash icon asks for confirmation, then deletes.
-// ============================================================
-let pendingDeleteId = null; // stores the ID of the student to delete
-
-document.querySelectorAll('.btn-delete').forEach(button => {
-    button.addEventListener('click', function () {
-        pendingDeleteId = this.dataset.id;
-        document.getElementById('deleteStudentName').textContent = this.dataset.name;
-        openModal('deleteModal');
-    });
-});
-
-document.getElementById('btnConfirmDelete')?.addEventListener('click', () => {
-    if (!pendingDeleteId) return;
-
-    const formData = new FormData();
-    formData.set('action', 'delete');
-    formData.set('id', pendingDeleteId);
-
-    fetch(typeof STUDENT_API !== 'undefined' ? STUDENT_API : 'student_actions.php', { method: 'POST', body: formData })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                closeModal('deleteModal');
-                reloadWithToast(data.message, 'warning');
-            } else {
-                showToast(data.message, 'error');
-            }
-        })
-        .catch(() => showToast('Request failed.', 'error'));
-});

@@ -1,6 +1,6 @@
 <?php
 // ── Database connection ──────────────────────────────────────
-define('DB_HOST', 'localhost');
+define('DB_HOST', '127.0.0.1');
 define('DB_USER', 'root');       // default XAMPP user
 define('DB_PASS', '');           // default XAMPP password (empty)
 define('DB_NAME', 'sms_db');

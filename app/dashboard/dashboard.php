@@ -1,18 +1,14 @@
 <?php
-// ============================================================
-//  DASHBOARD.PHP  (dashboard/)
-//  Co-Curricular Management System — Aligned to Template Design
-// ============================================================
-session_start();
 require_once __DIR__ . '/../shared/db.php';
+session_start();
 
-if (empty($_SESSION['user_id'])) {
+if (!isset($_SESSION['user_id'])) {
     header('Location: ../auth/signin.php');
     exit;
 }
 
 // Allow testing role switcher via ?switch_role=...
-if (isset($_GET['switch_role']) && in_array($_GET['switch_role'], ['student','club_adviser','osa_director','finance_officer','admin'])) {
+if (isset($_GET['switch_role']) && in_array($_GET['switch_role'], ['student','club_adviser','ssc','finance_officer','admin'])) {
     $_SESSION['role'] = $_GET['switch_role'];
 }
 
@@ -24,8 +20,8 @@ $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
 // Role Titles map
 $role_labels = [
     'student'         => 'General Student',
-    'club_adviser'    => 'Club Adviser (Faculty Member)',
-    'osa_director'    => 'OSA Director / Coordinator',
+    'club_adviser'    => 'Organization Adviser (Faculty Member)',
+    'ssc'             => 'SSC Officer / Board Member',
     'finance_officer' => 'Finance / Cashier Officer',
     'admin'           => 'System Administrator'
 ];
@@ -33,6 +29,21 @@ $role_labels = [
 $role_title = $role_labels[$sess_role] ?? 'User';
 
 $user_id = (int)($_SESSION['user_id'] ?? 0);
+
+// Fetch student profile details (Section, Program, Year) if student role
+$student_info = null;
+if ($sess_role === 'student') {
+    $stmt = $conn->prepare("SELECT course, year_level, section FROM students WHERE first_name = ? AND last_name = ? LIMIT 1");
+    if ($stmt) {
+        $stmt->bind_param('ss', $_SESSION['first_name'], $_SESSION['last_name']);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res && $res->num_rows > 0) {
+            $student_info = $res->fetch_assoc();
+        }
+        $stmt->close();
+    }
+}
 
 // DB Counts
 $active_clubs_joined = 0;
@@ -45,6 +56,79 @@ if ($r) $active_campus_events = (int)$r->fetch_assoc()['c'];
 
 $total_budgets = 0;
 $r = $conn->query("SELECT COUNT(*) AS c FROM budget_requests"); if ($r) $total_budgets = (int)$r->fetch_assoc()['c'];
+
+// Fetch dynamic announcements
+$announcements = [];
+$ann_res = $conn->query("SELECT oa.*, c.name AS club_name, c.code AS club_code FROM org_announcements oa JOIN clubs c ON c.id = oa.club_id ORDER BY oa.created_at DESC LIMIT 3");
+if ($ann_res) {
+    while ($row = $ann_res->fetch_assoc()) {
+        $announcements[] = $row;
+    }
+}
+
+// Fetch adviser endorsement queue
+$adviser_club_id = 0;
+if ($sess_role === 'club_adviser') {
+    $stmt = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id = ? AND status = 'Active' LIMIT 1");
+    if ($stmt) {
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $stmt->bind_result($adviser_club_id);
+        $stmt->fetch();
+        $stmt->close();
+    }
+}
+
+$pending_endorsements = [];
+if ($sess_role === 'club_adviser' && $adviser_club_id > 0) {
+    $stmt = $conn->prepare("SELECT br.id, br.title, br.amount, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.club_id = ? AND br.status = 'Pending Adviser' ORDER BY br.created_at DESC");
+    if ($stmt) {
+        $stmt->bind_param('i', $adviser_club_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $pending_endorsements[] = $row;
+        }
+        $stmt->close();
+    }
+}
+
+// Fetch SSC pending lists
+$ssc_pending_budgets = [];
+$ssc_pending_clubs = [];
+$ssc_pending_events = [];
+
+if ($sess_role === 'ssc') {
+    $res = $conn->query("SELECT br.id, br.title, br.amount, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.status = 'Pending SSC' ORDER BY br.created_at DESC");
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $ssc_pending_budgets[] = $row;
+        }
+    }
+    $res = $conn->query("SELECT id, name, code, category FROM clubs WHERE status = 'Pending Charter' ORDER BY created_at DESC");
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $ssc_pending_clubs[] = $row;
+        }
+    }
+    $res = $conn->query("SELECT e.id, e.title, e.event_date, c.name AS club_name FROM events e JOIN clubs c ON c.id = e.club_id WHERE e.status = 'Pending SSC' ORDER BY e.event_date ASC");
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $ssc_pending_events[] = $row;
+        }
+    }
+}
+
+// Fetch Finance pending lists
+$finance_pending_budgets = [];
+if ($sess_role === 'finance_officer') {
+    $res = $conn->query("SELECT br.id, br.title, br.amount, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.status IN ('Pending Admin', 'Pending Finance') ORDER BY br.created_at DESC");
+    if ($res) {
+        while ($row = $res->fetch_assoc()) {
+            $finance_pending_budgets[] = $row;
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -110,7 +194,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <span style="font-size: 0.78rem; font-weight: 600; color: #64748b; margin-right: auto;">Role Switcher (Admin Mode):</span>
         <a href="?switch_role=student" class="card-btn" style="<?= $sess_role==='student'?'background:#1a3a8c;':'background:#64748b;' ?>">Student</a>
         <a href="?switch_role=club_adviser" class="card-btn" style="<?= $sess_role==='club_adviser'?'background:#1a3a8c;':'background:#64748b;' ?>">Adviser</a>
-        <a href="?switch_role=osa_director" class="card-btn" style="<?= $sess_role==='osa_director'?'background:#1a3a8c;':'background:#64748b;' ?>">OSA</a>
+        <a href="?switch_role=ssc" class="card-btn" style="<?= $sess_role==='ssc'?'background:#1a3a8c;':'background:#64748b;' ?>">SSC</a>
         <a href="?switch_role=finance_officer" class="card-btn" style="<?= $sess_role==='finance_officer'?'background:#1a3a8c;':'background:#64748b;' ?>">Finance</a>
         <a href="?switch_role=admin" class="card-btn" style="<?= $sess_role==='admin'?'background:#1a3a8c;':'background:#64748b;' ?>">Admin</a>
       </div>
@@ -128,120 +212,89 @@ require_once __DIR__ . '/../shared/sidebar.php';
         </div>
         <div class="card-name"><?= $sess_first . ' ' . $sess_last ?></div>
         <div class="card-detail">
-          Co-Curricular Student Portal &amp; Management Module
+          <?php if ($sess_role === 'student' && !empty($student_info)): ?>
+            <div style="margin-top:6px; font-size:0.8rem; color:#64748b; line-height:1.4; text-align:left;">
+              <strong>Program:</strong> <?= htmlspecialchars($student_info['course']) ?><br/>
+              <strong>Year &amp; Section:</strong> <?= htmlspecialchars($student_info['year_level']) ?> - <?= htmlspecialchars($student_info['section']) ?>
+            </div>
+          <?php else: ?>
+            Co-Curricular Student Portal &amp; Management Module
+          <?php endif; ?>
         </div>
       </div>
 
       <!-- Stat Card 2: Active Clubs Joined -->
+      <?php if ($sess_role !== 'club_adviser'): ?>
       <div class="info-card">
         <div class="card-label">
           <i class="fa-solid fa-sitemap"></i>
-          Active Clubs Joined
+          Active Organizations Joined
         </div>
         <div class="card-amount"><?= $active_clubs_joined ?></div>
         <div class="card-detail">Joined Accredited Organizations</div>
       </div>
+      <?php endif; ?>
 
       <!-- Stat Card 3: Active Campus Events -->
       <div class="info-card">
         <div class="card-label">
-          <i class="fa-solid fa-calendar-check"></i>
+          <i class="fa-solid fa-calendar-days"></i>
           Active Campus Events
         </div>
         <div class="card-amount"><?= $active_campus_events ?></div>
-        <div class="card-detail">Approved &amp; Scheduled Activities</div>
+        <div class="card-detail">Upcoming Approved Campus Activities</div>
       </div>
 
+      <!-- Stat Card 4: Total Budget Allocated -->
       <?php if ($sess_role !== 'student'): ?>
-      <!-- Stat Card 4 (Visible to Officers, Advisers, OSA, Finance, Admin) -->
       <div class="info-card">
         <div class="card-label">
-          <i class="fa-solid fa-coins"></i>
-          Budget Requisitions
+          <i class="fa-solid fa-file-invoice-dollar"></i>
+          Total Org Budgets
         </div>
         <div class="card-amount"><?= $total_budgets ?></div>
-        <div class="card-detail">Finance & OSA Pipeline</div>
+        <div class="card-detail">Finance &amp; SSC Pipeline</div>
       </div>
       <?php endif; ?>
 
     </div><!-- end info-row -->
 
     <?php if ($sess_role === 'student'): ?>
-      <!-- CLUBS ANNOUNCEMENTS & EVENTS FEED (Replaces Engagement Metrics for Students) -->
+      <!-- CLUBS ANNOUNCEMENTS & EVENTS FEED -->
       <div class="clubs-feed-card">
         <div class="clubs-feed-header">
-          <h3><i class="fa-solid fa-bullhorn" style="color:#2563eb;"></i> Clubs Announcements & Events Feed</h3>
+          <h3><i class="fa-solid fa-bullhorn" style="color:#2563eb;"></i> Organization Announcements & Events Feed</h3>
           <span style="font-size:0.8rem; color:#64748b;">Latest updates from campus organizations</span>
         </div>
         <div class="clubs-feed-grid">
-
-          <div class="feed-post-card">
-            <div>
-              <div class="feed-post-meta">
-                <span class="feed-org-tag">IT Society</span>
-                <span class="feed-date">Aug 10, 2026</span>
-              </div>
-              <h4 class="feed-post-title">IT Society Officer Elections 2026</h4>
-              <p class="feed-post-desc">Cast your digital ballots for the incoming Executive Board of the IT Society. Voting closes at 5:00 PM.</p>
+          <?php if (empty($announcements)): ?>
+            <div style="grid-column: 1 / -1; text-align: center; color: #94a3b8; padding: 40px 20px;">
+              <i class="fa-solid fa-bullhorn" style="font-size: 2.5rem; display: block; margin-bottom: 12px; color: #cbd5e1;"></i>
+              <p style="margin: 0; font-size: 0.9rem; font-weight: 500;">No active organization announcements found.</p>
+              <span style="font-size: 0.78rem; color: #a1a1aa;">Check back later for news and upcoming activities.</span>
             </div>
-            <a href="elections.php#booth" class="feed-action-btn"><i class="fa-solid fa-check-to-slot"></i> Cast Vote Now</a>
-          </div>
-
-          <div class="feed-post-card">
-            <div>
-              <div class="feed-post-meta">
-                <span class="feed-org-tag">CS Executive Council</span>
-                <span class="feed-date">Aug 12, 2026</span>
+          <?php else: ?>
+            <?php foreach ($announcements as $ann): ?>
+              <div class="feed-post-card">
+                <div>
+                  <div class="feed-post-meta">
+                    <span class="feed-org-tag"><?= htmlspecialchars($ann['club_code']) ?></span>
+                    <span class="feed-date"><?= date('M d, Y', strtotime($ann['created_at'])) ?></span>
+                  </div>
+                  <h4 class="feed-post-title"><?= htmlspecialchars($ann['title']) ?></h4>
+                  <p class="feed-post-desc"><?= htmlspecialchars($ann['content']) ?></p>
+                </div>
+                <a href="club_directory.php" class="feed-action-btn"><i class="fa-solid fa-eye"></i> View Directory</a>
               </div>
-              <h4 class="feed-post-title">Annual Hackathon 2026 Registration</h4>
-              <p class="feed-post-desc">Compete in 24-hour coding challenge! Open for all computer science and IT students. Form your teams today.</p>
-            </div>
-            <a href="events.php" class="feed-action-btn"><i class="fa-solid fa-calendar-check"></i> Register for Event</a>
-          </div>
-
-          <div class="feed-post-card">
-            <div>
-              <div class="feed-post-meta">
-                <span class="feed-org-tag">Cultural Arts Guild</span>
-                <span class="feed-date">Aug 15, 2026</span>
-              </div>
-              <h4 class="feed-post-title">Campus Performing Arts Auditions</h4>
-              <p class="feed-post-desc">Calling all dancers, singers, and theater enthusiasts for the 2026 Mid-Year Cultural Showcase audition round.</p>
-            </div>
-            <a href="events.php" class="feed-action-btn"><i class="fa-solid fa-calendar-days"></i> View Event Details</a>
-          </div>
-
-        </div>
-      </div>
-
-    <?php else: ?>
-      <!-- Engagement Metrics Chart (For non-student roles) -->
-      <div class="chart-card">
-        <div class="chart-header">
-          <div>
-            <h3><i class="fa-solid fa-chart-bar" style="color:#2563eb;"></i> Co-Curricular Engagement Metrics</h3>
-            <div class="chart-sub">Campus-wide activity summary for AY 2025-2026</div>
-          </div>
-        </div>
-        <div class="chart-wrap">
-          <canvas id="dashboardChart"></canvas>
+            <?php endforeach; ?>
+          <?php endif; ?>
         </div>
       </div>
     <?php endif; ?>
 
     <!-- Dynamic Role Component (Default Template Box / Table Layout) -->
 
-    <?php if ($sess_role === 'student'): ?>
-      <!-- GENERAL STUDENT VIEW: Attendance History prompt -->
-      <div class="table-card" style="margin-bottom:20px;">
-        <h3><i class="fa-solid fa-calendar-check" style="color:#2563eb;"></i> My Upcoming Events</h3>
-        <p style="font-size:0.85rem; color:#64748b; margin:8px 0 14px;">Browse and register for upcoming campus events organized by your clubs.</p>
-        <a href="events.php" class="card-btn" style="display:inline-flex; align-items:center; gap:6px;">
-          <i class="fa-solid fa-calendar-days"></i> View All Events
-        </a>
-      </div>
-
-    <?php elseif ($sess_role === 'club_adviser'): ?>
+    <?php if ($sess_role === 'club_adviser'): ?>
       <!-- CLUB ADVISER VIEW -->
       <div class="table-card" style="margin-bottom:20px;">
         <h3><i class="fa-solid fa-inbox" style="color:#2563eb;"></i> Pending Endorsements Queue (Faculty Adviser Clearance)</h3>
@@ -249,51 +302,72 @@ require_once __DIR__ . '/../shared/sidebar.php';
           <thead>
             <tr>
               <th>Request Title</th>
-              <th>Club</th>
+              <th>Organization</th>
               <th>Amount / Details</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>Stage Costumes & Sound System</td>
-              <td>BCP Cultural Arts</td>
-              <td>₱18,000.00</td>
-              <td>
-                <button class="card-btn" onclick="alert('Endorsed to OSA!')">Endorse</button>
-                <button class="card-btn" style="background:#ef4444;" onclick="alert('Returned to Officer.')">Return</button>
-              </td>
-            </tr>
+            <?php if (empty($pending_endorsements)): ?>
+              <tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:20px;">No pending endorsements queue at this time.</td></tr>
+            <?php else: ?>
+              <?php foreach ($pending_endorsements as $req): ?>
+                <tr>
+                  <td><?= htmlspecialchars($req['title']) ?></td>
+                  <td><?= htmlspecialchars($req['club_name']) ?></td>
+                  <td>₱<?= number_format($req['amount'], 2) ?></td>
+                  <td>
+                    <a href="budget.php" class="card-btn"><i class="fa-solid fa-eye"></i> Go to Budget Portal</a>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            <?php endif; ?>
           </tbody>
         </table>
       </div>
 
-    <?php elseif ($sess_role === 'osa_director'): ?>
-      <!-- OSA DIRECTOR VIEW -->
+    <?php elseif ($sess_role === 'ssc'): ?>
+      <!-- SSC OFFICER VIEW -->
       <div class="table-card" style="margin-bottom:20px;">
-        <h3><i class="fa-solid fa-building-columns" style="color:#2563eb;"></i> OSA Executive Approvals & Accreditation Reports</h3>
+        <h3><i class="fa-solid fa-building-columns" style="color:#2563eb;"></i> SSC Executive Approvals &amp; Charter Reviews</h3>
         <table class="data-table">
           <thead>
             <tr>
               <th>Approval Type</th>
-              <th>Submitted By</th>
+              <th>Submitted By / Detail</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>New Club Charter: Robotics Guild</td>
-              <td>Student Founding Officers</td>
-              <td><span class="badge-inactive">Pending Review</span></td>
-              <td><button class="card-btn" onclick="alert('Charter Approved!')">Approve Charter</button></td>
-            </tr>
-            <tr>
-              <td>Outreach Bus Rental & Food Packs</td>
-              <td>BCP Campus Volunteers</td>
-              <td><span class="badge-active">Adviser Endorsed</span></td>
-              <td><button class="card-btn" onclick="alert('Budget Approved & Forwarded to Finance!')">Approve Budget</button></td>
-            </tr>
+            <?php if (empty($ssc_pending_budgets) && empty($ssc_pending_clubs) && empty($ssc_pending_events)): ?>
+              <tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:20px;">No pending SSC approvals or reviews found.</td></tr>
+            <?php else: ?>
+              <?php foreach ($ssc_pending_clubs as $cl): ?>
+                <tr>
+                  <td>New Org Charter: <?= htmlspecialchars($cl['name']) ?></td>
+                  <td>Student Founding Officers (<?= htmlspecialchars($cl['code']) ?>)</td>
+                  <td><span class="badge-inactive">Pending Review</span></td>
+                  <td><a href="club_directory.php" class="card-btn">Review Charter</a></td>
+                </tr>
+              <?php endforeach; ?>
+              <?php foreach ($ssc_pending_budgets as $br): ?>
+                <tr>
+                  <td>Budget Request: <?= htmlspecialchars($br['title']) ?></td>
+                  <td><?= htmlspecialchars($br['club_name']) ?></td>
+                  <td>₱<?= number_format($br['amount'], 2) ?> &bull; <span class="badge-active">Adviser Endorsed</span></td>
+                  <td><a href="budget.php" class="card-btn">Review Budget</a></td>
+                </tr>
+              <?php endforeach; ?>
+              <?php foreach ($ssc_pending_events as $ev): ?>
+                <tr>
+                  <td>Event Activity: <?= htmlspecialchars($ev['title']) ?></td>
+                  <td><?= htmlspecialchars($ev['club_name']) ?></td>
+                  <td>Date: <?= date('M d, Y', strtotime($ev['event_date'])) ?></td>
+                  <td><a href="events.php" class="card-btn">Review Activity</a></td>
+                </tr>
+              <?php endforeach; ?>
+            <?php endif; ?>
           </tbody>
         </table>
       </div>
@@ -313,13 +387,19 @@ require_once __DIR__ . '/../shared/sidebar.php';
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>DV-2026-004</td>
-              <td>IT Society</td>
-              <td>Hackathon T-Shirts & Snacks</td>
-              <td>₱15,000.00</td>
-              <td><button class="card-btn" onclick="alert('Cash / Check Advance Disbursed!')">Release Advance</button></td>
-            </tr>
+            <?php if (empty($finance_pending_budgets)): ?>
+              <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:20px;">No pending disbursement vouchers.</td></tr>
+            <?php else: ?>
+              <?php foreach ($finance_pending_budgets as $br): ?>
+                <tr>
+                  <td>DV-<?= date('Y') ?>-<?= sprintf('%03d', $br['id']) ?></td>
+                  <td><?= htmlspecialchars($br['club_name']) ?></td>
+                  <td><?= htmlspecialchars($br['title']) ?></td>
+                  <td>₱<?= number_format($br['amount'], 2) ?></td>
+                  <td><a href="budget.php" class="card-btn"><i class="fa-solid fa-hand-holding-dollar"></i> Go to Disbursements</a></td>
+                </tr>
+              <?php endforeach; ?>
+            <?php endif; ?>
           </tbody>
         </table>
       </div>

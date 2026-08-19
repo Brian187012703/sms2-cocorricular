@@ -4,7 +4,8 @@
 //  Actions: list, list_pending, apply, approve, reject, remove, export_csv
 // ============================================================
 header('Content-Type: application/json');
-session_start();
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
 
@@ -55,7 +56,7 @@ switch ($action) {
 
     // ── LIST pending applicants ──────────────────────────────
     case 'list_pending': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             rRespond(false, 'Not authorized.');
 
         $club_filter = '';
@@ -73,10 +74,16 @@ switch ($action) {
 
         $sql = "SELECT cm.id, cm.club_id, cm.user_id, cm.joined_at,
                        c.name AS club_name, c.code AS club_code,
-                       u.first_name, u.last_name, u.email
+                       COALESCE(ca.first_name, u.first_name) AS first_name,
+                       COALESCE(ca.last_name, u.last_name) AS last_name,
+                       COALESCE(ca.email, u.email) AS email,
+                       ca.student_id_no, ca.course, ca.year_level, ca.phone, ca.sex, ca.dob, ca.address, ca.motivation,
+                       COALESCE(ca.letter_intent, cm.letter_intent) AS letter_intent,
+                       COALESCE(ca.letter_endorsement, cm.letter_endorsement) AS letter_endorsement
                 FROM club_memberships cm
                 JOIN clubs c ON c.id = cm.club_id
                 JOIN users u ON u.id = cm.user_id
+                LEFT JOIN club_applications ca ON (ca.club_id = cm.club_id AND ca.user_id = cm.user_id AND ca.status = 'Pending')
                 WHERE cm.status = 'Pending' $club_filter
                 ORDER BY cm.joined_at ASC";
         $stmt = $conn->prepare($sql);
@@ -143,8 +150,37 @@ switch ($action) {
             }
         }
 
+        // Extract detailed form fields
+        $first_name    = trim($_POST['first_name'] ?? $_SESSION['first_name'] ?? '');
+        $last_name     = trim($_POST['last_name']  ?? $_SESSION['last_name']  ?? '');
+        $student_id_no = trim($_POST['student_id_no'] ?? '');
+        $course        = trim($_POST['course'] ?? '');
+        $year_level    = trim($_POST['year_level'] ?? '');
+        $email         = trim($_POST['email'] ?? $_SESSION['email'] ?? '');
+        $phone         = trim($_POST['contact'] ?? '');
+        $sex           = trim($_POST['sex'] ?? '');
+        $dob           = !empty($_POST['dob']) ? date('Y-m-d', strtotime($_POST['dob'])) : null;
+        $address       = trim($_POST['address'] ?? '');
+        $motivation    = trim($_POST['motivation'] ?? '');
+
+        // 1. Insert into dedicated club_applications table
+        $app_stmt = $conn->prepare("
+            INSERT INTO club_applications
+            (club_id, user_id, first_name, last_name, student_id_no, course, year_level, email, phone, sex, dob, address, motivation, letter_intent, letter_endorsement, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')
+        ");
+        $app_stmt->bind_param(
+            'iisssssssssssss',
+            $club_id, $user_id, $first_name, $last_name, $student_id_no, $course, $year_level,
+            $email, $phone, $sex, $dob, $address, $motivation, $letter_intent_path, $letter_endorsement_path
+        );
+        $app_stmt->execute();
+        $app_stmt->close();
+
+        // 2. Insert/update club_memberships
         $stmt = $conn->prepare(
-            "INSERT INTO club_memberships (club_id, user_id, role, status, letter_intent, letter_endorsement) VALUES (?, ?, 'Member', 'Pending', ?, ?)"
+            "INSERT INTO club_memberships (club_id, user_id, role, status, letter_intent, letter_endorsement) VALUES (?, ?, 'Member', 'Pending', ?, ?)
+             ON DUPLICATE KEY UPDATE status='Pending', letter_intent=VALUES(letter_intent), letter_endorsement=VALUES(letter_endorsement)"
         );
         $stmt->bind_param('iiss', $club_id, $user_id, $letter_intent_path, $letter_endorsement_path);
         if (!$stmt->execute()) rRespond(false, 'Failed to apply: ' . $stmt->error);
@@ -169,7 +205,7 @@ switch ($action) {
 
     // ── APPROVE applicant ────────────────────────────────────
     case 'approve': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             rRespond(false, 'Not authorized.');
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) rRespond(false, 'Invalid membership ID.');
@@ -181,9 +217,14 @@ switch ($action) {
         if (!$stmt->execute() || $stmt->affected_rows === 0) rRespond(false, 'Could not approve — already processed?');
         $stmt->close();
 
-        // Notify the applicant
-        $cm = $conn->query("SELECT cm.user_id, c.name FROM club_memberships cm JOIN clubs c ON c.id=cm.club_id WHERE cm.id=$id")->fetch_assoc();
+        // Fetch membership details to sync club_applications
+        $cm = $conn->query("SELECT cm.club_id, cm.user_id, c.name FROM club_memberships cm JOIN clubs c ON c.id=cm.club_id WHERE cm.id=$id")->fetch_assoc();
         if ($cm) {
+            $app_up = $conn->prepare("UPDATE club_applications SET status='Approved', reviewed_by=?, reviewed_at=NOW() WHERE club_id=? AND user_id=? AND status='Pending'");
+            $app_up->bind_param('iii', $user_id, $cm['club_id'], $cm['user_id']);
+            $app_up->execute();
+            $app_up->close();
+
             push_notification($conn, (int)$cm['user_id'], 'Membership Approved!',
                 "Your application to join {$cm['name']} has been approved! Welcome aboard!", 'success');
         }
@@ -193,20 +234,27 @@ switch ($action) {
 
     // ── REJECT applicant ─────────────────────────────────────
     case 'reject': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             rRespond(false, 'Not authorized.');
         $id   = (int)($_POST['id']     ?? 0);
         if ($id <= 0) rRespond(false, 'Invalid membership ID.');
 
-        $stmt = $conn->prepare("UPDATE club_memberships SET status='Rejected' WHERE id=? AND status='Pending'");
+        $stmt = $conn->prepare(
+            "UPDATE club_memberships SET status='Rejected' WHERE id=? AND status='Pending'"
+        );
         $stmt->bind_param('i', $id);
-        if (!$stmt->execute() || $stmt->affected_rows === 0) rRespond(false, 'Could not reject.');
+        if (!$stmt->execute() || $stmt->affected_rows === 0) rRespond(false, 'Could not reject — already processed?');
         $stmt->close();
 
-        $cm = $conn->query("SELECT cm.user_id, c.name FROM club_memberships cm JOIN clubs c ON c.id=cm.club_id WHERE cm.id=$id")->fetch_assoc();
+        $cm = $conn->query("SELECT cm.club_id, cm.user_id, c.name FROM club_memberships cm JOIN clubs c ON c.id=cm.club_id WHERE cm.id=$id")->fetch_assoc();
         if ($cm) {
-            push_notification($conn, (int)$cm['user_id'], 'Membership Application',
-                "Your application to join {$cm['name']} was not approved at this time.", 'warning');
+            $app_up = $conn->prepare("UPDATE club_applications SET status='Rejected', reviewed_by=?, reviewed_at=NOW() WHERE club_id=? AND user_id=? AND status='Pending'");
+            $app_up->bind_param('iii', $user_id, $cm['club_id'], $cm['user_id']);
+            $app_up->execute();
+            $app_up->close();
+
+            push_notification($conn, (int)$cm['user_id'], 'Membership Update',
+                "Your application to join {$cm['name']} was not approved.", 'warning');
         }
         log_audit($conn, $user_id, 'roster_reject', 'club_memberships', $id, "Rejected membership #$id");
         rRespond(true, 'Applicant rejected.');
@@ -226,7 +274,7 @@ switch ($action) {
 
     // ── EXPORT CSV ───────────────────────────────────────────
     case 'export_csv': {
-        if (!in_array($user_role, ['club_adviser','osa_director','admin']))
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
             rRespond(false, 'Not authorized.');
 
         // Return JSON of all active members for JS to build CSV

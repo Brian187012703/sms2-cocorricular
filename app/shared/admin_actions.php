@@ -13,7 +13,7 @@ if (empty($_SESSION['user_id'])) { echo json_encode(['success'=>false,'message'=
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
 
-if (!in_array($user_role, ['admin','osa_director'])) {
+if (!in_array($user_role, ['admin','ssc'])) {
     echo json_encode(['success'=>false,'message'=>'Access denied.']); exit;
 }
 
@@ -39,7 +39,7 @@ switch ($action) {
         if ($user_role !== 'admin') adRespond(false, 'Only System Administrators can change roles.');
         $target_id  = (int)($_POST['user_id'] ?? 0);
         $new_role   = trim($_POST['new_role'] ?? '');
-        $valid_roles = ['admin','student','club_adviser','osa_director','finance_officer'];
+        $valid_roles = ['admin','student','club_adviser','ssc'];
         if ($target_id <= 0 || !in_array($new_role, $valid_roles)) adRespond(false, 'Invalid user or role.');
         if ($target_id === $user_id) adRespond(false, 'You cannot change your own role.');
 
@@ -113,7 +113,7 @@ switch ($action) {
                 "Your budget request \"{$req['title']}\" was force-approved by System Administrator.", 'info');
         }
         // Notify Finance
-        $fins = $conn->query("SELECT id FROM users WHERE role='finance_officer'");
+        $fins = $conn->query("SELECT id FROM users WHERE role='ssc'");
         while ($f = $fins->fetch_assoc()) {
             push_notification($conn, (int)$f['id'], 'Budget Override — Ready to Disburse',
                 "Budget request #$id was force-approved via admin override and awaits disbursement.", 'budget');

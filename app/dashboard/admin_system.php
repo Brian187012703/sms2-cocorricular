@@ -1,14 +1,14 @@
 <?php
 // ============================================================
 //  ADMIN_SYSTEM.PHP  (dashboard/)
-//  Co-Curricular System — System Administration (Live DB + AJAX)
-//  Accessible only to: admin, osa_director
+//  Co-Curricular System � System Administration (Live DB + AJAX)
+//  Accessible only to: admin, ssc
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
 session_start();
 
 if (empty($_SESSION['user_id'])) { header('Location: ../auth/signin.php'); exit; }
-if (!in_array($_SESSION['role'] ?? '', ['admin', 'osa_director'])) { header('Location: dashboard.php'); exit; }
+if (!in_array($_SESSION['role'] ?? '', ['admin', 'ssc'])) { header('Location: dashboard.php'); exit; }
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -16,19 +16,19 @@ $sess_role    = $_SESSION['role'] ?? 'admin';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'A', 0, 1));
 $user_id      = (int)$_SESSION['user_id'];
 
-// ── Live stats ────────────────────────────────────────────────
+// -- Live stats ------------------------------------------------
 $user_count   = (int)$conn->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
 $club_count   = (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Active'")->fetch_row()[0];
 $pending_apps = (int)$conn->query("SELECT COUNT(*) FROM club_memberships WHERE status='Pending'")->fetch_row()[0];
 $pending_ach  = (int)$conn->query("SELECT COUNT(*) FROM achievements WHERE status='Pending'")->fetch_row()[0];
 
-// ── User list ─────────────────────────────────────────────────
+// -- User list -------------------------------------------------
 $all_users = $conn->query(
     "SELECT id, username, email, first_name, last_name, role, created_at
      FROM users ORDER BY role, last_name"
 )->fetch_all(MYSQLI_ASSOC);
 
-// ── Recent audit logs ─────────────────────────────────────────
+// -- Recent audit logs -----------------------------------------
 $audit_logs = $conn->query(
     "SELECT al.action, al.target_table, al.detail, al.created_at,
             u.first_name, u.last_name, u.role
@@ -39,9 +39,9 @@ $audit_logs = $conn->query(
 
 $role_labels = [
     'admin'          => 'System Admin',
-    'osa_director'   => 'OSA Director',
+    'ssc'   => 'Supreme Student Council (SSC)',
     'club_adviser'   => 'Club Adviser',
-    'finance_officer'=> 'Finance Officer',
+    'ssc'=> 'Supreme Student Council (SSC)',
     'student'        => 'Student',
 ];
 ?>
@@ -50,7 +50,7 @@ $role_labels = [
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>System Administration – BCP Co-Curricular Portal</title>
+  <title>System Administration � BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
@@ -140,10 +140,13 @@ require_once __DIR__ . '/../shared/sidebar.php';
           <div class="card-detail">Club membership requests</div>
         </div>
         <?php if ($sess_role === 'admin'): ?>
-        <div class="info-card" id="override-card">
-          <div class="card-label"><i class="fa-solid fa-screwdriver-wrench"></i> Workflow Override</div>
-          <div class="card-detail" style="margin-top:6px;">
-            <button class="card-btn" id="openOverrideBtn">
+        <div class="info-card" id="override-card" style="display:flex; flex-direction:column; justify-content:space-between;">
+          <div>
+            <div class="card-label"><i class="fa-solid fa-screwdriver-wrench"></i> Workflow Override</div>
+            <div class="card-detail" style="margin-top:4px;">Force-approve stuck budget requests</div>
+          </div>
+          <div style="margin-top:12px;">
+            <button class="card-btn" id="openOverrideBtn" style="width:100%; height:40px; justify-content:center; background:#2563eb; color:#fff; font-weight:700; border-radius:8px; cursor:pointer;">
               <i class="fa-solid fa-sliders"></i> Override Stuck Budget
             </button>
           </div>
@@ -231,8 +234,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <td><?= htmlspecialchars($log['first_name'] . ' ' . $log['last_name']) ?></td>
               <td><span class="role-badge role-<?= str_replace('_','',$log['role']) ?>"><?= htmlspecialchars($role_labels[$log['role']] ?? $log['role']) ?></span></td>
               <td><code style="font-size:0.75rem;"><?= htmlspecialchars($log['action']) ?></code></td>
-              <td><?= htmlspecialchars($log['target_table'] ?? '—') ?></td>
-              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= htmlspecialchars($log['detail'] ?? '—') ?></td>
+              <td><?= htmlspecialchars($log['target_table'] ?? '�') ?></td>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= htmlspecialchars($log['detail'] ?? '�') ?></td>
             </tr>
             <?php endforeach; ?>
           </tbody>
@@ -245,8 +248,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
   <div class="footer">Co-Curricular Management System &copy; 2026</div>
 </div><!-- end main -->
-
-<div class="sidebar-overlay" id="sidebarOverlay"></div>
 
 <!-- Override Modal (Admin only) -->
 <?php if ($sess_role === 'admin'): ?>
@@ -269,7 +270,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
 <script src="../js/dashboard.js"></script>
 <script>
-// ── Alert ─────────────────────────────────────────────────────
+// -- Alert -----------------------------------------------------
 function showAlert(msg, type) {
   const el = document.getElementById('adminAlert');
   el.style.display = 'block';
@@ -280,7 +281,7 @@ function showAlert(msg, type) {
   setTimeout(() => { el.style.display = 'none'; }, 5000);
 }
 
-// ── User search filter ────────────────────────────────────────
+// -- User search filter ----------------------------------------
 function filterUsers() {
   const q = document.getElementById('adminSearch').value.toLowerCase().trim();
   document.querySelectorAll('.user-row').forEach(r => {
@@ -288,7 +289,7 @@ function filterUsers() {
   });
 }
 
-// ── Update role (Admin only) ──────────────────────────────────
+// -- Update role (Admin only) ----------------------------------
 <?php if ($sess_role === 'admin'): ?>
 function updateRole(userId, newRole) {
   if (!confirm(`Update this user's role to "${newRole.replace(/_/g,' ')}"?`)) return;
@@ -311,9 +312,9 @@ function updateRole(userId, newRole) {
     .catch(() => showAlert('Network error.', 'error'));
 }
 
-// ── Override Modal ─────────────────────────────────────────────
+// -- Override Modal ---------------------------------------------
 const overrideModal = document.getElementById('overrideModal');
-const roleMap = { admin:'System Admin',osa_director:'OSA Director',club_adviser:'Club Adviser',finance_officer:'Finance Officer',student:'Student' };
+const roleMap = { admin:'System Admin',ssc:'Supreme Student Council (SSC)',club_adviser:'Club Adviser',ssc:'Supreme Student Council (SSC)',student:'Student' };
 
 document.getElementById('openOverrideBtn')?.addEventListener('click', () => {
   overrideModal.classList.add('active');
@@ -329,7 +330,7 @@ document.getElementById('openOverrideBtn')?.addEventListener('click', () => {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;">
           <div>
             <strong style="font-size:0.88rem;">${r.title}</strong>
-            <div style="font-size:0.75rem;color:#94a3b8;">${r.club_name} — ₱${parseFloat(r.amount).toLocaleString('en-PH',{minimumFractionDigits:2})}</div>
+            <div style="font-size:0.75rem;color:#94a3b8;">${r.club_name} � ?${parseFloat(r.amount).toLocaleString('en-PH',{minimumFractionDigits:2})}</div>
             <div style="font-size:0.75rem;color:#f59e0b;">Status: ${r.status}</div>
           </div>
           <button class="card-btn" style="background:#2563eb;color:#fff;white-space:nowrap;"

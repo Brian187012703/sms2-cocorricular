@@ -352,3 +352,45 @@ h2 {
   .btn-done,
   .btn-signin { height: 52px; font-size: 1rem; margin-top: 12px; }
 }
+
+/* Password wrapper & toggle */
+.password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.password-wrap input {
+  width: 100%;
+  padding-right: 42px;
+}
+
+.toggle-pw {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-pw:hover {
+  color: #2563eb;
+}
+
+/* Extreme small screens (<= 400px) */
+@media (max-width: 400px) {
+  .right { padding: 16px 12px 24px; }
+  .form-group label { font-size: 0.75rem; }
+  .form-group input,
+  .form-group select,
+  .form-group textarea { font-size: 0.88rem; padding: 9px 12px; }
+  .bcp-logo { width: 52px; height: 52px; margin-bottom: 12px; }
+  h2 { font-size: 1.15rem; }
+}

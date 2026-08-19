@@ -20,16 +20,14 @@ $user_id        = (int)$_SESSION['user_id'];
 // Role Titles map
 $role_labels = [
     'student'         => 'General Student',
-    'club_adviser'    => 'Club Adviser (Faculty Member)',
-    'osa_director'    => 'OSA Director / Coordinator',
-    'finance_officer' => 'Finance / Cashier Officer',
+    'club_adviser'    => 'Organization Adviser (Faculty Member)',
+    'ssc'    => 'Supreme Student Council (SSC)',
+    
     'admin'           => 'System Administrator'
 ];
 $role = $role_labels[$sess_role] ?? 'User';
 
-if (isset($conn)) {
-    $conn->close();
-}
+// Connection remains open for sidebar and qr_modal usage
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -39,10 +37,7 @@ if (isset($conn)) {
   <title>Account Settings – BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/account.css?v=<?= filemtime(__DIR__ . '/../css/account.css') ?>"/>
-  <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
-  <meta name="loader-logo" content="../images/BCP_LOGO.png"/>
-  <script src="../js/page-loader.js"></script>
 </head>
 <body>
 
@@ -241,8 +236,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
   <div class="footer">Co-Curricular Management System &copy; 2026</div>
 </div><!-- end main -->
 
-<div class="sidebar-overlay" id="sidebarOverlay"></div>
-
 <script src="../js/dashboard.js"></script>
 <script>
 const API = '../shared/auth_actions.php';
@@ -373,48 +366,7 @@ document.getElementById('btnDeleteAccount')?.addEventListener('click', async () 
 });
 </script>
 
-<?php if ($sess_role === 'student'): ?>
-<!-- Personal Event Attendance QR Modal -->
-<div class="qr-modal-overlay" id="qrModalOverlay">
-  <div class="qr-modal-card">
-    <div class="qr-modal-header">
-      <h3><i class="fa-solid fa-qrcode"></i> Personal Attendance QR</h3>
-      <button class="notif-close" id="closeQrModalBtn" title="Close">×</button>
-    </div>
-    <div class="qr-modal-body">
-      <div class="qr-code-frame">
-        <div class="qr-scan-line"></div>
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=STUDENT-2026-BCP-<?= $user_id ?>&margin=8&color=0f172a&bgcolor=ffffff" alt="Student Attendance QR Code"/>
-      </div>
-      <div class="qr-student-name"><?= htmlspecialchars($first_name . ' ' . $last_name) ?></div>
-      <div class="qr-student-id">ID: STUDENT-2026-BCP-<?= $user_id ?></div>
-      <p class="qr-subtext">Show this QR at campus event scanners for instant attendance logging.</p>
-    </div>
-  </div>
-</div>
 
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-  const qrFabBtn = document.getElementById('qrFabBtn');
-  const qrModalOverlay = document.getElementById('qrModalOverlay');
-  const closeQrModalBtn = document.getElementById('closeQrModalBtn');
-
-  if (qrFabBtn && qrModalOverlay) {
-    qrFabBtn.addEventListener('click', () => {
-      qrModalOverlay.classList.add('active');
-    });
-    closeQrModalBtn?.addEventListener('click', () => {
-      qrModalOverlay.classList.remove('active');
-    });
-    qrModalOverlay.addEventListener('click', (e) => {
-      if (e.target === qrModalOverlay) {
-        qrModalOverlay.classList.remove('active');
-      }
-    });
-  }
-});
-</script>
-<?php endif; ?>
 
 </body>
 </html>

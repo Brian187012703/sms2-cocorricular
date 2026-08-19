@@ -3,9 +3,14 @@
 //  NOTIFICATION_ACTIONS.PHP — shared notification helper
 //  Called internally by other action handlers + directly via AJAX
 // ============================================================
-header('Content-Type: application/json');
-session_start();
+if (!headers_sent()) {
+    header('Content-Type: application/json');
+}
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 require_once __DIR__ . '/db.php';
+
 
 function respond(bool $ok, string $msg, array $extra = []): void {
     echo json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
@@ -71,6 +76,26 @@ switch ($action) {
             $conn->query("UPDATE notifications SET is_read = 1 WHERE user_id = $user_id");
         }
         respond(true, 'Marked as read.');
+
+    case 'broadcast':
+        $user_role = $_SESSION['role'] ?? 'student';
+        if (!in_array($user_role, ['club_adviser', 'admin', 'ssc'])) respond(false, 'Unauthorized.');
+
+        $club_id = (int)($_POST['club_id'] ?? 0);
+        $title   = trim($_POST['title']   ?? '');
+        $message = trim($_POST['message'] ?? '');
+
+        if (!$club_id || empty($title) || empty($message)) respond(false, 'Missing required fields.');
+
+        $members = $conn->query("SELECT user_id FROM club_memberships WHERE club_id=$club_id AND status='Active'");
+        $count = 0;
+        if ($members) {
+            while ($m = $members->fetch_assoc()) {
+                push_notification($conn, (int)$m['user_id'], $title, $message, 'info');
+                $count++;
+            }
+        }
+        respond(true, "Announcement broadcasted to $count active member(s).", ['sent_count' => $count]);
 
     default:
         respond(false, 'Unknown action.');

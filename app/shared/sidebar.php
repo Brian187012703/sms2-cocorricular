@@ -41,12 +41,14 @@ $user_role  = $_SESSION['role'] ?? 'student';
     </div>
 
     <!-- 2. Club Directory -->
+    <?php if ($user_role !== 'club_adviser'): ?>
     <div class="nav-group">
       <a href="<?= $APP_ROOT ?>dashboard/club_directory.php" class="sidebar-item <?= $ACTIVE_NAV==='clubs'?'active':'' ?>">
         <i class="fa-solid fa-sitemap"></i>
-        <span>Club Directory</span>
+        <span>Organization Directory</span>
       </a>
     </div>
+    <?php endif; ?>
 
     <!-- ══════════════════════════════════════
          GROUP 2 — Governance
@@ -57,40 +59,13 @@ $user_role  = $_SESSION['role'] ?? 'student';
       <div class="brand-sub">Roster & Elections</div>
     </div>
 
-    <!-- 3. Membership Roster -->
-    <?php
-      $roster_items = [];
-      if ($user_role === 'student') {
-          $roster_items[] = ['url' => $APP_ROOT . 'dashboard/roster.php#memberships', 'label' => 'My Club Memberships'];
-      }
-      if ($user_role === 'club_adviser') {
-          $roster_items[] = ['url' => $APP_ROOT . 'dashboard/roster.php#applicants', 'label' => 'Applicant Queue'];
-      }
-      if (in_array($user_role, ['club_adviser', 'osa_director', 'admin'])) {
-          $roster_items[] = ['url' => $APP_ROOT . 'dashboard/roster.php#master', 'label' => 'Master Member Roster'];
-      }
-    ?>
-    <?php if (count($roster_items) === 1): ?>
-      <div class="nav-group">
-        <a href="<?= $roster_items[0]['url'] ?>" class="sidebar-item <?= $ACTIVE_NAV==='roster'?'active':'' ?>">
-          <i class="fa-solid fa-users"></i>
-          <span>Membership Roster</span>
-        </a>
-      </div>
-    <?php elseif (count($roster_items) > 1): ?>
-      <div class="nav-group">
-        <button class="sidebar-item <?= $ACTIVE_NAV==='roster'?'active open':'' ?> dropdown-trigger" data-target="drop3">
-          <i class="fa-solid fa-users"></i>
-          <span>Membership Roster</span>
-          <i class="fa-solid fa-chevron-down arrow"></i>
-        </button>
-        <div class="dropdown-menu <?= $ACTIVE_NAV==='roster'?'open':'' ?>" id="drop3">
-          <?php foreach ($roster_items as $item): ?>
-            <a href="<?= $item['url'] ?>" class="dropdown-item"><?= $item['label'] ?></a>
-          <?php endforeach; ?>
-        </div>
-      </div>
-    <?php endif; ?>
+    <!-- 3. Applicant Queue / Membership Roster -->
+    <div class="nav-group">
+      <a href="<?= $APP_ROOT ?>dashboard/roster.php" class="sidebar-item <?= $ACTIVE_NAV==='roster'?'active':'' ?>">
+        <i class="fa-solid fa-users"></i>
+        <span><?= ($user_role === 'student') ? 'Membership Roster' : 'Applicant Queue' ?></span>
+      </a>
+    </div>
 
     <!-- 4. Elections — single direct link for all roles -->
     <div class="nav-group">
@@ -123,10 +98,10 @@ $user_role  = $_SESSION['role'] ?? 'student';
       if ($user_role === 'student') {
           $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/attendance.php#logs', 'label' => 'My Attendance Logs'];
       }
-      if (in_array($user_role, ['club_adviser', 'osa_director', 'admin'])) {
+      if (in_array($user_role, ['club_adviser', 'ssc', 'admin'])) {
           $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/attendance.php#scanner', 'label' => 'Scanner Terminal (QR / RFID)'];
       }
-      if (in_array($user_role, ['osa_director', 'admin'])) {
+      if (in_array($user_role, ['ssc', 'admin'])) {
           $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/attendance.php#analytics', 'label' => 'Absentee Analytics'];
       }
     ?>
@@ -160,49 +135,40 @@ $user_role  = $_SESSION['role'] ?? 'student';
       </a>
     </div>
 
-    <!-- ══════════════════════════════════════
-         GROUP 4 — Finance
-    ══════════════════════════════════════ -->
+    <!-- GROUP 4 — AI & Analytics -->
+    <?php if ($user_role !== 'student'): ?>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-brand sidebar-brand-2">
+      <div class="brand-title">AI & Analytics</div>
+      <div class="brand-sub">Intelligent Insights</div>
+    </div>
+
+    <!-- 7.1 Intelligent Reports -->
+    <div class="nav-group">
+      <a href="<?= $APP_ROOT ?>dashboard/reports.php" class="sidebar-item <?= $ACTIVE_NAV==='reports'?'active':'' ?>">
+        <i class="fa-solid fa-brain"></i>
+        <span>Intelligent Reports</span>
+      </a>
+    </div>
+
+    <!-- GROUP 5 — Finance -->
     <div class="sidebar-divider"></div>
 
     <!-- 8. Budget & Finance -->
-    <?php
-      $budget_items = [];
-      if (in_array($user_role, ['club_adviser', 'admin'])) {
-          $budget_items[] = ['url' => $APP_ROOT . 'dashboard/budget.php#requisition', 'label' => 'Requisition & Receipt Upload'];
-      }
-      if (in_array($user_role, ['club_adviser', 'osa_director', 'finance_officer', 'admin'])) {
-          $budget_items[] = ['url' => $APP_ROOT . 'dashboard/budget.php#approvals', 'label' => 'Approval Portal & Disbursals'];
-      }
-    ?>
-    <?php if (count($budget_items) === 1): ?>
-      <div class="nav-group">
-        <a href="<?= $budget_items[0]['url'] ?>" class="sidebar-item <?= $ACTIVE_NAV==='budget'?'active':'' ?>">
-          <i class="fa-solid fa-hand-holding-dollar"></i>
-          <span>Budget & Finance</span>
-        </a>
-      </div>
-    <?php elseif (count($budget_items) > 1): ?>
-      <div class="nav-group">
-        <button class="sidebar-item <?= $ACTIVE_NAV==='budget'?'active open':'' ?> dropdown-trigger" data-target="drop8">
-          <i class="fa-solid fa-hand-holding-dollar"></i>
-          <span>Budget & Finance</span>
-          <i class="fa-solid fa-chevron-down arrow"></i>
-        </button>
-        <div class="dropdown-menu <?= $ACTIVE_NAV==='budget'?'open':'' ?>" id="drop8">
-          <?php foreach ($budget_items as $item): ?>
-            <a href="<?= $item['url'] ?>" class="dropdown-item"><?= $item['label'] ?></a>
-          <?php endforeach; ?>
-        </div>
-      </div>
+    <div class="nav-group">
+      <a href="<?= $APP_ROOT ?>dashboard/budget.php" class="sidebar-item <?= $ACTIVE_NAV==='budget'?'active':'' ?>">
+        <i class="fa-solid fa-hand-holding-dollar"></i>
+        <span>Budget & Finance</span>
+      </a>
+    </div>
     <?php endif; ?>
 
 
 
     <!-- ══════════════════════════════════════
-         GROUP 5 — Administration (Admin & OSA ONLY)
+         GROUP 5 — Administration (Admin & SSC ONLY)
     ══════════════════════════════════════ -->
-    <?php if (in_array($user_role, ['admin', 'osa_director'])): ?>
+    <?php if (in_array($user_role, ['admin', 'ssc'])): ?>
     <div class="sidebar-divider"></div>
     <div class="sidebar-brand sidebar-brand-2">
       <div class="brand-title">Administration</div>

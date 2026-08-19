@@ -59,7 +59,7 @@ switch ($action) {
 
     // ── LIST pending for OSA/Admin ────────────────────────────
     case 'list_pending': {
-        if (!in_array($user_role, ['osa_director','admin'])) achRespond(false, 'Not authorized.');
+        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Not authorized.');
         $rows = $conn->query(
             "SELECT a.id, a.title, a.competition, a.award_date, a.proof_file, a.created_at,
                     c.name AS club_name, u.first_name, u.last_name
@@ -119,7 +119,7 @@ switch ($action) {
         $stmt->close();
 
         // Notify OSA directors
-        $osas = $conn->query("SELECT id FROM users WHERE role = 'osa_director'");
+        $osas = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
         while ($o = $osas->fetch_assoc()) {
             push_notification($conn, (int)$o['id'], 'New Achievement Submission',
                 "A new achievement \"$title\" from " . ($_SESSION['first_name']??'') . " was submitted for verification.", 'achievement');
@@ -130,7 +130,7 @@ switch ($action) {
 
     // ── VERIFY achievement (OSA / Admin) ─────────────────────
     case 'verify': {
-        if (!in_array($user_role, ['osa_director','admin'])) achRespond(false, 'Only OSA Directors can verify achievements.');
+        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Only OSA Directors can verify achievements.');
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
 
@@ -151,7 +151,7 @@ switch ($action) {
 
     // ── REJECT achievement (OSA / Admin) ─────────────────────
     case 'reject': {
-        if (!in_array($user_role, ['osa_director','admin'])) achRespond(false, 'Not authorized.');
+        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Not authorized.');
         $id   = (int)($_POST['id']    ?? 0);
         $note = trim($_POST['notes']  ?? 'Please provide additional documentation.');
         if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
