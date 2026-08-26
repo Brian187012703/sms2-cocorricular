@@ -1,7 +1,7 @@
 <?php
 // ============================================================
 //  ADMIN_SYSTEM.PHP  (dashboard/)
-//  Co-Curricular System — System Administration (Live DB + AJAX)
+//  Co-Curricular System â€” System Administration (Live DB + AJAX)
 //  Accessible only to: admin, ssc
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
@@ -14,13 +14,13 @@ $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
 $sess_role    = $_SESSION['role'] ?? 'admin';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'A', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)$_SESSION['user_id'];
 
 // -- Live stats ------------------------------------------------
 $user_count   = (int)$conn->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
 $club_count   = (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Active'")->fetch_row()[0];
 $pending_apps = (int)$conn->query("SELECT COUNT(*) FROM club_memberships WHERE status='Pending'")->fetch_row()[0];
-$pending_ach  = (int)$conn->query("SELECT COUNT(*) FROM achievements WHERE status='Pending'")->fetch_row()[0];
 
 // -- User list -------------------------------------------------
 $all_users = $conn->query(
@@ -39,9 +39,8 @@ $audit_logs = $conn->query(
 
 $role_labels = [
     'admin'          => 'System Admin',
-    'ssc'   => 'Supreme Student Council (SSC)',
+    'ssc'            => 'Supreme Student Council (SSC)',
     'club_adviser'   => 'Club Adviser',
-    'ssc'=> 'Supreme Student Council (SSC)',
     'student'        => 'Student',
 ];
 ?>
@@ -50,7 +49,7 @@ $role_labels = [
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>System Administration – BCP Co-Curricular Portal</title>
+  <title>System Administration â€“ BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
@@ -59,6 +58,7 @@ $role_labels = [
   <style>
     .role-badge { display:inline-block;padding:2px 9px;border-radius:12px;font-size:0.72rem;font-weight:700;letter-spacing:0.02em; }
     .role-admin { background:#fee2e2;color:#991b1b; }
+    .role-ssc { background:#fef3c7;color:#92400e; }
     .role-osa { background:#fef3c7;color:#92400e; }
     .role-adviser { background:#e0e7ff;color:#3730a3; }
     .role-officer { background:#ede9fe;color:#5b21b6; }
@@ -97,12 +97,16 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
       <div class="search-wrap">
-        <input type="text" id="adminSearch" placeholder="Search users..." oninput="filterUsers()"/>
+        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
         <i class="fa-solid fa-magnifying-glass"></i>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i class="fa-solid fa-qrcode"></i></button>
       <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
-        <?= $sess_initial ?>
+        <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+        <?php else: ?>
+          <?= $sess_initial ?>
+        <?php endif; ?>
       </a>
     </div>
   </div>
@@ -154,7 +158,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <?php endif; ?>
       </div>
 
-      <!-- User Management Table (Admin only can change roles; OSA can view) -->
+      <!-- User Management Table (Admin only can change roles; SSC can view) -->
       <div class="table-card" id="users">
         <h3>
           <i class="fa-solid fa-users-gear" style="color:#2563eb;"></i>
@@ -234,8 +238,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <td><?= htmlspecialchars($log['first_name'] . ' ' . $log['last_name']) ?></td>
               <td><span class="role-badge role-<?= str_replace('_','',$log['role']) ?>"><?= htmlspecialchars($role_labels[$log['role']] ?? $log['role']) ?></span></td>
               <td><code style="font-size:0.75rem;"><?= htmlspecialchars($log['action']) ?></code></td>
-              <td><?= htmlspecialchars($log['target_table'] ?? '—') ?></td>
-              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= htmlspecialchars($log['detail'] ?? '—') ?></td>
+              <td><?= htmlspecialchars($log['target_table'] ?? 'â€”') ?></td>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><?= htmlspecialchars($log['detail'] ?? 'â€”') ?></td>
             </tr>
             <?php endforeach; ?>
           </tbody>
@@ -255,7 +259,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
   <div class="modal-card">
     <div class="modal-header">
       <h3><i class="fa-solid fa-sliders" style="color:#f59e0b;"></i> Force-Approve Stuck Budget Request</h3>
-      <button style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#64748b;" id="closeOverrideModal">&times;</button>
+      <button style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#64748b;" id="closeOverrideModal"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-body">
       <p style="font-size:0.85rem;color:#64748b;margin:0 0 14px;">Requests older than 7 days without action will appear here.</p>
@@ -330,7 +334,7 @@ document.getElementById('openOverrideBtn')?.addEventListener('click', () => {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1f5f9;">
           <div>
             <strong style="font-size:0.88rem;">${r.title}</strong>
-            <div style="font-size:0.75rem;color:#94a3b8;">${r.club_name} — ?${parseFloat(r.amount).toLocaleString('en-PH',{minimumFractionDigits:2})}</div>
+            <div style="font-size:0.75rem;color:#94a3b8;">${r.club_name} â€” ?${parseFloat(r.amount).toLocaleString('en-PH',{minimumFractionDigits:2})}</div>
             <div style="font-size:0.75rem;color:#f59e0b;">Status: ${r.status}</div>
           </div>
           <button class="card-btn" style="background:#2563eb;color:#fff;white-space:nowrap;"
@@ -365,5 +369,6 @@ function forceApprove(id) {
 }
 <?php endif; ?>
 </script>
+<script src="../js/table-pagination.js"></script>
 </body>
 </html>

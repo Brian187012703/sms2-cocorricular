@@ -10,6 +10,9 @@ require_once __DIR__ . '/notification_actions.php';
 
 if (empty($_SESSION['user_id'])) { echo json_encode(['success'=>false,'message'=>'Not authenticated.']); exit; }
 
+echo json_encode(['success' => false, 'message' => 'The Awards & Achievements module has been retired.']);
+exit;
+
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
 $action    = $_POST['action'] ?? $_GET['action'] ?? '';
@@ -57,7 +60,7 @@ switch ($action) {
         achRespond(true, 'OK', ['achievements' => $rows]);
     }
 
-    // ── LIST pending for OSA/Admin ────────────────────────────
+    // ── LIST pending for SSC/Admin ────────────────────────────
     case 'list_pending': {
         if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Not authorized.');
         $rows = $conn->query(
@@ -118,24 +121,24 @@ switch ($action) {
         $new_id = $conn->insert_id;
         $stmt->close();
 
-        // Notify OSA directors
-        $osas = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
-        while ($o = $osas->fetch_assoc()) {
+        // Notify SSC officers
+        $sscs = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
+        while ($o = $sscs->fetch_assoc()) {
             push_notification($conn, (int)$o['id'], 'New Achievement Submission',
                 "A new achievement \"$title\" from " . ($_SESSION['first_name']??'') . " was submitted for verification.", 'achievement');
         }
         log_audit($conn, $user_id, 'achievement_submit', 'achievements', $new_id, "Submitted: $title");
-        achRespond(true, 'Achievement submitted for OSA verification.', ['id' => $new_id]);
+        achRespond(true, 'Achievement submitted for SSC verification.', ['id' => $new_id]);
     }
 
-    // ── VERIFY achievement (OSA / Admin) ─────────────────────
+    // ── VERIFY achievement (SSC / Admin) ─────────────────────
     case 'verify': {
-        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Only OSA Directors can verify achievements.');
+        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Only SSC Officers can verify achievements.');
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
 
         $stmt = $conn->prepare("UPDATE achievements SET status='Verified', verified_by=?, notes=? WHERE id=?");
-        $note = trim($_POST['notes'] ?? 'Verified and endorsed by OSA Director.');
+        $note = trim($_POST['notes'] ?? 'Verified and endorsed by SSC.');
         $stmt->bind_param('isi', $user_id, $note, $id);
         if (!$stmt->execute()) achRespond(false, 'Failed to verify.');
         $stmt->close();
@@ -143,13 +146,13 @@ switch ($action) {
         $ach = $conn->query("SELECT submitted_by, title FROM achievements WHERE id=$id")->fetch_assoc();
         if ($ach) {
             push_notification($conn, (int)$ach['submitted_by'], 'Achievement Verified! 🏆',
-                "Your achievement \"{$ach['title']}\" has been verified and endorsed by the OSA Director!", 'success');
+                "Your achievement \"{$ach['title']}\" has been verified and endorsed by the SSC!", 'success');
         }
         log_audit($conn, $user_id, 'achievement_verify', 'achievements', $id, "Verified #$id");
         achRespond(true, 'Achievement verified and endorsed.');
     }
 
-    // ── REJECT achievement (OSA / Admin) ─────────────────────
+    // ── REJECT achievement (SSC / Admin) ─────────────────────
     case 'reject': {
         if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Not authorized.');
         $id   = (int)($_POST['id']    ?? 0);

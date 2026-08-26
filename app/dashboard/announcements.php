@@ -15,6 +15,7 @@ $sess_first = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
 $sess_role = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id = (int) $_SESSION['user_id'];
 $ACTIVE_NAV = 'announcements';
 
@@ -273,15 +274,18 @@ $req_cnt = count(array_filter($announcements, fn($a) => $a['category'] === 'Requ
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
         <div class="search-wrap">
-          <input type="text" id="annSearchInput" placeholder="Search announcements..."
-            oninput="filterAnnouncements()" />
+          <input type="text" placeholder="Search pages, events..." autocomplete="off" />
           <i class="fa-solid fa-magnifying-glass"></i>
         </div>
         <button class="topbar-qr-btn" id="qrFabBtn" title="View Personal Attendance QR Code" type="button">
           <i class="fa-solid fa-qrcode"></i>
         </button>
         <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
-          <?= $sess_initial ?>
+          <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+            <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+          <?php else: ?>
+            <?= $sess_initial ?>
+          <?php endif; ?>
         </a>
       </div>
     </div>
@@ -441,7 +445,7 @@ $req_cnt = count(array_filter($announcements, fn($a) => $a['category'] === 'Requ
         <h3 style="margin:0; font-size:1.1rem; color:#0f172a;"><i class="fa-solid fa-bullhorn"
             style="color:#2563eb;"></i> Post Organization Announcement</h3>
         <button onclick="closeCreateModal()"
-          style="background:none; border:none; font-size:1.2rem; cursor:pointer; color:#64748b;">&times;</button>
+          style="background:none; border:none; font-size:1.1rem; cursor:pointer; color:#64748b;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
       <form id="createAnnForm" onsubmit="submitAnnouncement(event)">

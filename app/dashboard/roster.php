@@ -15,6 +15,7 @@ $sess_first = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
 $sess_role = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id = (int) $_SESSION['user_id'];
 
 // -- Fetch data based on role ----------------------------------
@@ -57,7 +58,7 @@ if ($res_members) {
 // Fetch all active accredited clubs for organization choice selection
 $all_clubs = $conn->query("SELECT id, name, code, category, description FROM clubs WHERE status = 'Active' ORDER BY category, name")->fetch_all(MYSQLI_ASSOC);
 
-// Pending applicants (Adviser, OSA, Admin)
+// Pending applicants (Adviser, SSC, Admin)
 $pending_applicants = [];
 if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
   $club_filter = '';
@@ -102,7 +103,7 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
   $stmt->close();
 }
 
-// Active members (Adviser, OSA, Admin)
+// Active members (Adviser, SSC, Admin)
 $active_members = [];
 if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
   $club_filter = '';
@@ -123,8 +124,12 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
             FROM club_memberships cm
             JOIN clubs c ON c.id = cm.club_id
             JOIN users u ON u.id = cm.user_id
-            WHERE cm.status = 'Active' $club_filter
-            ORDER BY c.name, cm.joined_at DESC";
+            WHERE cm.status = 'Active'
+              AND u.role NOT IN ('club_adviser', 'admin')
+              AND LOWER(cm.role) != 'adviser'
+              AND cm.role NOT LIKE '%adviser%'
+              $club_filter
+            ORDER BY u.first_name ASC, u.last_name ASC";
   $stmt = $conn->prepare($sql);
   if ($bind_params)
     $stmt->bind_param($bind_types, ...$bind_params);
@@ -168,13 +173,17 @@ $active_count = count($active_members);
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
         <div class="search-wrap">
-          <input type="text" id="rosterSearch" placeholder="Search roster..." oninput="filterRoster()" />
+          <input type="text" placeholder="Search pages, events..." autocomplete="off" />
           <i class="fa-solid fa-magnifying-glass"></i>
         </div>
         <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i
             class="fa-solid fa-qrcode"></i></button>
         <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
-          <?= $sess_initial ?>
+          <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+            <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+          <?php else: ?>
+            <?= $sess_initial ?>
+          <?php endif; ?>
         </a>
       </div>
     </div>
@@ -195,7 +204,7 @@ $active_count = count($active_members);
 
       <div class="content-body">
 
-        <!-- Stats Row (Adviser, OSA, Admin) -->
+        <!-- Stats Row (Adviser, SSC, Admin) -->
         <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
         <div class="info-row">
             <div class="info-card">
@@ -212,7 +221,7 @@ $active_count = count($active_members);
               <div class="card-label"><i class="fa-solid fa-file-export"></i> Export Roster</div>
               <div style="margin-top:10px;">
                 <button class="card-btn" id="exportCsvBtn" style="width:100%; height:40px; justify-content:center; background:#2563eb; color:#fff; font-weight:700; border-radius:8px;">
-                  <i class="fa-solid fa-download"></i> Export CSV
+                  <i class="fa-solid fa-download"></i> Export
                 </button>
               </div>
             </div>
@@ -316,7 +325,7 @@ $active_count = count($active_members);
           </div>
         <?php endif; ?>
 
-        <!-- Pending Applicant Queue (Adviser, OSA, Admin) -->
+        <!-- Pending Applicant Queue (Adviser, SSC, Admin) -->
         <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
           <div class="table-card" id="applicant-queue">
             <h3><i class="fa-solid fa-user-plus" style="color:#f59e0b;"></i>
@@ -477,6 +486,11 @@ $active_count = count($active_members);
           `;
         });
         if (body) body.innerHTML = html;
+        const sTbl = document.getElementById('studentOrgRosterTable');
+        if (sTbl && window.initTablePagination) {
+          if (sTbl._paginator) sTbl._paginator.refresh();
+          else window.initTablePagination(sTbl, { pageSize: 5 });
+        }
       }
 
       if (rosterCard) rosterCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -510,9 +524,14 @@ $active_count = count($active_members);
         .then(data => {
           if (data.success) {
             showAlert(data.message, 'success');
-            const row = document.getElementById('applicant-row-' + id);
-            if (row) row.style.opacity = '0.4';
-            setTimeout(() => { row?.remove(); location.reload(); }, 1000);
+            const row = document.getElementById(`applicant-row-${id}`);
+            if (row) {
+              row.style.opacity = '0';
+              setTimeout(() => {
+                row.remove();
+                document.querySelectorAll('#pendingTable, #masterRosterTable').forEach(t => t._paginator && t._paginator.refresh());
+              }, 300);
+            }
           } else {
             showAlert(data.message, 'error');
           }
@@ -521,17 +540,23 @@ $active_count = count($active_members);
     }
 
     function removeMember(id) {
-      if (!confirm('Are you sure you want to remove this member from the club?')) return;
+      if (!confirm('Are you sure you want to remove this member from the organization?')) return;
       const fd = new FormData();
-      fd.set('action', 'remove');
+      fd.set('action', 'remove_member');
       fd.set('id', id);
       fetch('../shared/roster_actions.php', { method: 'POST', body: fd })
         .then(r => r.json())
         .then(data => {
           if (data.success) {
-            showAlert('Member removed.', 'success');
-            const row = document.getElementById('member-row-' + id);
-            if (row) row.remove();
+            showAlert(data.message, 'success');
+            const row = document.getElementById(`member-row-${id}`);
+            if (row) {
+              row.style.opacity = '0';
+              setTimeout(() => {
+                row.remove();
+                document.querySelectorAll('#pendingTable, #masterRosterTable').forEach(t => t._paginator && t._paginator.refresh());
+              }, 300);
+            }
           } else {
             showAlert(data.message, 'error');
           }
@@ -543,7 +568,14 @@ $active_count = count($active_members);
     function filterRoster() {
       const q = document.getElementById('rosterSearch').value.toLowerCase().trim();
       document.querySelectorAll('.roster-row').forEach(row => {
-        row.style.display = (!q || row.textContent.toLowerCase().includes(q)) ? '' : 'none';
+        const match = (!q || row.textContent.toLowerCase().includes(q));
+        row.setAttribute('data-search-hidden', match ? 'false' : 'true');
+      });
+      document.querySelectorAll('#pendingTable, #masterRosterTable, #studentOrgRosterTable').forEach(t => {
+        if (t._paginator) {
+          t._paginator.currentPage = 1;
+          t._paginator.refresh();
+        }
       });
     }
 
@@ -555,13 +587,35 @@ $active_count = count($active_members);
           if (!data.success) { showAlert(data.message, 'error'); return; }
           const rows = data.csv_data;
           if (!rows.length) { showAlert('No active members to export.', 'error'); return; }
-          const headers = ['First Name', 'Last Name', 'Email', 'Organization Name', 'Organization Code', 'Role', 'Joined At'];
+          const headers = [
+            'Student Number',
+            'First Name',
+            'Last Name',
+            'Email',
+            'Year',
+            'Section',
+            'Organization Name',
+            'Organization Code',
+            'Role',
+            'Joined At'
+          ];
           const csv = [headers.join(','), ...rows.map(r =>
-            [r.first_name, r.last_name, r.email, r.club_name, r.code, r.member_role, r.joined_at]
+            [
+              r.student_number,
+              r.first_name,
+              r.last_name,
+              r.email,
+              r.year_level,
+              r.section,
+              r.club_name,
+              r.code,
+              r.member_role,
+              r.joined_at
+            ]
               .map(v => `"${(v || '').replace(/"/g, '""')}"`)
               .join(',')
           )].join('\n');
-          const blob = new Blob([csv], { type: 'text/csv' });
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a'); a.href = url;
           a.download = 'BCP_Organization_Roster_' + new Date().toISOString().slice(0, 10) + '.csv';
@@ -602,6 +656,7 @@ Application Date:   ${ap.joined_at}
       }
     }
   </script>
+  <script src="../js/table-pagination.js"></script>
 </body>
 
 </html>

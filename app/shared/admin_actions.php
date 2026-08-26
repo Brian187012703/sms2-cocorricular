@@ -129,7 +129,6 @@ switch ($action) {
             'total_clubs'         => (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Active'")->fetch_row()[0],
             'total_events'        => (int)$conn->query("SELECT COUNT(*) FROM events")->fetch_row()[0],
             'pending_budgets'     => (int)$conn->query("SELECT COUNT(*) FROM budget_requests WHERE status NOT IN ('Disbursed','Rejected')")->fetch_row()[0],
-            'pending_achievements'=> (int)$conn->query("SELECT COUNT(*) FROM achievements WHERE status='Pending'")->fetch_row()[0],
             'total_members'       => (int)$conn->query("SELECT COUNT(*) FROM club_memberships WHERE status='Active'")->fetch_row()[0],
             'recent_logs'         => (int)$conn->query("SELECT COUNT(*) FROM audit_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")->fetch_row()[0],
         ];

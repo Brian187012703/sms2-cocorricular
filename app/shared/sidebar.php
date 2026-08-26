@@ -92,48 +92,39 @@ $user_role  = $_SESSION['role'] ?? 'student';
       </a>
     </div>
 
-    <!-- 6. Attendance Tracker -->
-    <?php
-      $attendance_items = [];
-      if ($user_role === 'student') {
-          $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/attendance.php#logs', 'label' => 'My Attendance Logs'];
-      }
-      if (in_array($user_role, ['club_adviser', 'ssc', 'admin'])) {
-          $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/attendance.php#scanner', 'label' => 'Scanner Terminal (QR / RFID)'];
-      }
-      if (in_array($user_role, ['ssc', 'admin'])) {
-          $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/attendance.php#analytics', 'label' => 'Absentee Analytics'];
-      }
-    ?>
-    <?php if (count($attendance_items) === 1): ?>
+    <!-- 6. Tracking Portal / My Attendance History -->
+    <?php if ($user_role === 'student'): ?>
       <div class="nav-group">
-        <a href="<?= $attendance_items[0]['url'] ?>" class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active':'' ?>">
-          <i class="fa-solid fa-qrcode"></i>
-          <span>Attendance Tracker</span>
+        <a href="<?= $APP_ROOT ?>dashboard/tracking_history.php" class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active':'' ?>">
+          <i class="fa-solid fa-clipboard-user"></i>
+          <span>My Attendance History</span>
         </a>
       </div>
-    <?php elseif (count($attendance_items) > 1): ?>
+    <?php else: ?>
+      <?php
+        $attendance_items = [
+            ['url' => $APP_ROOT . 'dashboard/tracking_qr_generator.php', 'label' => 'Event QR Generator', 'id' => 'generator'],
+            ['url' => $APP_ROOT . 'dashboard/tracking_scanner.php', 'label' => 'On-Site Scanner Terminal', 'id' => 'scanner'],
+            ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php', 'label' => 'Attendance List per Event', 'id' => 'attendance_list'],
+        ];
+        if (in_array($user_role, ['ssc', 'admin'])) {
+            $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php#analytics', 'label' => 'Absentee Analytics & Overrides', 'id' => 'analytics'];
+        }
+      ?>
       <div class="nav-group">
-        <button class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active open':'' ?> dropdown-trigger" data-target="drop6">
+        <button class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active':'' ?> dropdown-trigger" data-target="drop6">
           <i class="fa-solid fa-qrcode"></i>
-          <span>Attendance Tracker</span>
+          <span>Tracking Portal</span>
           <i class="fa-solid fa-chevron-down arrow"></i>
         </button>
-        <div class="dropdown-menu <?= $ACTIVE_NAV==='attendance'?'open':'' ?>" id="drop6">
+        <div class="dropdown-menu" id="drop6">
           <?php foreach ($attendance_items as $item): ?>
-            <a href="<?= $item['url'] ?>" class="dropdown-item"><?= $item['label'] ?></a>
+            <a href="<?= $item['url'] ?>" class="dropdown-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') === ($item['id'] ?? '')) ? 'active' : '' ?>"><?= $item['label'] ?></a>
           <?php endforeach; ?>
         </div>
       </div>
     <?php endif; ?>
 
-    <!-- 7. Awards & Achievements -->
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/achievements.php" class="sidebar-item <?= $ACTIVE_NAV==='achievements'?'active':'' ?>">
-        <i class="fa-solid fa-trophy"></i>
-        <span>Awards & Achievements</span>
-      </a>
-    </div>
 
     <!-- GROUP 4 — AI & Analytics -->
     <?php if ($user_role !== 'student'): ?>

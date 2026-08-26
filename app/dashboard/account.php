@@ -17,12 +17,41 @@ $sess_role      = $_SESSION['role'] ?? 'student';
 $sess_initial   = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
 $user_id        = (int)$_SESSION['user_id'];
 
+// Fetch latest user details from DB
+$u_stmt = $conn->prepare("SELECT first_name, last_name, email, username, role, profile_pic FROM users WHERE id = ? LIMIT 1");
+$u_stmt->bind_param('i', $user_id);
+$u_stmt->execute();
+$current_user = $u_stmt->get_result()->fetch_assoc();
+$u_stmt->close();
+
+if ($current_user) {
+    $first_name   = htmlspecialchars($current_user['first_name'] ?? '');
+    $last_name    = htmlspecialchars($current_user['last_name'] ?? '');
+    $email        = htmlspecialchars($current_user['email'] ?? '');
+    $username     = htmlspecialchars($current_user['username'] ?? '');
+    $sess_role    = $current_user['role'] ?? 'student';
+    $profile_pic  = $current_user['profile_pic'] ?? null;
+    $_SESSION['first_name']  = $current_user['first_name'];
+    $_SESSION['last_name']   = $current_user['last_name'];
+    $_SESSION['email']       = $current_user['email'];
+    $_SESSION['username']    = $current_user['username'];
+    $_SESSION['role']        = $current_user['role'];
+    $_SESSION['profile_pic'] = $profile_pic;
+} else {
+    $first_name   = htmlspecialchars($_SESSION['first_name'] ?? '');
+    $last_name    = htmlspecialchars($_SESSION['last_name']  ?? '');
+    $email        = htmlspecialchars($_SESSION['email']      ?? '');
+    $username     = htmlspecialchars($_SESSION['username']   ?? '');
+    $sess_role    = $_SESSION['role'] ?? 'student';
+    $profile_pic  = $_SESSION['profile_pic'] ?? null;
+}
+$sess_initial   = strtoupper(substr($first_name ?: 'U', 0, 1));
+
 // Role Titles map
 $role_labels = [
     'student'         => 'General Student',
     'club_adviser'    => 'Organization Adviser (Faculty Member)',
-    'ssc'    => 'Supreme Student Council (SSC)',
-    
+    'ssc'             => 'Supreme Student Council (SSC)',
     'admin'           => 'System Administrator'
 ];
 $role = $role_labels[$sess_role] ?? 'User';
@@ -57,14 +86,18 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
       <div class="search-wrap">
-        <input type="text" placeholder="Search account..."/>
+        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
         <i class="fa-solid fa-magnifying-glass"></i>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="View Personal Attendance QR Code" type="button">
         <i class="fa-solid fa-qrcode"></i>
       </button>
       <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
-        <?= $sess_initial ?>
+        <?php if (!empty($profile_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $profile_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($profile_pic) ?>" alt="Profile" id="topbarAvatarImg"/>
+        <?php else: ?>
+          <span id="topbarAvatarInitial"><?= $sess_initial ?></span>
+        <?php endif; ?>
       </a>
     </div>
   </div>
@@ -85,7 +118,39 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
         <!-- Left Column: User Profile Overview Card -->
         <div class="profile-hero-card">
-          <div class="avatar-large" id="avatarCircle"><?= $sess_initial ?></div>
+          
+          <div class="avatar-upload-wrapper">
+            <div class="avatar-large-container" id="avatarContainer" title="Click or drop an image to change profile photo">
+              <div class="avatar-large" id="avatarCircle">
+                <?php if (!empty($profile_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $profile_pic)): ?>
+                  <img src="../uploads/avatars/<?= htmlspecialchars($profile_pic) ?>" alt="Profile Picture" class="avatar-large-img" id="avatarImage"/>
+                <?php else: ?>
+                  <span id="avatarInitialText"><?= $sess_initial ?></span>
+                <?php endif; ?>
+                <div class="avatar-hover-overlay">
+                  <i class="fa-solid fa-camera"></i>
+                  <span>Change</span>
+                </div>
+                <div class="avatar-loading-overlay" id="avatarLoading">
+                  <div class="avatar-spinner"></div>
+                  <span>Uploading...</span>
+                </div>
+              </div>
+              <div class="avatar-upload-badge" title="Change Photo">
+                <i class="fa-solid fa-camera"></i>
+              </div>
+            </div>
+
+            <!-- Hidden File Input -->
+            <input type="file" id="avatarFileInput" accept="image/png, image/jpeg, image/jpg, image/webp, image/gif" style="display:none;"/>
+
+            <div class="avatar-btn-group">
+              <button type="button" class="btn-avatar-action danger" id="btnRemoveAvatar" style="<?= (!empty($profile_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $profile_pic)) ? '' : 'display:none;' ?>">
+                <i class="fa-solid fa-trash-can"></i> Remove
+              </button>
+            </div>
+          </div>
+
           <h3 class="profile-user-name" id="displayName"><?= $first_name . ' ' . $last_name ?></h3>
           <span class="profile-user-role"><?= $role ?></span>
 
@@ -99,17 +164,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <span>@<?= $username ?></span>
             </div>
           </div>
-
-          <?php if ($sess_role === 'student'): ?>
-          <div style="margin-top:20px; width:100%;">
-            <button class="btn-cct-download" onclick="alert('Downloading official Co-Curricular Transcript (CCT) PDF...')">
-              <i class="fa-solid fa-file-pdf"></i> Download Transcript (CCT)
-            </button>
-          </div>
-          <?php endif; ?>
         </div>
-
-        <!-- Right Column: Settings Forms -->
         <div class="profile-forms-column">
 
           <!-- Profile Information Card -->
@@ -236,28 +291,11 @@ require_once __DIR__ . '/../shared/sidebar.php';
   <div class="footer">Co-Curricular Management System &copy; 2026</div>
 </div><!-- end main -->
 
-<script src="../js/dashboard.js"></script>
+<script src="../js/dashboard.js?v=<?= filemtime(__DIR__ . '/../js/dashboard.js') ?>"></script>
 <script>
 const API = '../shared/auth_actions.php';
 const SIGNIN = '../auth/signin.php';
 
-function showToast(message, type = 'success') {
-    const labels = { success: 'Success', error: 'Error' };
-    let toast = document.querySelector('.toast');
-    if (!toast) {
-        toast = document.createElement('div');
-        toast.className = 'toast';
-        toast.innerHTML = `<div class="toast-label"><span class="toast-dot"></span><span class="toast-title"></span></div><div class="toast-msg"></div>`;
-        document.body.appendChild(toast);
-    }
-    toast.querySelector('.toast-title').textContent = labels[type] ?? type;
-    toast.querySelector('.toast-msg').textContent   = message;
-    toast.className = `toast ${type}`;
-    void toast.offsetWidth;
-    toast.classList.add('show');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => toast.classList.remove('show'), 3500);
-}
 
 function validateFields(form, fields) {
     let valid = true;
@@ -315,10 +353,184 @@ document.getElementById('btnSaveProfile')?.addEventListener('click', async () =>
             const first = form.querySelector('[name="first_name"]').value.trim();
             const last  = form.querySelector('[name="last_name"]').value.trim();
             document.getElementById('displayName').textContent  = `${first} ${last}`;
-            document.getElementById('avatarCircle').textContent = first.charAt(0).toUpperCase();
+            const initialText = document.getElementById('avatarInitialText');
+            if (initialText) {
+                initialText.textContent = first.charAt(0).toUpperCase();
+            }
+            const topbarInitial = document.getElementById('topbarAvatarInitial');
+            if (topbarInitial) {
+                topbarInitial.textContent = first.charAt(0).toUpperCase();
+            }
             showToast(data.message, 'success');
         } else { showToast(data.message, 'error'); }
     } catch { showToast('Request failed.', 'error'); }
+});
+
+// ── Profile Avatar Upload & Management ─────────────────────────────
+const avatarInput     = document.getElementById('avatarFileInput');
+const avatarContainer = document.getElementById('avatarContainer');
+const btnRemoveAvatar = document.getElementById('btnRemoveAvatar');
+const avatarCircle    = document.getElementById('avatarCircle');
+const avatarLoading   = document.getElementById('avatarLoading');
+const topbarAvatarBtn = document.getElementById('avatarBtn');
+
+// Open file selector
+function triggerAvatarSelect() {
+    avatarInput?.click();
+}
+
+avatarContainer?.addEventListener('click', (e) => {
+    e.preventDefault();
+    triggerAvatarSelect();
+});
+
+// Drag and drop support
+['dragenter', 'dragover'].forEach(eventName => {
+    avatarContainer?.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        avatarContainer.classList.add('drag-active');
+    }, false);
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+    avatarContainer?.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        avatarContainer.classList.remove('drag-active');
+    }, false);
+});
+
+avatarContainer?.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    const files = dt?.files;
+    if (files && files.length > 0) {
+        handleAvatarUpload(files[0]);
+    }
+});
+
+avatarInput?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+        handleAvatarUpload(file);
+    }
+    // Reset input so same file can be reselected if needed
+    avatarInput.value = '';
+});
+
+async function handleAvatarUpload(file) {
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+    if (!validTypes.includes(file.type)) {
+        showToast('Please select a valid image file (JPG, PNG, WEBP, or GIF).', 'error');
+        return;
+    }
+
+    // Validate size (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+        showToast('Image file size must be less than 5MB.', 'error');
+        return;
+    }
+
+    // Show loading spinner overlay
+    avatarLoading?.classList.add('active');
+
+    const fd = new FormData();
+    fd.append('action', 'upload_avatar');
+    fd.append('avatar', file);
+
+    try {
+        const res = await fetch(API, {
+            method: 'POST',
+            body: fd
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            const cacheBustUrl = `${data.avatar_url}?t=${Date.now()}`;
+            
+            // Update hero avatar
+            let img = document.getElementById('avatarImage');
+            if (!img) {
+                // If previously initial letter was rendered
+                const initialText = document.getElementById('avatarInitialText');
+                if (initialText) initialText.remove();
+                img = document.createElement('img');
+                img.id = 'avatarImage';
+                img.className = 'avatar-large-img';
+                img.alt = 'Profile Picture';
+                avatarCircle.insertBefore(img, avatarCircle.firstChild);
+            }
+            img.src = cacheBustUrl;
+
+            // Update topbar avatar
+            if (topbarAvatarBtn) {
+                topbarAvatarBtn.innerHTML = `<img src="${cacheBustUrl}" alt="Profile" id="topbarAvatarImg"/>`;
+            }
+
+            // Show remove button
+            if (btnRemoveAvatar) {
+                btnRemoveAvatar.style.display = 'inline-flex';
+            }
+
+            showToast(data.message || 'Profile picture updated!', 'success');
+        } else {
+            showToast(data.message || 'Upload failed.', 'error');
+        }
+    } catch (err) {
+        showToast('An error occurred during upload. Please try again.', 'error');
+    } finally {
+        avatarLoading?.classList.remove('active');
+    }
+}
+
+// Remove Avatar
+btnRemoveAvatar?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!confirm('Are you sure you want to remove your profile picture?')) return;
+
+    avatarLoading?.classList.add('active');
+    const fd = new FormData();
+    fd.set('action', 'remove_avatar');
+
+    try {
+        const data = await postAction(fd);
+        if (data.success) {
+            // Get user's first letter initial
+            const first = document.querySelector('[name="first_name"]')?.value.trim() || 'U';
+            const initial = first.charAt(0).toUpperCase();
+
+            // Reset hero avatar circle
+            const img = document.getElementById('avatarImage');
+            if (img) img.remove();
+
+            let initialSpan = document.getElementById('avatarInitialText');
+            if (!initialSpan) {
+                initialSpan = document.createElement('span');
+                initialSpan.id = 'avatarInitialText';
+                avatarCircle.insertBefore(initialSpan, avatarCircle.firstChild);
+            }
+            initialSpan.textContent = initial;
+
+            // Reset topbar avatar
+            if (topbarAvatarBtn) {
+                topbarAvatarBtn.innerHTML = `<span id="topbarAvatarInitial">${initial}</span>`;
+            }
+
+            // Hide remove button
+            if (btnRemoveAvatar) {
+                btnRemoveAvatar.style.display = 'none';
+            }
+
+            showToast(data.message || 'Profile picture removed.', 'success');
+        } else {
+            showToast(data.message || 'Failed to remove picture.', 'error');
+        }
+    } catch (err) {
+        showToast('Failed to remove profile picture.', 'error');
+    } finally {
+        avatarLoading?.classList.remove('active');
+    }
 });
 
 document.getElementById('btnSavePassword')?.addEventListener('click', async () => {

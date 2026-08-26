@@ -115,7 +115,27 @@ switch ($action) {
     case 'apply': {
         if ($user_role !== 'student') rRespond(false, 'Only students can apply.');
         $club_id = (int)($_POST['club_id'] ?? 0);
-        if ($club_id <= 0) rRespond(false, 'Invalid club.');
+        if ($club_id <= 0) {
+            $org_acronym = trim($_POST['org_acronym'] ?? '');
+            $org_name    = trim($_POST['org_name'] ?? '');
+            if (!empty($org_acronym)) {
+                $c_find = $conn->prepare("SELECT id FROM clubs WHERE code = ? OR name = ? LIMIT 1");
+                $c_find->bind_param('ss', $org_acronym, $org_name);
+                $c_find->execute();
+                $c_res = $c_find->get_result()->fetch_assoc();
+                $c_find->close();
+                if ($c_res) {
+                    $club_id = (int)$c_res['id'];
+                } else {
+                    $c_ins = $conn->prepare("INSERT INTO clubs (code, name, status) VALUES (?, ?, 'Active')");
+                    $c_ins->bind_param('ss', $org_acronym, $org_name);
+                    $c_ins->execute();
+                    $club_id = (int)$conn->insert_id;
+                    $c_ins->close();
+                }
+            }
+        }
+        if ($club_id <= 0) rRespond(false, 'Invalid organization selected.');
 
         // Check already a member or pending
         $check = $conn->prepare("SELECT status FROM club_memberships WHERE user_id=? AND club_id=?");
@@ -150,7 +170,7 @@ switch ($action) {
             }
         }
 
-        // Extract detailed form fields
+        // Extract form fields & auto-populate from database
         $first_name    = trim($_POST['first_name'] ?? $_SESSION['first_name'] ?? '');
         $last_name     = trim($_POST['last_name']  ?? $_SESSION['last_name']  ?? '');
         $student_id_no = trim($_POST['student_id_no'] ?? '');
@@ -162,6 +182,24 @@ switch ($action) {
         $dob           = !empty($_POST['dob']) ? date('Y-m-d', strtotime($_POST['dob'])) : null;
         $address       = trim($_POST['address'] ?? '');
         $motivation    = trim($_POST['motivation'] ?? '');
+
+        // Auto-populate student info from students table if not provided
+        if (empty($student_id_no) || empty($course) || empty($year_level)) {
+            $st_stmt = $conn->prepare("SELECT student_number, course, year_level, phone, birthday FROM students WHERE first_name = ? AND last_name = ? LIMIT 1");
+            if ($st_stmt) {
+                $st_stmt->bind_param('ss', $first_name, $last_name);
+                $st_stmt->execute();
+                $st_res = $st_stmt->get_result();
+                if ($st_res && $row = $st_res->fetch_assoc()) {
+                    if (empty($student_id_no)) $student_id_no = $row['student_number'] ?? '';
+                    if (empty($course))        $course        = $row['course'] ?? '';
+                    if (empty($year_level))    $year_level    = $row['year_level'] ?? '';
+                    if (empty($phone))         $phone         = $row['phone'] ?? '';
+                    if (empty($dob) && !empty($row['birthday'])) $dob = $row['birthday'];
+                }
+                $st_stmt->close();
+            }
+        }
 
         // 1. Insert into dedicated club_applications table
         $app_stmt = $conn->prepare("
@@ -277,17 +315,64 @@ switch ($action) {
         if (!in_array($user_role, ['club_adviser','ssc','admin']))
             rRespond(false, 'Not authorized.');
 
-        // Return JSON of all active members for JS to build CSV
-        $rows = $conn->query(
-            "SELECT u.first_name, u.last_name, u.email, c.name AS club_name, c.code, cm.role AS member_role, cm.joined_at
-             FROM club_memberships cm
-             JOIN users u ON u.id = cm.user_id
-             JOIN clubs c ON c.id = cm.club_id
-             WHERE cm.status = 'Active'
-             ORDER BY c.name, u.last_name"
-        )->fetch_all(MYSQLI_ASSOC);
+        $club_filter = '';
+        $params = [];
+        $types  = '';
 
-        log_audit($conn, $user_id, 'roster_export', 'club_memberships', 0, 'Exported CSV roster');
+        if ($user_role === 'club_adviser') {
+            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
+            $cm->bind_param('i', $user_id);
+            $cm->execute();
+            $cm->bind_result($my_club_id);
+            $cm->fetch();
+            $cm->close();
+            if (!empty($my_club_id)) {
+                $club_filter = 'AND cm.club_id = ?';
+                $params[] = (int)$my_club_id;
+                $types .= 'i';
+            }
+        } elseif (!empty($_GET['club_id']) || !empty($_POST['club_id'])) {
+            $req_club_id = (int)($_GET['club_id'] ?? $_POST['club_id']);
+            if ($req_club_id > 0) {
+                $club_filter = 'AND cm.club_id = ?';
+                $params[] = $req_club_id;
+                $types .= 'i';
+            }
+        }
+
+        // Return JSON of active members for the organization (excluding advisers), ordered alphabetically by name
+        $sql = "SELECT 
+                    COALESCE(NULLIF(ca.student_id_no, ''), NULLIF(s.student_number, ''), CONCAT('2024-', LPAD(u.id, 5, '0'))) AS student_number,
+                    u.first_name, 
+                    u.last_name, 
+                    u.email, 
+                    COALESCE(NULLIF(ca.year_level, ''), NULLIF(s.year_level, ''), 'N/A') AS year_level,
+                    COALESCE(NULLIF(s.section, ''), 'N/A') AS section,
+                    c.name AS club_name, 
+                    c.code, 
+                    cm.role AS member_role, 
+                    cm.joined_at
+                FROM club_memberships cm
+                JOIN users u ON u.id = cm.user_id
+                JOIN clubs c ON c.id = cm.club_id
+                LEFT JOIN club_applications ca ON (ca.id = (SELECT MAX(id) FROM club_applications WHERE club_id = cm.club_id AND user_id = cm.user_id))
+                LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+                WHERE cm.status = 'Active'
+                  AND u.role NOT IN ('club_adviser', 'admin')
+                  AND LOWER(cm.role) != 'adviser'
+                  AND cm.role NOT LIKE '%adviser%'
+                  $club_filter
+                ORDER BY u.first_name ASC, u.last_name ASC";
+
+        $stmt = $conn->prepare($sql);
+        if ($params) {
+            $stmt->bind_param($types, ...$params);
+        }
+        $stmt->execute();
+        $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt->close();
+
+        log_audit($conn, $user_id, 'roster_export', 'club_memberships', 0, 'Exported roster');
         rRespond(true, 'OK', ['csv_data' => $rows]);
     }
 

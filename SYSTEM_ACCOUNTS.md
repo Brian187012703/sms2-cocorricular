@@ -28,24 +28,24 @@ This document contains the complete list of system accounts, default passwords, 
 
 All student accounts have the password: **`Bcp@Test2026!`**
 
-| # | Program / Course | Student Name | Username | Email | Year & Section |
-|---|---|---|---|---|---|
-| 1 | **BSIT** (Information Technology) | Juan Santos | `bsit.student` | `bsit@student.bcp.edu.ph` | 2nd Year (IT-2A) |
-| 2 | **BSHM** (Hospitality Management) | Maria Cruz | `bshm.student` | `bshm@student.bcp.edu.ph` | 1st Year (HM-1B) |
-| 3 | **BSAIS** (Accounting Info Systems) | Jose Reyes | `bsais.student` | `bsais@student.bcp.edu.ph` | 3rd Year (AIS-3A) |
-| 4 | **BSTM** (Tourism Management) | Ana Dela Cruz | `bstm.student` | `bstm@student.bcp.edu.ph` | 2nd Year (TM-2C) |
-| 5 | **BSOA** (Office Administration) | Carlos Garcia | `bsoa.student` | `bsoa@student.bcp.edu.ph` | 1st Year (OA-1A) |
-| 6 | **BSE** (Entrepreneurship) | Liza Ramos | `bse.student` | `bse@student.bcp.edu.ph` | 3rd Year (ENT-3B) |
-| 7 | **BSBA** (Business Administration) | Ramon Villanueva | `bsba.student` | `bsba@student.bcp.edu.ph` | 2nd Year (BA-2A) |
-| 8 | **BSIS** (Information Science) | Patricia Aquino | `bsis.student` | `bsis@student.bcp.edu.ph` | 1st Year (IS-1A) |
-| 9 | **BSCpE** (Computer Engineering) | Mark Bautista | `bscpe.student` | `bscpe@student.bcp.edu.ph` | 3rd Year (CPE-3A) |
-| 10 | **BSPsych** (Psychology) | Jenny Navarro | `bspsych.student` | `bspsych@student.bcp.edu.ph` | 2nd Year (PSY-2B) |
-| 11 | **BSCrim** (Criminology) | Rico Fernandez | `bscrim.student` | `bscrim@student.bcp.edu.ph` | 4th Year (CRIM-4A) |
-| 12 | **BSPE** (Physical Education) | Sheila Santos | `bspe.student` | `bspe@student.bcp.edu.ph` | 2nd Year (PE-2A) |
-| 13 | **TLE** (Tech & Livelihood Ed) | Angelo Torres | `tle.student` | `tle@student.bcp.edu.ph` | 1st Year (TLE-1B) |
-| 14 | **BSElEd** (Elementary Education) | Claire Mendoza | `bseled.student` | `bseled@student.bcp.edu.ph` | 3rd Year (ELED-3A) |
-| 15 | **BSSecEd** (Secondary Education) | Danilo Pascual | `bsseed.student` | `bsseed@student.bcp.edu.ph` | 2nd Year (SEED-2C) |
-| 16 | **BSLIS** (Library & Info Science) | Rowena Espinosa | `bslis.student` | `bslis@student.bcp.edu.ph` | 3rd Year (LIS-3A) |
+| # | Student Number | Program / Course | Student Name | Username | Email | Year & Section |
+|---|---|---|---|---|---|---|
+| 1 | `2024-10001` | **BSIT** (Information Technology) | Juan Santos | `bsit.student` | `bsit@student.bcp.edu.ph` | 2nd Year (IT-2A) |
+| 2 | `2024-10002` | **BSHM** (Hospitality Management) | Maria Cruz | `bshm.student` | `bshm@student.bcp.edu.ph` | 1st Year (HM-1B) |
+| 3 | `2024-10003` | **BSAIS** (Accounting Info Systems) | Jose Reyes | `bsais.student` | `bsais@student.bcp.edu.ph` | 3rd Year (AIS-3A) |
+| 4 | `2024-10004` | **BSTM** (Tourism Management) | Ana Dela Cruz | `bstm.student` | `bstm@student.bcp.edu.ph` | 2nd Year (TM-2C) |
+| 5 | `2024-10005` | **BSOA** (Office Administration) | Carlos Garcia | `bsoa.student` | `bsoa@student.bcp.edu.ph` | 1st Year (OA-1A) |
+| 6 | `2024-10006` | **BSE** (Entrepreneurship) | Liza Ramos | `bse.student` | `bse@student.bcp.edu.ph` | 3rd Year (ENT-3B) |
+| 7 | `2024-10007` | **BSBA** (Business Administration) | Ramon Villanueva | `bsba.student` | `bsba@student.bcp.edu.ph` | 2nd Year (BA-2A) |
+| 8 | `2024-10008` | **BSIS** (Information Science) | Patricia Aquino | `bsis.student` | `bsis@student.bcp.edu.ph` | 1st Year (IS-1A) |
+| 9 | `2024-10009` | **BSCpE** (Computer Engineering) | Mark Bautista | `bscpe.student` | `bscpe@student.bcp.edu.ph` | 3rd Year (CPE-3A) |
+| 10 | `2024-10010` | **BSPsych** (Psychology) | Jenny Navarro | `bspsych.student` | `bspsych@student.bcp.edu.ph` | 2nd Year (PSY-2B) |
+| 11 | `2024-10011` | **BSCrim** (Criminology) | Rico Fernandez | `bscrim.student` | `bscrim@student.bcp.edu.ph` | 4th Year (CRIM-4A) |
+| 12 | `2024-10012` | **BSPE** (Physical Education) | Sheila Santos | `bspe.student` | `bspe@student.bcp.edu.ph` | 2nd Year (PE-2A) |
+| 13 | `2024-10013` | **TLE** (Tech & Livelihood Ed) | Angelo Torres | `tle.student` | `tle@student.bcp.edu.ph` | 1st Year (TLE-1B) |
+| 14 | `2024-10014` | **BSElEd** (Elementary Education) | Claire Mendoza | `bseled.student` | `bseled@student.bcp.edu.ph` | 3rd Year (ELED-3A) |
+| 15 | `2024-10015` | **BSSecEd** (Secondary Education) | Danilo Pascual | `bsseed.student` | `bsseed@student.bcp.edu.ph` | 2nd Year (SEED-2C) |
+| 16 | `2024-10016` | **BSLIS** (Library & Info Science) | Rowena Espinosa | `bslis.student` | `bslis@student.bcp.edu.ph` | 3rd Year (LIS-3A) |
 
 ---
 

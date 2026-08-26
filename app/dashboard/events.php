@@ -1,9 +1,11 @@
 <?php
 // ============================================================
-//  EVENTS.PHP ï¿½ Events & Activity Center
+//  EVENTS.PHP — Events & Activity Center
 //  Full DB integration: real data, working modals, role-gated
+//  Integrated with Philippine Holidays & Conflict Detection Engine
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
+require_once __DIR__ . '/../shared/ph_holidays.php';
 session_start();
 
 if (empty($_SESSION['user_id'])) { header('Location: ../auth/signin.php'); exit; }
@@ -12,6 +14,10 @@ $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
 $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
+
+// Load all Philippine Holidays for 2025, 2026, 2027
+$ph_holidays_all = get_ph_holidays(2025) + get_ph_holidays(2026) + get_ph_holidays(2027);
 
 // -- Fetch events from DB -------------------------------------
 $events = $conn->query(
@@ -81,6 +87,9 @@ $status_badges = [
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <meta name="loader-logo" content="../images/BCP_LOGO.png"/>
   <script src="../js/page-loader.js"></script>
+  <!-- jsPDF & AutoTable for direct client-side PDF downloads -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <style>
   /* ── AI Event Planner & Schedule Conflict Analyzer ───────── */
   .ai-recommendations-section {
@@ -329,8 +338,10 @@ $status_badges = [
   }
   .calendar-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 4px;
+    width: 100%;
+    box-sizing: border-box;
   }
   .cal-day-header {
     text-align: center;
@@ -340,9 +351,16 @@ $status_badges = [
     text-transform: uppercase;
     letter-spacing: 0.04em;
     padding: 4px 2px;
+    min-width: 0;
+    overflow: hidden;
   }
   .cal-day-cell {
     min-height: 70px;
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
     background: #f8fafc;
     border: 1.5px solid #e2e8f0;
     border-radius: 8px;
@@ -377,6 +395,7 @@ $status_badges = [
     align-items: center;
     justify-content: flex-end;
     margin-bottom: 1px;
+    min-width: 0;
   }
   .today-bubble {
     width: 20px;
@@ -393,25 +412,113 @@ $status_badges = [
   }
   .cal-event-pill {
     font-size: 0.62rem;
-    padding: 2px 5px;
-    border-radius: 3px;
+    padding: 2.5px 5px;
+    border-radius: 4px;
     color: #fff;
     font-weight: 700;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     cursor: pointer;
     transition: transform 0.12s, opacity 0.12s;
-    line-height: 1.3;
+    line-height: 1.35;
   }
   .cal-event-pill:hover {
-    transform: scale(1.03);
+    transform: scale(1.02);
     opacity: 0.92;
   }
   .cal-pill-approved  { background: #16a34a; }
   .cal-pill-upcoming  { background: #2563eb; }
   .cal-pill-pending   { background: #d97706; }
   .cal-pill-completed { background: #64748b; }
+
+  /* 🇵🇭 Philippine Holiday & Conflict Pill Badges */
+  .cal-holiday-pill {
+    font-size: 0.60rem;
+    padding: 2.5px 5px;
+    border-radius: 4px;
+    font-weight: 800;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    cursor: pointer;
+    transition: transform 0.12s, opacity 0.12s, box-shadow 0.12s;
+    line-height: 1.3;
+    display: flex;
+    align-items: center;
+    gap: 3.5px;
+    margin-bottom: 2px;
+    overflow: hidden;
+  }
+  .cal-holiday-pill span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+  .cal-holiday-pill:hover {
+    transform: scale(1.02);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  }
+  .cal-holiday-regular {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+  }
+  .cal-holiday-special {
+    background: #ede9fe;
+    color: #5b21b6;
+    border: 1px solid #c4b5fd;
+  }
+  .cal-holiday-exam {
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fcd34d;
+  }
+  .cal-holiday-pill i {
+    font-size: 0.65rem;
+    flex-shrink: 0;
+  }
+
+  /* Live Conflict Alert Banners in Proposal Modal */
+  .conflict-box {
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-top: 10px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    transition: all 0.2s ease;
+  }
+  .conflict-box-danger {
+    background: #fef2f2;
+    border: 1.5px solid #fca5a5;
+    color: #991b1b;
+  }
+  .conflict-box-warning {
+    background: #fffbeb;
+    border: 1.5px solid #fcd34d;
+    color: #92400e;
+  }
+  .conflict-box-safe {
+    background: #f0fdf4;
+    border: 1.5px solid #86efac;
+    color: #166534;
+  }
+  .conflict-box-title {
+    font-weight: 800;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .calendar-legend {
     display: flex;
     flex-wrap: wrap;
@@ -466,11 +573,17 @@ $status_badges = [
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
       <div class="search-wrap">
-        <input type="text" id="eventSearch" placeholder="Search eventsï¿½" oninput="filterEventTable()"/>
+        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
         <i class="fa-solid fa-magnifying-glass"></i>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code" type="button"><i class="fa-solid fa-qrcode"></i></button>
-      <a href="account.php" class="avatar" title="Account"><?= $sess_initial ?></a>
+      <a href="account.php" class="avatar" id="avatarBtn" title="Account Settings">
+        <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+        <?php else: ?>
+          <?= $sess_initial ?>
+        <?php endif; ?>
+      </a>
     </div>
   </div>
 
@@ -586,11 +699,13 @@ $status_badges = [
 
         <!-- Legend -->
         <div class="calendar-legend">
-          <div class="legend-item"><span class="legend-dot" style="background:#16a34a;"></span> Approved</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#2563eb;"></span> Upcoming</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#d97706;"></span> Pending SSC</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#64748b;"></span> Completed</div>
-          <div class="legend-item"><span class="legend-dot" style="background:#64748b;"></span> Completed</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#dc2626;"></span> 🇵🇭 Regular Holiday (Non-Working)</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#7c3aed;"></span> 🇵🇭 Special Non-Working Day</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#d97706;"></span> 🎓 Academic Exam Blackout</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#16a34a;"></span> Approved Event</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#2563eb;"></span> Upcoming Event</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#d97706;"></span> Pending SSC Review</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#64748b;"></span> Completed Event</div>
           <div class="legend-item"><i class="fa-solid fa-circle-check" style="color:#16a34a; font-size:0.85rem;"></i> You are registered</div>
         </div>
       </div><!-- /calendar-section -->
@@ -701,7 +816,7 @@ $status_badges = [
                     <i class="fa-solid fa-eye"></i> Details
                   </button>
                   <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-                    <button class="card-btn btn-sm" style="background:#0f766e; color:#fff;" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                    <button class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
                       <i class="fa-solid fa-users-rectangle"></i> Registrations
                     </button>
                   <?php endif; ?>
@@ -739,7 +854,7 @@ $status_badges = [
       <h3 style="margin:0; font-size:1.08rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
         <i class="fa-solid fa-calendar-plus" style="color:#f59e0b;"></i> Create Event Proposal <span style="font-size:0.75rem; font-weight:500; opacity:0.85;">(SSC Review)</span>
       </h3>
-      <button class="modal-close" onclick="closeModal('createEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.3rem; background:none; border:none; cursor:pointer;">&times;</button>
+      <button class="modal-close" onclick="closeModal('createEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <form id="createEventForm">
       <div class="modal-body" style="padding:24px;">
@@ -790,26 +905,59 @@ $status_badges = [
 <!-- ------ VIEW EVENT MODAL ------ -->
 <div class="modal-overlay" id="viewEventModal">
   <div class="modal modal-lg" style="max-width:560px; padding:0; overflow:hidden; border-radius:16px;">
-    <div class="modal-header" style="background: linear-gradient(135deg, #1e3a8a, #2563eb); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+    <div class="modal-header" style="background: #1a3a8c; color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
       <h3 style="margin:0; font-size:1.1rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
         <i class="fa-solid fa-calendar-check" style="color:#ffffff;"></i> Event Details
       </h3>
-      <button class="modal-close" onclick="closeModal('viewEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.3rem; background:none; border:none; cursor:pointer;">&times;</button>
+      <button class="modal-close" onclick="closeModal('viewEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-body" style="padding:24px;">
       <div id="viewEventBody" style="color:#334155;"></div>
     </div>
   </div>
 </div>
+
+<!-- ------ VIEW PHILIPPINE HOLIDAY MODAL ------ -->
+<div class="modal-overlay" id="viewHolidayModal">
+  <div class="modal modal-lg" style="max-width:520px; padding:0; overflow:hidden; border-radius:16px;">
+    <div class="modal-header" id="holidayModalHeader" style="background:#1a3a8c; color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0; font-size:1.1rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-flag" style="color:#facc15;"></i> <span id="holidayModalTitle">Philippine Holiday Details</span>
+      </h3>
+      <button class="modal-close" onclick="closeModal('viewHolidayModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" style="padding:24px;">
+      <div id="holidayModalBody" style="color:#334155;"></div>
+    </div>
+    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end;">
+      <button type="button" class="card-btn" style="background:#1a3a8c; color:#fff; font-weight:600; padding:8px 18px; border-radius:8px;" onclick="closeModal('viewHolidayModal')">Understood</button>
+    </div>
+  </div>
+</div>
+
+<!-- ------ DAY SCHEDULE MODAL (Multiple events / holiday on date) ------ -->
+<div class="modal-overlay" id="dayScheduleModal">
+  <div class="modal modal-lg" style="max-width:580px; padding:0; overflow:hidden; border-radius:16px;">
+    <div class="modal-header" style="background: #1a3a8c; color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0; font-size:1.1rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-calendar-day" style="color:#60a5fa;"></i> <span id="dayScheduleTitle">Events on this Date</span>
+      </h3>
+      <button class="modal-close" onclick="closeModal('dayScheduleModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" style="padding:24px;" id="dayScheduleBody">
+    </div>
+  </div>
+</div>
+
 <!-- ------ EDIT EVENT MODAL ------ -->
 <?php if (in_array($sess_role, ['club_adviser','ssc','admin'])): ?>
 <div class="modal-overlay" id="editEventModal">
   <div class="modal modal-lg" style="max-width:600px; padding:0; overflow:hidden; border-radius:16px;">
-    <div class="modal-header" style="background: linear-gradient(135deg, #1e3a8a, #2563eb); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+    <div class="modal-header" style="background: #1a3a8c; color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
       <h3 style="margin:0; font-size:1.08rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
         <i class="fa-solid fa-pen-to-square" style="color:#f59e0b;"></i> Edit Event Proposal
       </h3>
-      <button class="modal-close" onclick="closeModal('editEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.3rem; background:none; border:none; cursor:pointer;">&times;</button>
+      <button class="modal-close" onclick="closeModal('editEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <form id="editEventForm">
       <div class="modal-body" style="padding:24px;">
@@ -850,7 +998,7 @@ $status_badges = [
       <h3 style="margin:0; font-size:1.05rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
         <i class="fa-solid fa-circle-xmark"></i> Reject Event Proposal
       </h3>
-      <button class="modal-close" onclick="closeModal('rejectEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.3rem; background:none; border:none; cursor:pointer;">&times;</button>
+      <button class="modal-close" onclick="closeModal('rejectEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-body" style="padding:24px;">
       <p id="rejectEventDesc" style="color:#475569; margin-bottom:16px; font-size:0.88rem; line-height:1.45;"></p>
@@ -867,12 +1015,59 @@ $status_badges = [
 </div>
 <?php endif; ?>
 
+<!-- ------ EVENT REGISTRATIONS ROSTER MODAL ------ -->
+<div class="modal-overlay" id="eventRegistrationsModal" style="display:none;">
+  <div class="modal modal-lg" style="max-width:860px; padding:0; overflow:hidden; border-radius:16px;">
+    <div class="modal-header" style="background:#1a3a8c; color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0; font-size:1.05rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-users-rectangle" style="color:#ffffff;"></i> <span id="regModalHeaderTitle">Event Registration Roster</span>
+      </h3>
+      <button class="modal-close" onclick="closeModal('eventRegistrationsModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" style="padding:24px; max-height:72vh; overflow-y:auto;">
+      <!-- Filter bar -->
+      <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+        <input type="text" id="regSearchInput" placeholder="Filter attendees by name, email, ID, or course..." style="width:100%; max-width:380px; padding:8px 14px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:0.85rem;" oninput="filterRegistrationsList(this.value)" />
+      </div>
+
+      <!-- Registrations Data Table -->
+      <div style="overflow-x:auto; border:1px solid #e2e8f0; border-radius:10px;">
+        <table class="data-table" style="width:100%; font-size:0.85rem; border-collapse:collapse;" id="regTable">
+          <thead>
+            <tr style="background:#f8fafc; color:#334155; text-align:left;">
+              <th style="padding:10px 12px; width:35px; text-align:center;">#</th>
+              <th style="padding:10px 12px;">Student Name</th>
+              <th style="padding:10px 12px;">Student ID</th>
+              <th style="padding:10px 12px;">Course &amp; Year</th>
+              <th style="padding:10px 12px;">Email &amp; Phone</th>
+              <th style="padding:10px 12px; text-align:center;">Status</th>
+            </tr>
+          </thead>
+          <tbody id="regTableBody">
+            <!-- populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600;" onclick="closeModal('eventRegistrationsModal')">Close</button>
+      
+      <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+      <button type="button" class="card-btn" onclick="exportRegistrationsPDF()" style="background:#2563eb; color:#fff; font-weight:700; display:inline-flex; align-items:center; gap:6px; font-size:0.85rem; cursor:pointer;">
+        <i class="fa-solid fa-file-pdf"></i> Export
+      </button>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast-notification" style="display:none;"></div>
 <script src="../js/dashboard.js"></script>
 <script>
 const ROLE = '<?= $sess_role ?>';
 const ALL_EVENTS = <?= json_encode($events, JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 const MY_REG_IDS = <?= json_encode($my_reg_ids) ?>;
+const PH_HOLIDAYS = <?= json_encode($ph_holidays_all, JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
 let currentDate = new Date();
 
@@ -917,18 +1112,40 @@ function renderCalendar() {
 
     const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const dayEvents = ALL_EVENTS.filter(ev => ev.event_date.startsWith(dateStr));
+    const hol = PH_HOLIDAYS[dateStr] || null;
     cell.setAttribute('data-full-date', dateStr);
+
+    // Set interactive hover title
+    if (dayEvents.length === 1) {
+      cell.title = `Click to view event: ${dayEvents[0].title}`;
+    } else if (dayEvents.length > 1) {
+      cell.title = `Click to view ${dayEvents.length} events scheduled on this date`;
+    } else if (hol) {
+      cell.title = `Click to view: ${hol.name}`;
+    } else {
+      cell.title = `Date: ${dateStr}`;
+    }
+
+    // The whole date box is the button to view the event/details
     cell.addEventListener('click', () => {
-      filterEventsBySelectedMonth(`${year}-${String(month+1).padStart(2,'0')}`);
-      const tr = document.querySelector(`#eventTable tbody tr[data-date="${dateStr}"]`);
-      if (tr) {
-        tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        tr.style.background = '#eff6ff';
-        setTimeout(() => tr.style.background = '', 2000);
+      if (dayEvents.length === 1) {
+        viewEvent(dayEvents[0]);
+      } else if (dayEvents.length > 1) {
+        viewDayEventsModal(dateStr, dayEvents, hol);
+      } else if (hol) {
+        viewHolidayModal(hol);
+      } else {
+        filterEventsBySelectedMonth(`${year}-${String(month+1).padStart(2,'0')}`);
+        const tr = document.querySelector(`#eventTable tbody tr[data-date="${dateStr}"]`);
+        if (tr) {
+          tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          tr.style.background = '#eff6ff';
+          setTimeout(() => tr.style.background = '', 2000);
+        }
       }
     });
 
-    // Date number ï¿½ use bubble highlight for today
+    // Date number with bubble highlight for today
     const dateNumEl = document.createElement('div');
     dateNumEl.className = 'cal-date-num';
     if (isToday) {
@@ -937,6 +1154,28 @@ function renderCalendar() {
       dateNumEl.textContent = d;
     }
     cell.appendChild(dateNumEl);
+
+    // 🇵🇭 Render Philippine Holiday / Special Non-Working Day Pill
+    if (hol) {
+      const hPill = document.createElement('div');
+      let hClass = 'cal-holiday-regular';
+      let icon = '<i class="fa-solid fa-flag"></i>';
+      if (hol.type === 'special_non_working') {
+        hClass = 'cal-holiday-special';
+        icon = '<i class="fa-solid fa-star"></i>';
+      } else if (hol.type === 'exam_blackout') {
+        hClass = 'cal-holiday-exam';
+        icon = '<i class="fa-solid fa-graduation-cap"></i>';
+      }
+      hPill.className = `cal-holiday-pill ${hClass}`;
+      hPill.title = `${hol.name} (${hol.category}): ${hol.description}`;
+      hPill.innerHTML = `${icon} <span>${hol.name}</span>`;
+      hPill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        viewHolidayModal(hol);
+      });
+      cell.appendChild(hPill);
+    }
 
     // Event pills
     dayEvents.forEach(ev => {
@@ -948,9 +1187,12 @@ function renderCalendar() {
       const isReg = MY_REG_IDS.includes(parseInt(ev.id));
       const pill = document.createElement('div');
       pill.className = `cal-event-pill ${pillClass}`;
-      pill.title = `${ev.title} ï¿½ ${ev.club_code}`;
+      pill.title = `${ev.title} — ${ev.club_code}`;
       pill.innerHTML = `${ev.club_code}: ${ev.title}${isReg ? ' <i class="fa-solid fa-circle-check"></i>' : ''}`;
-      pill.addEventListener('click', e => { e.stopPropagation(); viewEventById(ev.id); });
+      pill.addEventListener('click', e => {
+        e.stopPropagation();
+        viewEvent(ev);
+      });
       cell.appendChild(pill);
     });
 
@@ -966,6 +1208,174 @@ function renderCalendar() {
     cell.innerHTML = `<div class="cal-date-num">${i}</div>`;
     grid.appendChild(cell);
   }
+}
+
+function viewEventById(id) {
+  const ev = ALL_EVENTS.find(e => parseInt(e.id) === parseInt(id));
+  if (ev) viewEvent(ev);
+}
+
+function viewDayEventsModal(dateStr, events, hol) {
+  const formattedDate = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-PH', { dateStyle: 'full' });
+  const titleEl = document.getElementById('dayScheduleTitle');
+  if (titleEl) titleEl.textContent = `Schedule for ${formattedDate}`;
+
+  let html = `<div style="display:flex; flex-direction:column; gap:12px;">`;
+
+  if (hol) {
+    html += `
+      <div style="background:#fef2f2; border:1.5px solid #fecaca; border-radius:12px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="closeModal('dayScheduleModal'); viewHolidayModal(PH_HOLIDAYS['${dateStr}']);">
+        <div>
+          <span style="font-size:0.72rem; font-weight:800; text-transform:uppercase; color:#991b1b;"><i class="fa-solid fa-flag"></i> ${hol.category}</span>
+          <div style="font-weight:700; color:#991b1b; font-size:0.95rem; margin-top:2px;">${hol.name}</div>
+        </div>
+        <span style="font-size:0.8rem; color:#dc2626; font-weight:700;">Details <i class="fa-solid fa-chevron-right"></i></span>
+      </div>`;
+  }
+
+  events.forEach(ev => {
+    const isReg = MY_REG_IDS.includes(parseInt(ev.id));
+    const timeFormatted = new Date(ev.event_date.replace(' ', 'T')).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' });
+    const statusBadgeClass = ev.status === 'Approved' ? 'badge-active' : (ev.status === 'Rejected' ? 'badge-inactive' : 'badge-warning');
+
+    html += `
+      <div style="background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:12px; padding:14px 16px; cursor:pointer; transition:all 0.15s ease; display:flex; justify-content:space-between; align-items:center; gap:12px;"
+           onmouseover="this.style.borderColor='#2563eb'; this.style.background='#eff6ff';"
+           onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='#f8fafc';"
+           onclick="closeModal('dayScheduleModal'); viewEventById(${ev.id});">
+        <div style="min-width:0; flex:1;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+            <span class="club-badge" style="font-size:0.75rem; padding:2px 8px;">${ev.club_code}</span>
+            <span class="${statusBadgeClass}" style="font-size:0.72rem;">${ev.status}</span>
+            ${isReg ? '<span style="color:#16a34a; font-size:0.75rem; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Registered</span>' : ''}
+          </div>
+          <h4 style="margin:0 0 4px; color:#0f172a; font-size:0.95rem; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${ev.title}</h4>
+          <div style="font-size:0.78rem; color:#64748b; display:flex; gap:12px; flex-wrap:wrap;">
+            <span><i class="fa-regular fa-clock"></i> ${timeFormatted}</span>
+            <span><i class="fa-solid fa-location-dot"></i> ${ev.venue}</span>
+          </div>
+        </div>
+        <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff; font-weight:700; flex-shrink:0; pointer-events:none;">
+          View <i class="fa-solid fa-chevron-right"></i>
+        </button>
+      </div>`;
+  });
+
+  html += `</div>`;
+  const bodyEl = document.getElementById('dayScheduleBody');
+  if (bodyEl) bodyEl.innerHTML = html;
+  openModal('dayScheduleModal');
+}
+
+function viewHolidayModal(hol) {
+  if (!hol) return;
+  const titleEl = document.getElementById('holidayModalTitle');
+  const bodyEl = document.getElementById('holidayModalBody');
+
+  let badgeColor = hol.type === 'regular' ? '#dc2626' : (hol.type === 'special_non_working' ? '#7c3aed' : '#d97706');
+  let badgeBg = hol.type === 'regular' ? '#fee2e2' : (hol.type === 'special_non_working' ? '#ede9fe' : '#fef3c7');
+
+  if (titleEl) titleEl.textContent = hol.name;
+
+  const formattedDate = new Date(hol.date + 'T00:00:00').toLocaleDateString('en-PH', { dateStyle: 'full' });
+
+  let adviceHtml = '';
+  if (hol.type === 'regular') {
+    adviceHtml = `
+      <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:10px; padding:12px 14px; color:#991b1b; font-size:0.82rem; line-height:1.45;">
+        <strong><i class="fa-solid fa-triangle-exclamation"></i> Regular Holiday Scheduling Restriction:</strong>
+        <p style="margin:4px 0 0;">Under Philippine labor and academic regulations, campus facilities and administrative offices are closed. Co-curricular events on regular holidays require special Vice President for Academic Affairs &amp; SSC clearance.</p>
+      </div>`;
+  } else if (hol.type === 'special_non_working') {
+    adviceHtml = `
+      <div style="background:#f5f3ff; border:1px solid #c4b5fd; border-radius:10px; padding:12px 14px; color:#5b21b6; font-size:0.82rem; line-height:1.45;">
+        <strong><i class="fa-solid fa-circle-info"></i> Special Non-Working Day Advisory:</strong>
+        <p style="margin:4px 0 0;">Classes are suspended. Holding student organization workshops, rehearsals, or competitions requires administrative entry approval and security gate clearance.</p>
+      </div>`;
+  } else {
+    adviceHtml = `
+      <div style="background:#fffbeb; border:1px solid #fcd34d; border-radius:10px; padding:12px 14px; color:#92400e; font-size:0.82rem; line-height:1.45;">
+        <strong><i class="fa-solid fa-graduation-cap"></i> Academic Blackout Window:</strong>
+        <p style="margin:4px 0 0;">Campus-wide blackout for examination week. All student club activities are strictly paused to support student academic review.</p>
+      </div>`;
+  }
+
+  bodyEl.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <span style="font-size:0.75rem; font-weight:800; text-transform:uppercase; color:${badgeColor}; background:${badgeBg}; padding:4px 10px; border-radius:20px; border:1px solid ${badgeColor}33;">
+          ${hol.category}
+        </span>
+        <span style="font-size:0.82rem; color:#64748b; font-weight:600;"><i class="fa-regular fa-calendar"></i> ${formattedDate}</span>
+      </div>
+      <div>
+        <h3 style="margin:0 0 4px; color:#0f172a; font-size:1.2rem; font-weight:800;">${hol.name}</h3>
+        <p style="margin:0; font-size:0.88rem; color:#64748b; font-style:italic;">${hol.filipino_name || ''}</p>
+      </div>
+      <p style="margin:0; font-size:0.9rem; line-height:1.55; color:#334155;">${hol.description}</p>
+      ${adviceHtml}
+    </div>`;
+
+  openModal('viewHolidayModal');
+}
+
+async function autoCheckModalDate() {
+  const dtInput = document.getElementById('createEventDateInput');
+  const venueInput = document.getElementById('createEventVenueInput');
+  const clubSelect = document.getElementById('createEventClubSelect');
+  const resBox = document.getElementById('conflictAuditResult');
+  if (!dtInput || !dtInput.value || !resBox) return;
+
+  const dateVal = dtInput.value.slice(0, 10);
+  const venueVal = venueInput ? venueInput.value.trim() : '';
+  const clubIdVal = clubSelect ? clubSelect.value : 0;
+
+  resBox.style.display = 'block';
+  resBox.className = 'conflict-box conflict-box-warning';
+  resBox.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking Philippine holidays & schedule conflicts...';
+
+  try {
+    const fd = new FormData();
+    fd.append('action', 'check_conflict');
+    fd.append('event_date', dateVal);
+    fd.append('venue', venueVal);
+    fd.append('club_id', clubIdVal);
+
+    const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd });
+    const data = await res.json();
+
+    if (data.success && data.analysis) {
+      const a = data.analysis;
+      if (a.level === 'danger') {
+        resBox.className = 'conflict-box conflict-box-danger';
+        let msgs = a.conflicts.map(c => `<li><strong>${c.title}:</strong> ${c.message}</li>`).join('');
+        resBox.innerHTML = `
+          <div class="conflict-box-title"><i class="fa-solid fa-triangle-exclamation"></i> Scheduling Conflict Detected!</div>
+          <ul style="margin:6px 0 0 16px; padding:0; line-height:1.5;">${msgs}</ul>
+          <div style="margin-top:6px; font-weight:600; font-size:0.78rem;">Recommendation: Select an alternate non-holiday academic date or change venue to avoid administrative rejection.</div>
+        `;
+      } else if (a.level === 'warning') {
+        resBox.className = 'conflict-box conflict-box-warning';
+        let msgs = a.conflicts.map(c => `<li><strong>${c.title}:</strong> ${c.message}</li>`).join('');
+        resBox.innerHTML = `
+          <div class="conflict-box-title"><i class="fa-solid fa-circle-exclamation"></i> Special Schedule Advisory</div>
+          <ul style="margin:6px 0 0 16px; padding:0; line-height:1.5;">${msgs}</ul>
+        `;
+      } else {
+        resBox.className = 'conflict-box conflict-box-safe';
+        resBox.innerHTML = `
+          <div class="conflict-box-title"><i class="fa-solid fa-circle-check"></i> Date & Venue Verified Conflict-Free</div>
+          <div>${a.formatted_date} has no Philippine regular holiday, special non-working day, exam blackout, or venue collision conflicts.</div>
+        `;
+      }
+    }
+  } catch (err) {
+    resBox.style.display = 'none';
+  }
+}
+
+function runAICheckDateConflict() {
+  autoCheckModalDate();
 }
 
 function viewEventById(id) {
@@ -1069,8 +1479,14 @@ function showToast(msg, type = 'success') {
 function filterEventTable() {
   const q = document.getElementById('eventSearch').value.toLowerCase();
   document.querySelectorAll('#eventTable tbody tr').forEach(tr => {
-    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+    const match = tr.textContent.toLowerCase().includes(q);
+    tr.setAttribute('data-search-hidden', match ? 'false' : 'true');
   });
+  const tbl = document.getElementById('eventTable');
+  if (tbl && tbl._paginator) {
+    tbl._paginator.currentPage = 1;
+    tbl._paginator.refresh();
+  }
 }
 
 // View event details
@@ -1211,6 +1627,9 @@ document.getElementById('editEventForm')?.addEventListener('submit', async (e) =
   } else showToast(res.message, 'error');
 });
 
+let currentViewingEventRegistrations = [];
+let currentViewingEventMeta = null;
+
 async function viewRegistrations(eventId, eventTitle) {
   const fd = new FormData();
   fd.append('action', 'list_registrations');
@@ -1219,74 +1638,463 @@ async function viewRegistrations(eventId, eventTitle) {
   try {
     const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd });
     const data = await res.json();
-    if (!data.success) { alert('Error: ' + data.message); return; }
+    if (!data.success) {
+      alert('Error: ' + data.message);
+      return;
+    }
 
     const list = data.registrations || [];
-    let rowsHtml = '';
-    list.forEach((r, idx) => {
-      const courseStr = (r.course || 'BSIT') + ' - ' + (r.year_level || '3rd Year');
-      rowsHtml += `
-        <tr>
-          <td>${idx + 1}</td>
-          <td><strong>${r.first_name} ${r.last_name}</strong></td>
-          <td>${r.email}</td>
-          <td>${courseStr}</td>
-          <td>${r.phone || 'N/A'}</td>
-          <td><span style="color:#16a34a;font-weight:700;">${r.status}</span></td>
-        </tr>
-      `;
-    });
+    const ev = data.event || {};
+    currentViewingEventRegistrations = list;
+    currentViewingEventMeta = {
+      id: eventId,
+      title: eventTitle || ev.title || 'Campus Event',
+      date: ev.event_date || '',
+      venue: ev.venue || '',
+      club: ev.club_name ? `${ev.club_name} (${ev.club_code || ''})` : ''
+    };
 
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Registration List - ${eventTitle}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 30px; color: #1e293b; }
-          h2 { margin-bottom: 4px; color: #0f2a73; }
-          p { margin-top: 0; color: #64748b; font-size: 0.9rem; }
-          table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 0.88rem; }
-          th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; }
-          th { background: #f1f5f9; color: #334155; }
-          .header-bar { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0f2a73; padding-bottom: 15px; margin-bottom: 20px; }
-          .print-btn { background: #2563eb; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; }
-          @media print { .print-btn { display: none; } }
-        </style>
-      </head>
-      <body>
-        <div class="header-bar">
-          <div>
-            <h2>Bestlink College of the Philippines</h2>
-            <p>Office of Student Affairs ï¿½ Event Registration Roster</p>
-          </div>
-          <button class="print-btn" onclick="window.print()">??? Print / Export to PDF</button>
-        </div>
-        <h3>Event: ${eventTitle}</h3>
-        <p>Total Registered Students: <strong>${list.length}</strong></p>
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Student Name</th>
-              <th>Email</th>
-              <th>Course & Year</th>
-              <th>Contact Phone</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHtml || '<tr><td colspan="6" style="text-align:center;padding:20px;">No students registered yet.</td></tr>'}
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `);
-    printWindow.document.close();
+    const headerTitle = document.getElementById('regModalHeaderTitle');
+    if (headerTitle) {
+      headerTitle.textContent = `Registration Roster — ${currentViewingEventMeta.title}`;
+    }
+    const searchInp = document.getElementById('regSearchInput');
+    if (searchInp) searchInp.value = '';
+
+    renderRegistrationsTable(list);
+    document.getElementById('eventRegistrationsModal').style.display = 'flex';
   } catch (err) {
     alert('Network error retrieving registration list.');
   }
+}
+
+function renderRegistrationsTable(list) {
+  const tbody = document.getElementById('regTableBody');
+  if (!list || !list.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:#64748b; font-style:italic;">No registered student attendees found.</td></tr>`;
+    return;
+  }
+
+  let html = '';
+  list.forEach((r, idx) => {
+    const courseStr = [r.course || 'BSIT', r.year_level || '', r.section ? `Sec ${r.section}` : ''].filter(Boolean).join(' - ');
+    html += `
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:10px 12px; text-align:center; color:#64748b; font-weight:600;">${idx + 1}</td>
+        <td style="padding:10px 12px;">
+          <strong style="color:#0f172a; font-size:0.9rem;">${r.first_name} ${r.last_name}</strong>
+        </td>
+        <td style="padding:10px 12px; font-weight:600; color:#334155; font-size:0.82rem;">${r.student_number || '—'}</td>
+        <td style="padding:10px 12px; color:#475569;">${courseStr}</td>
+        <td style="padding:10px 12px; font-size:0.82rem; color:#475569;">
+          <div>${r.email || '—'}</div>
+          ${r.phone ? `<div style="font-size:0.75rem; color:#64748b;">${r.phone}</div>` : ''}
+        </td>
+        <td style="padding:10px 12px; text-align:center;">
+          <span style="background:#dcfce7; color:#166534; font-size:0.72rem; font-weight:800; padding:3px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
+            <i class="fa-solid fa-circle-check"></i> ${r.status || 'Registered'}
+          </span>
+        </td>
+      </tr>
+    `;
+  });
+  tbody.innerHTML = html;
+}
+
+function filterRegistrationsList(query) {
+  const q = (query || '').toLowerCase().trim();
+  if (!q) {
+    renderRegistrationsTable(currentViewingEventRegistrations);
+    return;
+  }
+  const filtered = currentViewingEventRegistrations.filter(r => {
+    const fullName = `${r.first_name || ''} ${r.last_name || ''}`.toLowerCase();
+    const email = (r.email || '').toLowerCase();
+    const course = (r.course || '').toLowerCase();
+    const studentNo = (r.student_number || '').toLowerCase();
+    return fullName.includes(q) || email.includes(q) || course.includes(q) || studentNo.includes(q);
+  });
+  renderRegistrationsTable(filtered);
+}
+
+function loadImage(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+async function exportRegistrationsPDF() {
+  if (!currentViewingEventMeta) {
+    alert('No event data selected.');
+    return;
+  }
+
+  const list = currentViewingEventRegistrations || [];
+  if (!list.length) {
+    alert('No registered student attendees available to export.');
+    return;
+  }
+
+  if (typeof window.jspdf === 'undefined' && typeof jsPDF === 'undefined') {
+    printEventRegistrationsReport();
+    return;
+  }
+
+  const { jsPDF } = window.jspdf || { jsPDF };
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 14;
+
+  // 1. School Logo & Official Letterhead
+  const logoImg = await loadImage('../images/BCP_LOGO.png');
+  if (logoImg) {
+    try {
+      doc.addImage(logoImg, 'PNG', margin + 2, 7, 17, 17);
+    } catch (e) {
+      console.warn('Logo embed error:', e);
+    }
+  }
+
+  doc.setTextColor(30, 58, 138); // #1e3a8a
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text('BESTLINK COLLEGE OF THE PHILIPPINES', margin + 23, 13);
+
+  doc.setTextColor(71, 85, 105); // #475569
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('Office of Student Affairs & Services \u2022 Campus Student Organizations', margin + 23, 18.5);
+
+  doc.setTextColor(100, 116, 139); // #64748b
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.text('Campus Co-Curricular Student Organization Management System', margin + 23, 23.5);
+
+  // Divider Line
+  doc.setDrawColor(30, 58, 138);
+  doc.setLineWidth(0.5);
+  doc.line(margin, 28, pageW - margin, 28);
+
+  // 2. Document Title
+  doc.setTextColor(15, 23, 42);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11.5);
+  doc.text('OFFICIAL EVENT REGISTRATION ROSTER', pageW / 2, 35, { align: 'center' });
+
+  // 3. Event Summary Metadata Box
+  doc.setFillColor(248, 250, 252);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(margin, 39, pageW - margin * 2, 23, 2, 2, 'FD');
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(30, 41, 59);
+
+  // Left column
+  doc.text('Event Title:', margin + 4, 45);
+  doc.setFont('helvetica', 'normal');
+  const splitTitle = doc.splitTextToSize(String(currentViewingEventMeta.title || 'Campus Event'), 68);
+  doc.text(splitTitle, margin + 22, 45);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Date & Time:', margin + 4, 52);
+  doc.setFont('helvetica', 'normal');
+  doc.text(String(currentViewingEventMeta.date || 'TBD'), margin + 22, 52);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Total Registered:', margin + 4, 58);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${list.length} Students`, margin + 28, 58);
+
+  // Right column
+  doc.setFont('helvetica', 'bold');
+  doc.text('Host Org:', margin + 96, 45);
+  doc.setFont('helvetica', 'normal');
+  const splitClub = doc.splitTextToSize(String(currentViewingEventMeta.club || 'Campus Organization'), 68);
+  doc.text(splitClub, margin + 112, 45);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Venue:', margin + 96, 52);
+  doc.setFont('helvetica', 'normal');
+  const splitVenue = doc.splitTextToSize(String(currentViewingEventMeta.venue || 'Campus Facility'), 68);
+  doc.text(splitVenue, margin + 112, 52);
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('Export Date:', margin + 96, 58);
+  doc.setFont('helvetica', 'normal');
+  doc.text(new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), margin + 115, 58);
+
+  // 4. Table Body Rows
+  const tableRows = list.map((r, idx) => {
+    const courseStr = [r.course || 'BSIT', r.year_level || '', r.section ? `Sec ${r.section}` : ''].filter(Boolean).join(' - ');
+    return [
+      idx + 1,
+      `${r.first_name || ''} ${r.last_name || ''}`,
+      r.student_number || '—',
+      courseStr,
+      r.email || '',
+      r.phone || 'N/A',
+      r.status || 'Registered'
+    ];
+  });
+
+  // 5. Render Table via autoTable
+  doc.autoTable({
+    startY: 66,
+    head: [['#', 'Student Name', 'Student ID', 'Course & Year', 'Email', 'Contact Phone', 'Status']],
+    body: tableRows,
+    theme: 'grid',
+    headStyles: {
+      fillColor: [30, 58, 138],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8,
+      halign: 'left'
+    },
+    bodyStyles: {
+      fontSize: 7.5,
+      textColor: [30, 41, 59]
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    },
+    columnStyles: {
+      0: { halign: 'center', cellWidth: 8 },
+      1: { fontStyle: 'bold', cellWidth: 38 },
+      2: { cellWidth: 26 },
+      3: { cellWidth: 32 },
+      4: { cellWidth: 42 },
+      5: { cellWidth: 22 },
+      6: { halign: 'center', cellWidth: 16 }
+    },
+    margin: { left: margin, right: margin, bottom: 38 },
+    didDrawPage: function(data) {
+      doc.setFontSize(7.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(148, 163, 184);
+      doc.text(
+        `Page ${doc.internal.getNumberOfPages()}`,
+        pageW / 2,
+        pageH - 8,
+        { align: 'center' }
+      );
+    }
+  });
+
+  // 6. Signatures ALWAYS at the Bottom of the Final Page
+  const totalPages = doc.internal.getNumberOfPages();
+  doc.setPage(totalPages);
+
+  if (doc.lastAutoTable && doc.lastAutoTable.finalY > pageH - 42) {
+    doc.addPage();
+  }
+
+  const signY = pageH - 28; // pinned to bottom
+  const signW = (pageW - margin * 2) / 3;
+
+  doc.setDrawColor(51, 65, 85);
+  doc.setLineWidth(0.4);
+
+  // Sign 1
+  doc.line(margin + 4, signY, margin + signW - 4, signY);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Event Coordinator / Lead', margin + signW / 2, signY + 4, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Activity In-Charge', margin + signW / 2, signY + 7.5, { align: 'center' });
+
+  // Sign 2
+  doc.line(margin + signW + 4, signY, margin + signW * 2 - 4, signY);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Club Faculty Adviser', margin + signW * 1.5, signY + 4, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Faculty Supervision', margin + signW * 1.5, signY + 7.5, { align: 'center' });
+
+  // Sign 3
+  doc.line(margin + signW * 2 + 4, signY, pageW - margin - 4, signY);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Director / Dean of Student Affairs', margin + signW * 2.5, signY + 4, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.setTextColor(100, 116, 139);
+  doc.text('Office of Student Affairs', margin + signW * 2.5, signY + 7.5, { align: 'center' });
+
+  // Direct PDF Download
+  const cleanTitle = (currentViewingEventMeta.title || 'event').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  doc.save(`${cleanTitle}_registration_roster_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+function exportRegistrationsCSV() {
+  if (!currentViewingEventRegistrations || !currentViewingEventRegistrations.length) {
+    alert('No registrations available to export.');
+    return;
+  }
+  const headers = ['#', 'Student Number', 'First Name', 'Last Name', 'Email', 'Course', 'Year Level', 'Section', 'Contact Phone', 'Status', 'Registered At'];
+  const rows = currentViewingEventRegistrations.map((r, idx) => [
+    idx + 1,
+    `"${r.student_number || ''}"`,
+    `"${r.first_name || ''}"`,
+    `"${r.last_name || ''}"`,
+    `"${r.email || ''}"`,
+    `"${r.course || ''}"`,
+    `"${r.year_level || ''}"`,
+    `"${r.section || ''}"`,
+    `"${r.phone || ''}"`,
+    `"${r.status || 'Registered'}"`,
+    `"${r.registered_at || ''}"`
+  ]);
+
+  const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement('a');
+  link.setAttribute('href', encodedUri);
+  const cleanTitle = (currentViewingEventMeta?.title || 'event').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  link.setAttribute('download', `${cleanTitle}_registrations_${new Date().toISOString().slice(0,10)}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function printEventRegistrationsReport() {
+  if (!currentViewingEventMeta) return;
+
+  const list = currentViewingEventRegistrations || [];
+  let rowsHtml = '';
+  list.forEach((r, idx) => {
+    const courseStr = [r.course || 'BSIT', r.year_level || '', r.section ? `Sec ${r.section}` : ''].filter(Boolean).join(' - ');
+    rowsHtml += `
+      <tr>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1; text-align:center;">${idx + 1}</td>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1; font-weight:700;">${r.first_name} ${r.last_name}</td>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1;">${r.student_number || '—'}</td>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1;">${courseStr}</td>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1;">${r.email || ''}</td>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1;">${r.phone || 'N/A'}</td>
+        <td style="padding:6px 8px; border:1px solid #cbd5e1; text-align:center; color:#16a34a; font-weight:700;">${r.status || 'Registered'}</td>
+      </tr>
+    `;
+  });
+
+  const printWin = window.open('', '_blank', 'width=920,height=780');
+  if (!printWin) {
+    alert('Please allow popups to export/print event registrations.');
+    return;
+  }
+
+  printWin.document.write(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title></title>
+      <style>
+        @page { size: portrait; margin: 12mm 15mm; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; margin: 0; padding: 15px; font-size: 11px; line-height: 1.35; }
+        .header { display: flex; align-items: center; justify-content: center; gap: 14px; border-bottom: 2px solid #1e3a8a; padding-bottom: 12px; margin-bottom: 12px; text-align: center; }
+        .logo { width: 58px; height: 58px; object-fit: contain; }
+        .header-text h1 { margin: 0; font-size: 16px; color: #1e3a8a; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px; }
+        .header-text p { margin: 2px 0 0; font-size: 10.5px; color: #475569; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .doc-title { text-align: center; margin: 8px 0 10px; font-size: 14px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+        .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; background: #f8fafc; }
+        .meta-table td { padding: 6px 10px; border: 1px solid #e2e8f0; font-size: 11px; }
+        table.data-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10.5px; }
+        table.data-table th { background: #f1f5f9; color: #1e293b; font-weight: 700; padding: 6px 8px; border: 1px solid #cbd5e1; text-align: left; }
+        table.data-table td { padding: 6px 8px; border: 1px solid #cbd5e1; }
+        .signatures { display: flex; justify-content: space-between; margin-top: 32px; page-break-inside: avoid; }
+        .sign-box { width: 30%; text-align: center; font-size: 10.5px; }
+        .sign-line { border-top: 1px solid #334155; margin-top: 40px; padding-top: 4px; font-weight: 700; color: #0f172a; }
+        .print-btn-bar { text-align: right; margin-bottom: 12px; }
+        .print-btn { background: #2563eb; color: #fff; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 12px; }
+        @media print {
+          .print-btn-bar { display: none !important; }
+          body { padding: 0; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="print-btn-bar">
+        <button class="print-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+      </div>
+
+      <div class="header">
+        <img class="logo" src="../images/BCP_LOGO.png" alt="Bestlink College of the Philippines Logo" />
+        <div class="header-text">
+          <h1>Bestlink College of the Philippines</h1>
+          <p>Office of Student Affairs &amp; Services &bull; Campus Student Organizations</p>
+          <p style="font-size:10px; color:#64748b; margin-top:1px;">Official Event Registration &amp; Attendance Roster</p>
+        </div>
+      </div>
+
+      <div class="doc-title">Official Event Registration Roster</div>
+
+      <table class="meta-table">
+        <tr>
+          <td style="width:50%;"><strong>Event Title:</strong> ${currentViewingEventMeta.title}</td>
+          <td style="width:50%;"><strong>Host Organization:</strong> ${currentViewingEventMeta.club || 'Campus Organization'}</td>
+        </tr>
+        <tr>
+          <td><strong>Scheduled Date &amp; Time:</strong> ${currentViewingEventMeta.date || 'TBD'}</td>
+          <td><strong>Venue:</strong> ${currentViewingEventMeta.venue || 'Campus Facility'}</td>
+        </tr>
+        <tr>
+          <td><strong>Total Registered Attendees:</strong> ${list.length} Students</td>
+          <td><strong>Generated Date:</strong> ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+        </tr>
+      </table>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:30px; text-align:center;">#</th>
+            <th>Student Name</th>
+            <th>Student ID</th>
+            <th>Course &amp; Year</th>
+            <th>Email</th>
+            <th>Contact Phone</th>
+            <th style="text-align:center; width:80px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml || '<tr><td colspan="7" style="text-align:center; padding:16px;">No students registered yet.</td></tr>'}
+        </tbody>
+      </table>
+
+      <div class="signatures">
+        <div class="sign-box">
+          <div class="sign-line">Event Lead / Organizer</div>
+          <span style="color:#64748b; font-size:10px;">Activity In-Charge</span>
+        </div>
+        <div class="sign-box">
+          <div class="sign-line">Organization Faculty Adviser</div>
+          <span style="color:#64748b; font-size:10px;">Faculty Supervision</span>
+        </div>
+        <div class="sign-box">
+          <div class="sign-line">Dean / Director of Student Affairs</div>
+          <span style="color:#64748b; font-size:10px;">Office of Student Affairs</span>
+        </div>
+      </div>
+    </body>
+    </html>
+  `);
+  printWin.document.close();
+  printWin.focus();
+  setTimeout(() => {
+    printWin.print();
+  }, 400);
 }
 
 // ── AI Event Planner & Schedule Conflict Optimizer (Adviser & SSC) ──
@@ -1533,5 +2341,6 @@ function autoCheckModalDate() {
   }
 }
 </script>
+<script src="../js/table-pagination.js"></script>
 </body>
 </html>

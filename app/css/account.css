@@ -23,7 +23,7 @@
 .profile-hero-card {
   background: #fff;
   border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   border: 1px solid #e2e8f0;
   padding: 32px 24px;
   display: flex;
@@ -32,19 +32,174 @@
   text-align: center;
 }
 
+.avatar-upload-wrapper {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.avatar-large-container {
+  position: relative;
+  cursor: pointer;
+  border-radius: 50%;
+  padding: 3px;
+  background: linear-gradient(135deg, #2563eb, #38bdf8);
+  box-shadow: 0 4px 18px rgba(37, 99, 235, 0.28);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.avatar-large-container:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(37, 99, 235, 0.38);
+}
+
 .avatar-large {
-  width: 90px;
-  height: 90px;
+  width: 100px;
+  height: 100px;
   border-radius: 50%;
   background: #1a3a8c;
   color: #fff;
-  font-size: 2.5rem;
+  font-size: 2.75rem;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 16px rgba(37,99,235,0.25);
-  margin-bottom: 16px;
+  position: relative;
+  overflow: hidden;
+  border: 3px solid #fff;
+}
+
+.avatar-large-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-hover-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  font-size: 0.72rem;
+  font-weight: 600;
+  backdrop-filter: blur(2px);
+}
+
+.avatar-large-container:hover .avatar-hover-overlay {
+  opacity: 1;
+}
+
+.avatar-hover-overlay i {
+  font-size: 1.1rem;
+}
+
+.avatar-upload-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 32px;
+  height: 32px;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 50%;
+  border: 2.5px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.avatar-upload-badge:hover {
+  background: #1d4ed8;
+  transform: scale(1.1);
+}
+
+/* Avatar Loading Overlay */
+.avatar-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  z-index: 5;
+}
+
+.avatar-loading-overlay.active {
+  display: flex;
+}
+
+.avatar-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 4px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.avatar-btn-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.btn-avatar-action {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.btn-avatar-action:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.btn-avatar-action.danger {
+  background: #fff5f5;
+  border-color: #fecaca;
+  color: #dc2626;
+}
+
+.btn-avatar-action.danger:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
 }
 
 .profile-user-name {
@@ -91,28 +246,7 @@
   text-align: center;
 }
 
-.btn-cct-download {
-  width: 100%;
-  background: #1a3a8c;
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  padding: 11px 16px;
-  font-size: 0.85rem;
-  font-weight: 700;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  box-shadow: 0 2px 8px rgba(22,163,74,0.25);
-  transition: transform 0.15s, box-shadow 0.15s;
-}
 
-.btn-cct-download:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(22,163,74,0.35);
-}
 
 /* ════════════════════════════
    PROFILE FORMS COLUMN (Right)
@@ -126,7 +260,7 @@
 .settings-card {
   background: #fff;
   border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   border: 1px solid #e2e8f0;
   overflow: hidden;
 }
@@ -214,12 +348,12 @@
 .form-field input:focus,
 .form-field select:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .form-field input.input-error {
   border-color: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239,68,68,0.12);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
 }
 
 .password-wrap {
@@ -271,7 +405,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  box-shadow: 0 2px 6px rgba(37,99,235,0.2);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2);
   transition: background 0.15s, transform 0.15s;
 }
 
@@ -321,49 +455,4 @@
 .btn-danger:hover {
   background: #b91c1c;
 }
-
-/* Toast */
-.toast {
-  position: fixed;
-  bottom: 28px;
-  right: 28px;
-  background: #1e293b;
-  color: #fff;
-  border-radius: 10px;
-  padding: 14px 20px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  z-index: 2000;
-  opacity: 0;
-  transform: translateY(15px);
-  transition: opacity 0.25s, transform 0.25s;
-  pointer-events: none;
-}
-
-.toast.show {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-.toast.success { border-left: 4px solid #16a34a; }
-.toast.error   { border-left: 4px solid #ef4444; }
-
-.toast-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: #94a3b8;
-}
-
-.toast-msg {
-  font-size: 0.88rem;
-  color: #f8fafc;
-}
-
-
+

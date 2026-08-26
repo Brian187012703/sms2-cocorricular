@@ -10,6 +10,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/ai_config.php';
+require_once __DIR__ . '/ph_holidays.php';
 
 /**
  * Attempt Google Gemini generation with randomized seed and anti-duplication
@@ -18,42 +19,51 @@ function gemini_generate(string $prompt, ?mysqli $conn = null): array {
     $apiKey = get_gemini_api_key($conn);
 
     if (!empty($apiKey)) {
-        $modelsToTry = [GEMINI_MODEL, 'gemini-1.5-flash', 'gemini-1.5-pro'];
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" . urlencode($apiKey);
 
-        foreach ($modelsToTry as $model) {
-            $apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
-
-            $payload = [
-                'contents' => [
-                    ['parts' => [['text' => $prompt]]]
-                ],
-                'generationConfig' => [
-                    'temperature'      => 1.0,
-                    'maxOutputTokens'  => AI_MAX_TOKENS,
-                    'responseMimeType' => 'application/json'
+        $payload = [
+            'contents' => [
+                [
+                    'role' => 'user',
+                    'parts' => [
+                        ['text' => $prompt]
+                    ]
                 ]
-            ];
+            ],
+            'generationConfig' => [
+                'temperature' => 0.85,
+                'topP' => 0.95,
+                'topK' => 40,
+                'maxOutputTokens' => 2048,
+                'responseMimeType' => 'application/json'
+            ]
+        ];
 
-            $ch = curl_init($apiUrl);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST           => true,
-                CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-                CURLOPT_POSTFIELDS     => json_encode($payload),
-                CURLOPT_TIMEOUT        => 12,
-                CURLOPT_SSL_VERIFYPEER => false,
-            ]);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($payload),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+            CURLOPT_TIMEOUT => 8,
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false
+        ]);
 
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $curlErr  = curl_error($ch);
-            curl_close($ch);
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
 
-            if (!$curlErr && $httpCode === 200) {
-                $data = json_decode($response, true);
-                $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
-                if ($text) {
-                    return ['success' => true, 'text' => $text, 'engine' => 'Google Gemini AI (' . $model . ')'];
+        if ($httpCode === 200 && $response) {
+            $data = json_decode($response, true);
+            $rawText = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+            if ($rawText) {
+                // Strip markdown code fences if Gemini included them
+                $cleanJson = preg_replace('/^```(?:json)?\s*|\s*```$/i', '', trim($rawText));
+                $parsed = json_decode($cleanJson, true);
+                if (is_array($parsed)) {
+                    return ['success' => true, 'engine' => 'google-gemini-1.5-flash', 'data' => $parsed];
                 }
             }
         }
@@ -66,28 +76,7 @@ function gemini_generate(string $prompt, ?mysqli $conn = null): array {
  * Official Philippine Holidays Catalog (Regular & Special Non-Working)
  */
 function get_philippine_holidays(int $year): array {
-    return [
-        "$year-01-01" => ['name' => "New Year's Day", 'type' => 'Regular Holiday'],
-        "$year-01-23" => ['name' => "First Philippine Republic Day", 'type' => 'Special Working'],
-        "$year-02-17" => ['name' => "Chinese Lunar New Year", 'type' => 'Special Non-Working'],
-        "$year-02-25" => ['name' => "EDSA People Power Revolution Anniversary", 'type' => 'Special Non-Working'],
-        "$year-04-02" => ['name' => "Maundy Thursday", 'type' => 'Regular Holiday'],
-        "$year-04-03" => ['name' => "Good Friday", 'type' => 'Regular Holiday'],
-        "$year-04-04" => ['name' => "Black Saturday", 'type' => 'Special Non-Working'],
-        "$year-04-09" => ['name' => "Araw ng Kagitingan (Day of Valor)", 'type' => 'Regular Holiday'],
-        "$year-05-01" => ['name' => "Labor Day", 'type' => 'Regular Holiday'],
-        "$year-06-12" => ['name' => "Independence Day", 'type' => 'Regular Holiday'],
-        "$year-08-21" => ['name' => "Ninoy Aquino Day", 'type' => 'Special Non-Working'],
-        "$year-08-31" => ['name' => "National Heroes Day", 'type' => 'Regular Holiday'],
-        "$year-11-01" => ['name' => "All Saints' Day", 'type' => 'Special Non-Working'],
-        "$year-11-02" => ['name' => "All Souls' Day", 'type' => 'Special Non-Working'],
-        "$year-11-30" => ['name' => "Bonifacio Day", 'type' => 'Regular Holiday'],
-        "$year-12-08" => ['name' => "Feast of the Immaculate Conception", 'type' => 'Special Non-Working'],
-        "$year-12-24" => ['name' => "Christmas Eve", 'type' => 'Special Non-Working'],
-        "$year-12-25" => ['name' => "Christmas Day", 'type' => 'Regular Holiday'],
-        "$year-12-30" => ['name' => "Rizal Day", 'type' => 'Regular Holiday'],
-        "$year-12-31" => ['name' => "Last Day of the Year / New Year's Eve", 'type' => 'Special Non-Working'],
-    ];
+    return get_ph_holidays($year);
 }
 
 /**

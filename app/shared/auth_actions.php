@@ -32,7 +32,7 @@ switch ($action) {
             respond(false, 'Username and password are required.');
 
         $stmt = $conn->prepare(
-            'SELECT id, username, email, first_name, last_name, password_hash, role
+            'SELECT id, username, email, first_name, last_name, password_hash, role, profile_pic
          FROM users WHERE username = ? LIMIT 1'
         );
         $stmt->bind_param('s', $username);
@@ -50,8 +50,126 @@ switch ($action) {
         $_SESSION['first_name'] = $user['first_name'];
         $_SESSION['last_name'] = $user['last_name'];
         $_SESSION['role'] = $user['role'];
+        $_SESSION['profile_pic'] = $user['profile_pic'] ?? null;
 
-        respond(true, 'Login successful.', ['role' => $user['role']]);
+        respond(true, 'Login successful.', [
+            'role' => $user['role'],
+            'profile_pic' => $user['profile_pic'] ?? null
+        ]);
+    }
+
+    case 'upload_avatar': {
+        requireSession();
+        $userId = (int)$_SESSION['user_id'];
+
+        if (!isset($_FILES['avatar']) || $_FILES['avatar']['error'] !== UPLOAD_ERR_OK) {
+            $errMap = [
+                UPLOAD_ERR_INI_SIZE   => 'Image exceeds server upload_max_filesize limit.',
+                UPLOAD_ERR_FORM_SIZE  => 'Image exceeds form MAX_FILE_SIZE limit.',
+                UPLOAD_ERR_PARTIAL    => 'Image was only partially uploaded.',
+                UPLOAD_ERR_NO_FILE    => 'No image file was selected.',
+                UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary folder.',
+                UPLOAD_ERR_CANT_WRITE => 'Failed to write image to disk.',
+                UPLOAD_ERR_EXTENSION  => 'A PHP extension stopped the file upload.'
+            ];
+            $errCode = $_FILES['avatar']['error'] ?? UPLOAD_ERR_NO_FILE;
+            respond(false, $errMap[$errCode] ?? 'File upload error occurred.');
+        }
+
+        $file = $_FILES['avatar'];
+        $maxBytes = 5 * 1024 * 1024; // 5 MB
+        if ($file['size'] > $maxBytes) {
+            respond(false, 'Profile picture must not exceed 5MB.');
+        }
+
+        // Validate image format via getimagesize
+        $imgInfo = @getimagesize($file['tmp_name']);
+        if ($imgInfo === false) {
+            respond(false, 'The uploaded file is not a valid image.');
+        }
+
+        $allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        $mime = $imgInfo['mime'] ?? '';
+        if (!in_array($mime, $allowedMimes, true)) {
+            respond(false, 'Only JPG, PNG, WEBP, or GIF image formats are allowed.');
+        }
+
+        // Determine extension
+        $extMap = [
+            'image/jpeg' => 'jpg',
+            'image/png'  => 'png',
+            'image/webp' => 'webp',
+            'image/gif'  => 'gif'
+        ];
+        $ext = $extMap[$mime] ?? 'jpg';
+
+        $uploadDir = __DIR__ . '/../uploads/avatars/';
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0755, true);
+        }
+
+        $filename = 'avatar_' . $userId . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $targetPath = $uploadDir . $filename;
+
+        if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+            respond(false, 'Failed to save uploaded picture. Check folder permissions.');
+        }
+
+        // Fetch and remove previous avatar if exists
+        $stmt = $conn->prepare('SELECT profile_pic FROM users WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $oldPic = $stmt->get_result()->fetch_assoc()['profile_pic'] ?? null;
+        $stmt->close();
+
+        if ($oldPic && $oldPic !== $filename) {
+            $oldPath = $uploadDir . basename($oldPic);
+            if (file_exists($oldPath)) {
+                @unlink($oldPath);
+            }
+        }
+
+        // Update database
+        $stmt = $conn->prepare('UPDATE users SET profile_pic = ? WHERE id = ?');
+        $stmt->bind_param('si', $filename, $userId);
+        if ($stmt->execute()) {
+            $stmt->close();
+            $_SESSION['profile_pic'] = $filename;
+            respond(true, 'Profile picture updated successfully!', [
+                'profile_pic' => $filename,
+                'avatar_url'  => '../uploads/avatars/' . $filename
+            ]);
+        }
+        $stmt->close();
+        respond(false, 'Failed to update user profile picture in database.');
+    }
+
+    case 'remove_avatar': {
+        requireSession();
+        $userId = (int)$_SESSION['user_id'];
+
+        $stmt = $conn->prepare('SELECT profile_pic FROM users WHERE id = ? LIMIT 1');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $oldPic = $stmt->get_result()->fetch_assoc()['profile_pic'] ?? null;
+        $stmt->close();
+
+        if ($oldPic) {
+            $oldPath = __DIR__ . '/../uploads/avatars/' . basename($oldPic);
+            if (file_exists($oldPath)) {
+                @unlink($oldPath);
+            }
+        }
+
+        $stmt = $conn->prepare('UPDATE users SET profile_pic = NULL WHERE id = ?');
+        $stmt->bind_param('i', $userId);
+        if ($stmt->execute()) {
+            $stmt->close();
+            $_SESSION['profile_pic'] = null;
+            respond(true, 'Profile picture removed successfully.');
+        }
+        $stmt->close();
+        respond(false, 'Failed to remove profile picture.');
     }
 
     case 'update_profile': {

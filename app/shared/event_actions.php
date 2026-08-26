@@ -8,6 +8,7 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/ph_holidays.php';
 
 if (empty($_SESSION['user_id'])) { echo json_encode(['success'=>false,'message'=>'Not authenticated.']); exit; }
 
@@ -20,6 +21,26 @@ function eRespond(bool $ok, string $msg, array $extra = []): void {
 }
 
 switch ($action) {
+
+    // ── CHECK CONFLICT (Holidays, Special Non-Working, Exam Blackout, Venue Collision) ──
+    case 'check_conflict': {
+        $event_date = trim($_POST['event_date'] ?? $_GET['event_date'] ?? '');
+        $venue      = trim($_POST['venue']      ?? $_GET['venue']      ?? '');
+        $exclude_id = (int)($_POST['event_id']  ?? $_GET['event_id']  ?? 0);
+        $club_id    = (int)($_POST['club_id']   ?? $_GET['club_id']   ?? 0);
+
+        if (!$event_date) eRespond(false, 'Date is required.');
+        $result = detect_event_schedule_conflict($conn, $event_date, $venue, $exclude_id, $club_id);
+        eRespond(true, 'Conflict audit completed.', ['analysis' => $result]);
+    }
+
+    // ── GET HOLIDAYS CATALOG ──────────────────────────────────────────
+    case 'get_holidays': {
+        $year = (int)($_POST['year'] ?? $_GET['year'] ?? date('Y'));
+        if ($year < 2020 || $year > 2035) $year = (int)date('Y');
+        $holidays = get_ph_holidays($year);
+        eRespond(true, 'OK', ['holidays' => $holidays]);
+    }
 
     // ── LIST events ──────────────────────────────────────────
     case 'list': {
@@ -35,7 +56,7 @@ switch ($action) {
         eRespond(true, 'OK', ['events' => $rows]);
     }
 
-    // ── CREATE event proposal (Adviser / OSA / Admin) ─────────
+    // ── CREATE event proposal (Adviser / SSC / Admin) ─────────
     case 'create': {
         if (!in_array($user_role, ['club_adviser','ssc','admin']))
             eRespond(false, 'Only Club Advisers and above can create events.');
@@ -50,6 +71,9 @@ switch ($action) {
         // Determine club_id
         $club_id = (int)($_POST['club_id'] ?? 1);
 
+        // Run Pro-Developer Pre-Flight Conflict Check
+        $conflictAnalysis = detect_event_schedule_conflict($conn, $event_date, $venue, 0, $club_id);
+
         $stmt = $conn->prepare(
             "INSERT INTO events (club_id, title, description, event_date, venue, status, created_by)
              VALUES (?, ?, ?, ?, ?, 'Pending SSC', ?)"
@@ -59,18 +83,27 @@ switch ($action) {
         $new_id = $conn->insert_id;
         $stmt->close();
 
-        // Notify SSC officers/directors
-        $osas = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
-        while ($o = $osas->fetch_assoc()) {
-            push_notification($conn, (int)$o['id'], 'New Event Proposal',
-                "A new event \"$title\" on " . date('M d, Y', strtotime($event_date)) . " was submitted for SSC review & approval.", 'event');
+        // Include holiday conflict notice in notifications if applicable
+        $holidayNotice = '';
+        if ($conflictAnalysis['has_conflict']) {
+            $holidayNotice = " (Note: {$conflictAnalysis['summary']})";
         }
-        log_audit($conn, $user_id, 'event_create', 'events', $new_id, "Created event proposal: $title");
 
-        eRespond(true, 'Event proposal submitted to SSC for review & approval.', ['id' => $new_id]);
+        // Notify SSC officers
+        $sscs = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
+        while ($o = $sscs->fetch_assoc()) {
+            push_notification($conn, (int)$o['id'], 'New Event Proposal Submitted',
+                "A new event \"$title\" on " . date('M d, Y', strtotime($event_date)) . " at venue \"$venue\" was submitted for SSC review & approval.{$holidayNotice}", 'event');
+        }
+        log_audit($conn, $user_id, 'event_create', 'events', $new_id, "Created event proposal: $title" . ($conflictAnalysis['has_conflict'] ? " [Flagged: {$conflictAnalysis['summary']}]" : ""));
+
+        eRespond(true, 'Event proposal submitted to SSC for review & approval.', [
+            'id' => $new_id,
+            'conflict_analysis' => $conflictAnalysis
+        ]);
     }
 
-    // ── EDIT event (Adviser / OSA / Admin) ────────────────────
+    // ── EDIT event (Adviser / SSC / Admin) ────────────────────
     case 'edit': {
         if (!in_array($user_role, ['club_adviser','ssc','admin']))
             eRespond(false, 'Not authorized to edit events.');
@@ -94,9 +127,9 @@ switch ($action) {
         eRespond(true, 'Event updated successfully.');
     }
 
-    // ── APPROVE event (OSA Director / Admin) ─────────────────
+    // ── APPROVE event (SSC / Admin) ─────────────────
     case 'approve': {
-        if (!in_array($user_role, ['ssc','admin'])) eRespond(false, 'Only OSA Directors can approve events.');
+        if (!in_array($user_role, ['ssc','admin'])) eRespond(false, 'Only SSC Officers can approve events.');
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) eRespond(false, 'Invalid event ID.');
 
@@ -108,15 +141,15 @@ switch ($action) {
         $ev = $conn->query("SELECT e.title, e.created_by FROM events e WHERE e.id = $id")->fetch_assoc();
         if ($ev && $ev['created_by']) {
             push_notification($conn, (int)$ev['created_by'], 'Event Approved!',
-                "Your event \"{$ev['title']}\" has been approved by the OSA Director!", 'success');
+                "Your event \"{$ev['title']}\" has been approved by the SSC!", 'success');
         }
         log_audit($conn, $user_id, 'event_approve', 'events', $id, "Approved event #$id");
         eRespond(true, 'Event approved successfully.');
     }
 
-    // ── REJECT event (OSA Director / Admin) ──────────────────
+    // ── REJECT event (SSC / Admin) ──────────────────
     case 'reject': {
-        if (!in_array($user_role, ['ssc','admin'])) eRespond(false, 'Only OSA Directors can reject events.');
+        if (!in_array($user_role, ['ssc','admin'])) eRespond(false, 'Only SSC Officers can reject events.');
         $id   = (int)($_POST['id'] ?? 0);
         $note = trim($_POST['note'] ?? 'Event proposal was rejected.');
         if ($id <= 0) eRespond(false, 'Invalid event ID.');
@@ -191,7 +224,7 @@ switch ($action) {
 
         $sql = "SELECT er.id, er.registered_at, er.status,
                        u.first_name, u.last_name, u.email,
-                       s.course, s.year_level, s.phone
+                       s.student_number, s.course, s.year_level, s.phone, s.section
                 FROM event_registrations er
                 JOIN users u ON u.id = er.user_id
                 LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
@@ -203,7 +236,12 @@ switch ($action) {
         $registrations = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
 
-        $ev = $conn->query("SELECT title, event_date, venue FROM events WHERE id=$event_id")->fetch_assoc();
+        $ev = $conn->query("
+            SELECT e.title, e.event_date, e.venue, e.status, c.name AS club_name, c.code AS club_code 
+            FROM events e 
+            LEFT JOIN clubs c ON c.id = e.club_id 
+            WHERE e.id = $event_id
+        ")->fetch_assoc();
 
         eRespond(true, 'OK', ['registrations' => $registrations, 'event' => $ev]);
     }

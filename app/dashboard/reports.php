@@ -12,6 +12,7 @@ $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
 $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)$_SESSION['user_id'];
 
 // Students don't have access to reports
@@ -324,8 +325,18 @@ if ($r) $stats['ai_interactions'] = (int)$r->fetch_assoc()['c'];
     <button class="hamburger" id="hamburgerBtn"><i class="fa-solid fa-bars"></i></button>
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
+      <div class="search-wrap">
+        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
+        <i class="fa-solid fa-magnifying-glass"></i>
+      </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code" type="button"><i class="fa-solid fa-qrcode"></i></button>
-      <a href="account.php" class="avatar" title="Account"><?= $sess_initial ?></a>
+      <a href="account.php" class="avatar" id="avatarBtn" title="Account Settings">
+        <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+        <?php else: ?>
+          <?= $sess_initial ?>
+        <?php endif; ?>
+      </a>
     </div>
   </div>
 

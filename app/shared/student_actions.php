@@ -17,21 +17,25 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 switch ($action) {
 
     case 'add':
-        $first_name = trim($conn->real_escape_string($_POST['first_name'] ?? ''));
-        $last_name  = trim($conn->real_escape_string($_POST['last_name']  ?? ''));
-        $birthday   = trim($conn->real_escape_string($_POST['birthday']   ?? ''));
-        $course     = trim($conn->real_escape_string($_POST['course']     ?? ''));
-        $year_level = trim($conn->real_escape_string($_POST['year_level'] ?? ''));
-        $section    = trim($conn->real_escape_string($_POST['section']    ?? ''));
-        $phone      = trim($conn->real_escape_string($_POST['phone']      ?? ''));
-        $status     = ($_POST['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
+        $student_number = trim($conn->real_escape_string($_POST['student_number'] ?? ''));
+        $first_name     = trim($conn->real_escape_string($_POST['first_name'] ?? ''));
+        $last_name      = trim($conn->real_escape_string($_POST['last_name']  ?? ''));
+        $birthday       = trim($conn->real_escape_string($_POST['birthday']   ?? ''));
+        $course         = trim($conn->real_escape_string($_POST['course']     ?? ''));
+        $year_level     = trim($conn->real_escape_string($_POST['year_level'] ?? ''));
+        $section        = trim($conn->real_escape_string($_POST['section']    ?? ''));
+        $phone          = trim($conn->real_escape_string($_POST['phone']      ?? ''));
+        $status         = ($_POST['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
 
         if (!$first_name || !$last_name || !$birthday || !$course || !$year_level || !$section || !$phone) {
             echo json_encode(['success' => false, 'message' => 'All fields are required.']);
             break;
         }
-        $sql = "INSERT INTO students (first_name,last_name,birthday,course,year_level,section,phone,status)
-                VALUES ('$first_name','$last_name','$birthday','$course','$year_level','$section','$phone','$status')";
+        if (!$student_number) {
+            $student_number = '2024-' . rand(10000, 99999);
+        }
+        $sql = "INSERT INTO students (student_number,first_name,last_name,birthday,course,year_level,section,phone,status)
+                VALUES ('$student_number','$first_name','$last_name','$birthday','$course','$year_level','$section','$phone','$status')";
         if ($conn->query($sql)) {
             echo json_encode(['success' => true, 'message' => 'Student added.', 'id' => $conn->insert_id]);
         } else {
@@ -50,20 +54,22 @@ switch ($action) {
         break;
 
     case 'edit':
-        $id         = (int)($_POST['id'] ?? 0);
-        $first_name = trim($conn->real_escape_string($_POST['first_name'] ?? ''));
-        $last_name  = trim($conn->real_escape_string($_POST['last_name']  ?? ''));
-        $birthday   = trim($conn->real_escape_string($_POST['birthday']   ?? ''));
-        $course     = trim($conn->real_escape_string($_POST['course']     ?? ''));
-        $year_level = trim($conn->real_escape_string($_POST['year_level'] ?? ''));
-        $section    = trim($conn->real_escape_string($_POST['section']    ?? ''));
-        $phone      = trim($conn->real_escape_string($_POST['phone']      ?? ''));
-        $status     = ($_POST['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
+        $id             = (int)($_POST['id'] ?? 0);
+        $student_number = trim($conn->real_escape_string($_POST['student_number'] ?? ''));
+        $first_name     = trim($conn->real_escape_string($_POST['first_name'] ?? ''));
+        $last_name      = trim($conn->real_escape_string($_POST['last_name']  ?? ''));
+        $birthday       = trim($conn->real_escape_string($_POST['birthday']   ?? ''));
+        $course         = trim($conn->real_escape_string($_POST['course']     ?? ''));
+        $year_level     = trim($conn->real_escape_string($_POST['year_level'] ?? ''));
+        $section        = trim($conn->real_escape_string($_POST['section']    ?? ''));
+        $phone          = trim($conn->real_escape_string($_POST['phone']      ?? ''));
+        $status         = ($_POST['status'] ?? 'Active') === 'Inactive' ? 'Inactive' : 'Active';
 
         if ($id <= 0 || !$first_name || !$last_name || !$birthday || !$course || !$year_level || !$section || !$phone) {
             echo json_encode(['success' => false, 'message' => 'All fields are required.']); break;
         }
-        $sql = "UPDATE students SET first_name='$first_name',last_name='$last_name',birthday='$birthday',
+        $snum_sql = $student_number ? "student_number='$student_number'," : "";
+        $sql = "UPDATE students SET {$snum_sql} first_name='$first_name',last_name='$last_name',birthday='$birthday',
                 course='$course',year_level='$year_level',section='$section',phone='$phone',status='$status'
                 WHERE id=$id";
         echo $conn->query($sql)

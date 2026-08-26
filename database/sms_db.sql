@@ -25,6 +25,7 @@ CREATE TABLE `users` (
     `last_name`     VARCHAR(100)  NOT NULL,
     `password_hash` VARCHAR(255)  NOT NULL,
     `role`          ENUM('admin','student','club_adviser','osa_director','finance_officer') NOT NULL DEFAULT 'student',
+    `profile_pic`   VARCHAR(255)  DEFAULT NULL,
     `created_at`    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at`    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

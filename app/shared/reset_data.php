@@ -210,30 +210,31 @@ $mem_stmt->close();
 // Seed students table profile data (for dashboard display)
 $check_tbl = $conn->query("SHOW TABLES LIKE 'students'");
 if ($check_tbl && $check_tbl->num_rows > 0) {
+    $conn->query("ALTER TABLE students ADD COLUMN IF NOT EXISTS student_number VARCHAR(50) DEFAULT NULL AFTER id");
     $conn->query("DELETE FROM students");
     $s_ins = $conn->prepare(
-        "INSERT INTO students (first_name, last_name, course, year_level, section, status) VALUES (?, ?, ?, ?, ?, 'Active')"
+        "INSERT INTO students (student_number, first_name, last_name, course, year_level, section, status) VALUES (?, ?, ?, ?, ?, ?, 'Active')"
     );
     $student_profiles = [
-        ['Juan',     'Santos',     'Bachelor of Science in Information Technology',           '2nd Year', 'IT-2A'],
-        ['Maria',    'Cruz',       'Bachelor of Science in Hospitality Management',           '1st Year', 'HM-1B'],
-        ['Jose',     'Reyes',      'Bachelor of Science in Accounting Information System',    '3rd Year', 'AIS-3A'],
-        ['Ana',      'Dela Cruz',  'Bachelor of Science in Tourism Management',               '2nd Year', 'TM-2C'],
-        ['Carlos',   'Garcia',     'Bachelor of Science in Office Administration',            '1st Year', 'OA-1A'],
-        ['Liza',     'Ramos',      'Bachelor of Science in Entrepreneurship',                 '3rd Year', 'ENT-3B'],
-        ['Ramon',    'Villanueva', 'Bachelor of Science in Business Administration',          '2nd Year', 'BA-2A'],
-        ['Patricia', 'Aquino',     'Bachelor of Science in Information Science',              '1st Year', 'IS-1A'],
-        ['Mark',     'Bautista',   'Bachelor of Science in Computer Engineering',             '3rd Year', 'CPE-3A'],
-        ['Jenny',    'Navarro',    'Bachelor of Science in Psychology',                       '2nd Year', 'PSY-2B'],
-        ['Rico',     'Fernandez',  'Bachelor of Science in Criminology',                      '4th Year', 'CRIM-4A'],
-        ['Sheila',   'Santos',     'Bachelor of Science in Physical Education',               '2nd Year', 'PE-2A'],
-        ['Angelo',   'Torres',     'Technological and Livelihood Education',                  '1st Year', 'TLE-1B'],
-        ['Claire',   'Mendoza',    'Bachelor of Science in Elementary Education',             '3rd Year', 'ELED-3A'],
-        ['Danilo',   'Pascual',    'Bachelor of Science in Secondary Education',              '2nd Year', 'SEED-2C'],
-        ['Rowena',   'Espinosa',   'Bachelor of Science in Library Information Science',      '3rd Year', 'LIS-3A'],
+        ['2024-10001', 'Juan',     'Santos',     'Bachelor of Science in Information Technology',           '2nd Year', 'IT-2A'],
+        ['2024-10002', 'Maria',    'Cruz',       'Bachelor of Science in Hospitality Management',           '1st Year', 'HM-1B'],
+        ['2024-10003', 'Jose',     'Reyes',      'Bachelor of Science in Accounting Information System',    '3rd Year', 'AIS-3A'],
+        ['2024-10004', 'Ana',      'Dela Cruz',  'Bachelor of Science in Tourism Management',               '2nd Year', 'TM-2C'],
+        ['2024-10005', 'Carlos',   'Garcia',     'Bachelor of Science in Office Administration',            '1st Year', 'OA-1A'],
+        ['2024-10006', 'Liza',     'Ramos',      'Bachelor of Science in Entrepreneurship',                 '3rd Year', 'ENT-3B'],
+        ['2024-10007', 'Ramon',    'Villanueva', 'Bachelor of Science in Business Administration',          '2nd Year', 'BA-2A'],
+        ['2024-10008', 'Patricia', 'Aquino',     'Bachelor of Science in Information Science',              '1st Year', 'IS-1A'],
+        ['2024-10009', 'Mark',     'Bautista',   'Bachelor of Science in Computer Engineering',             '3rd Year', 'CPE-3A'],
+        ['2024-10010', 'Jenny',    'Navarro',    'Bachelor of Science in Psychology',                       '2nd Year', 'PSY-2B'],
+        ['2024-10011', 'Rico',     'Fernandez',  'Bachelor of Science in Criminology',                      '4th Year', 'CRIM-4A'],
+        ['2024-10012', 'Sheila',   'Santos',     'Bachelor of Science in Physical Education',               '2nd Year', 'PE-2A'],
+        ['2024-10013', 'Angelo',   'Torres',     'Technological and Livelihood Education',                  '1st Year', 'TLE-1B'],
+        ['2024-10014', 'Claire',   'Mendoza',    'Bachelor of Science in Elementary Education',             '3rd Year', 'ELED-3A'],
+        ['2024-10015', 'Danilo',   'Pascual',    'Bachelor of Science in Secondary Education',              '2nd Year', 'SEED-2C'],
+        ['2024-10016', 'Rowena',   'Espinosa',   'Bachelor of Science in Library Information Science',      '3rd Year', 'LIS-3A'],
     ];
-    foreach ($student_profiles as [$pfn, $pln, $pcourse, $pyr, $psec]) {
-        $s_ins->bind_param('sssss', $pfn, $pln, $pcourse, $pyr, $psec);
+    foreach ($student_profiles as [$psnum, $pfn, $pln, $pcourse, $pyr, $psec]) {
+        $s_ins->bind_param('ssssss', $psnum, $pfn, $pln, $pcourse, $pyr, $psec);
         $s_ins->execute();
     }
     $s_ins->close();

@@ -16,6 +16,7 @@ $sess_first = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
 $sess_role = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id = (int) ($_SESSION['user_id'] ?? 0);
 
 // Restrict Adviser role from accessing the Organization Directory module
@@ -25,6 +26,24 @@ if ($sess_role === 'club_adviser') {
 }
 
 $can_apply = ($sess_role === 'student');
+
+// Fetch student profile details from DB if logged in as student
+$student_info = null;
+if ($can_apply) {
+  $stmt = $conn->prepare("SELECT s.student_number, s.birthday, s.course, s.year_level, s.section, s.phone, u.first_name, u.last_name, u.email 
+                          FROM users u 
+                          LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name) 
+                          WHERE u.id = ? LIMIT 1");
+  if ($stmt) {
+    $stmt->bind_param('i', $user_id);
+    $stmt->execute();
+    $s_res = $stmt->get_result();
+    if ($s_res && $s_res->num_rows > 0) {
+      $student_info = $s_res->fetch_assoc();
+    }
+    $stmt->close();
+  }
+}
 
 // -- Fetch real club IDs from DB, indexed by code --
 $db_clubs = [];
@@ -92,7 +111,7 @@ $organizations = [
     'label' => 'CENTER FOR TALENT AND CULTURAL EMPOWERMENT (CTCE)',
     'sub' => 'Non-Academic Organizations',
     'color' => '#1a3a8c',
-    'accent' => '#7c3aed',
+    'accent' => '#2563eb',
     'subcategories' => [
       [
         'label' => 'Department Based Talent Group',
@@ -100,7 +119,7 @@ $organizations = [
           ['acronym' => 'ACAC', 'name' => 'Association of Cultural Art Club'],
           ['acronym' => 'CESC', 'name' => 'Computer Engineering Sports Club'],
           ['acronym' => 'EBCPCT', 'name' => 'Elite BCP Chess Team'],
-          ['acronym' => 'RCYC-BCP', 'name' => 'Red Cross Youth Council Â– BCP Chapter'],
+          ['acronym' => 'RCYC-BCP', 'name' => 'Red Cross Youth Council - BCP Chapter'],
           ['acronym' => 'SMC', 'name' => 'Shuttle Master Club'],
         ]
       ],
@@ -124,11 +143,11 @@ $organizations = [
     'label' => 'INDEPENDENT ORGANIZATIONS',
     'sub' => 'Campus-Wide Independent Bodies',
     'color' => '#1a3a8c',
-    'accent' => '#059669',
+    'accent' => '#2563eb',
     'orgs' => [
       ['acronym' => 'PEER', 'name' => 'Peer Counselor'],
       ['acronym' => 'NEWSLINK', 'name' => 'Newslink: The School Publications'],
-      ['acronym' => 'GAD-CG', 'name' => 'Gender and Development Â– Core Group'],
+      ['acronym' => 'GAD-CG', 'name' => 'Gender and Development - Core Group'],
     ]
   ]
 ];
@@ -142,21 +161,21 @@ foreach ($organizations['academic']['orgs'] as $o) {
   $p = getOrgProfile($o['acronym'], $org_profiles);
   $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($o['acronym']));
   $club_id = $db_clubs[strtoupper($o['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
-  $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => 'Academic Organization', 'accent' => $organizations['academic']['accent'], 'color' => $organizations['academic']['color'], 'profile' => $p, 'club_id' => $club_id];
+  $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => 'Academic Organization', 'accent' => '#2563eb', 'color' => '#1a3a8c', 'profile' => $p, 'club_id' => $club_id];
 }
 foreach ($organizations['talent']['subcategories'] as $sub) {
   foreach ($sub['orgs'] as $o) {
     $p = getOrgProfile($o['acronym'], $org_profiles);
     $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($o['acronym']));
     $club_id = $db_clubs[strtoupper($o['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
-    $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => $sub['label'], 'accent' => $organizations['talent']['accent'], 'color' => $organizations['talent']['color'], 'profile' => $p, 'club_id' => $club_id];
+    $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => $sub['label'], 'accent' => '#2563eb', 'color' => '#1a3a8c', 'profile' => $p, 'club_id' => $club_id];
   }
 }
 foreach ($organizations['independent']['orgs'] as $o) {
   $p = getOrgProfile($o['acronym'], $org_profiles);
   $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($o['acronym']));
   $club_id = $db_clubs[strtoupper($o['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
-  $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => 'Independent Organization', 'accent' => $organizations['independent']['accent'], 'color' => $organizations['independent']['color'], 'profile' => $p, 'club_id' => $club_id];
+  $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => 'Independent Organization', 'accent' => '#2563eb', 'color' => '#1a3a8c', 'profile' => $p, 'club_id' => $club_id];
 }
 
 ?>
@@ -686,6 +705,196 @@ foreach ($organizations['independent']['orgs'] as $o) {
       accent-color: #2563eb;
     }
 
+    /* Enhanced File Upload UI */
+    .afm-file-upload-card {
+      border: 1.5px dashed #cbd5e1;
+      border-radius: 14px;
+      background: #f8fafc;
+      padding: 18px 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      text-align: center;
+      min-height: 120px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+
+    .afm-file-upload-card:hover {
+      border-color: #2563eb;
+      background: #f0f7ff;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.08);
+    }
+
+    .afm-file-upload-card.has-file {
+      border-color: #10b981;
+      background: #f0fdf4;
+      border-style: solid;
+    }
+
+    .afm-file-upload-card.error {
+      border-color: #e11d48;
+      background: #fff0f3;
+      animation: afmShake 0.4s ease;
+    }
+
+    @keyframes afmShake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-5px); }
+      75% { transform: translateX(5px); }
+    }
+
+    .afm-file-upload-card input[type="file"] {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      opacity: 0;
+      cursor: pointer;
+      z-index: 2;
+    }
+
+    .afm-file-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: #e0e7ff;
+      color: #2563eb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      transition: all 0.2s ease;
+    }
+
+    .afm-file-upload-card:hover .afm-file-icon {
+      background: #dbeafe;
+      color: #1d4ed8;
+      transform: scale(1.06);
+    }
+
+    .afm-file-upload-card.has-file .afm-file-icon {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+
+    .afm-file-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: #1a3a8c;
+      color: #ffffff;
+      font-size: 0.82rem;
+      font-weight: 700;
+      padding: 8px 18px;
+      border-radius: 9px;
+      box-shadow: 0 2px 6px rgba(26, 58, 140, 0.25);
+      pointer-events: none;
+      transition: all 0.15s ease;
+      letter-spacing: 0.01em;
+    }
+
+    .afm-file-upload-card:hover .afm-file-btn {
+      background: #2563eb;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+    }
+
+    .afm-file-upload-card.has-file .afm-file-btn {
+      background: #059669;
+      box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25);
+    }
+
+    .afm-file-name {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #475569;
+      max-width: 95%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .afm-file-upload-card.has-file .afm-file-name {
+      color: #065f46;
+      font-weight: 700;
+    }
+
+    .afm-file-hint {
+      font-size: 0.72rem;
+      color: #94a3b8;
+      pointer-events: none;
+    }
+
+    /* Auto Profile Summary Info Card in Form */
+    .afm-student-summary {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .afm-student-summary-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .afm-student-avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: #1a3a8c;
+      color: #fff;
+      font-weight: 800;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 3px 8px rgba(26, 58, 140, 0.2);
+    }
+
+    .afm-student-meta h4 {
+      margin: 0;
+      font-size: 0.92rem;
+      font-weight: 800;
+      color: #0f172a;
+    }
+
+    .afm-student-meta p {
+      margin: 3px 0 0;
+      font-size: 0.78rem;
+      color: #64748b;
+      line-height: 1.35;
+    }
+
+    .afm-verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #ecfdf5;
+      color: #059669;
+      border: 1px solid #a7f3d0;
+      font-size: 0.74rem;
+      font-weight: 700;
+      padding: 5px 12px;
+      border-radius: 20px;
+      box-shadow: 0 1px 3px rgba(16, 185, 129, 0.1);
+    }
+
     /* Signature area */
     .afm-signature-wrap {
       border: 1.5px solid #e2e8f0;
@@ -881,13 +1090,18 @@ foreach ($organizations['independent']['orgs'] as $o) {
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
         <div class="search-wrap">
-          <input type="text" id="orgSearch" placeholder="Search organizations..." oninput="filterOrgs(this.value)" />
+          <input type="text" placeholder="Search pages, events..." autocomplete="off" />
           <i class="fa-solid fa-magnifying-glass"></i>
         </div>
         <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i
             class="fa-solid fa-qrcode"></i></button>
-        <a href="../dashboard/account.php" class="avatar" id="avatarBtn"
-          title="Account Settings"><?php echo $sess_initial; ?></a>
+        <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
+          <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+            <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+          <?php else: ?>
+            <?= $sess_initial ?>
+          <?php endif; ?>
+        </a>
       </div>
     </div>
 
@@ -992,9 +1206,9 @@ foreach ($organizations['independent']['orgs'] as $o) {
                     <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                     <div class="org-card-type"><i class="fa-solid fa-circle-dot"
                         style="color:#2563eb;font-size:.6rem;"></i> Academic Organization</div>
-                    <?php if ($sess_role === 'student'): ?>
+                    <?php if ($can_apply): ?>
                       <button class="org-card-qr-btn"
-                        onclick="openOrgProfile('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
+                        onclick="openAppForm('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
                         <i class="fa-solid fa-user-plus"></i> Apply Now
                       </button>
                     <?php else: ?>
@@ -1023,25 +1237,24 @@ foreach ($organizations['independent']['orgs'] as $o) {
             <?php foreach ($organizations['talent']['subcategories'] as $subcat): ?>
               <div class="org-subcategory">
                 <div class="org-subcategory-label">
-                  <i class="fa-solid fa-chevron-right" style="color:#7c3aed;font-size:.6rem;"></i>
+                  <i class="fa-solid fa-chevron-right" style="color:#2563eb;font-size:.6rem;"></i>
                   <?php echo htmlspecialchars($subcat['label']); ?>
                   <span
-                    style="background:#f3e8ff;color:#7c3aed;border-radius:12px;padding:2px 8px;font-size:.65rem;margin-left:4px;"><?php echo count($subcat['orgs']); ?></span>
+                    style="background:#eff6ff;color:#2563eb;border-radius:12px;padding:2px 8px;font-size:.65rem;margin-left:4px;"><?php echo count($subcat['orgs']); ?></span>
                 </div>
                 <div class="org-cards-grid">
                   <?php foreach ($subcat['orgs'] as $org): ?>
                     <div class="org-card"
-                      data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
-                      style="border-color:#e9d5ff;">
+                      data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>">
                       <span class="org-card-acronym"
                         style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
                       <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                       <div class="org-card-type"><i class="fa-solid fa-circle-dot"
-                          style="color:#7c3aed;font-size:.6rem;"></i> <?php echo htmlspecialchars($subcat['label']); ?>
+                          style="color:#2563eb;font-size:.6rem;"></i> <?php echo htmlspecialchars($subcat['label']); ?>
                       </div>
                       <?php if ($can_apply): ?>
                         <button class="org-card-qr-btn"
-                          onclick="openOrgProfile('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
+                          onclick="openAppForm('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
                           <i class="fa-solid fa-user-plus"></i> Apply Now
                         </button>
                       <?php else: ?>
@@ -1072,16 +1285,15 @@ foreach ($organizations['independent']['orgs'] as $o) {
               <div class="org-cards-grid">
                 <?php foreach ($organizations['independent']['orgs'] as $org): ?>
                   <div class="org-card"
-                    data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
-                    style="border-color:#a7f3d0;">
+                    data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>">
                     <span class="org-card-acronym"
                       style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
                     <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                     <div class="org-card-type"><i class="fa-solid fa-circle-dot"
-                        style="color:#059669;font-size:.6rem;"></i> Independent Organization</div>
+                        style="color:#2563eb;font-size:.6rem;"></i> Independent Organization</div>
                     <?php if ($can_apply): ?>
                       <button class="org-card-qr-btn"
-                        onclick="openOrgProfile('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
+                        onclick="openAppForm('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
                         <i class="fa-solid fa-user-plus"></i> Apply Now
                       </button>
                     <?php else: ?>
@@ -1110,7 +1322,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
 
       <!-- Hero Header -->
       <div class="opm-hero" id="opmHero">
-        <button class="opm-close" id="opmClose" title="Close">Ã—</button>
+        <button class="opm-close" id="opmClose" title="Close"><i class="fa-solid fa-xmark"></i></button>
         <div class="opm-acronym-badge" id="opmAcronym">ORG</div>
         <h2 class="opm-title" id="opmTitle">Organization Name</h2>
         <div class="opm-category" id="opmCategory">
@@ -1164,86 +1376,11 @@ foreach ($organizations['independent']['orgs'] as $o) {
           <div class="afm-header-org" id="afmOrgName">Organization</div>
           <div class="afm-header-title">Membership Application Form</div>
         </div>
-        <button class="afm-close" id="afmClose" title="Close">Ã—</button>
+        <button class="afm-close" id="afmClose" title="Close"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
       <!-- Form body (hidden when success shows) -->
       <div class="afm-body" id="afmFormBody">
-
-        <div class="afm-notice">
-          <i class="fa-solid fa-circle-info"></i>
-          <span>Please fill in all required fields marked with <strong>*</strong>. You may download a PDF copy of your
-            completed application for hard-copy submission to the organization.</span>
-        </div>
-
-        <!-- PERSONAL INFORMATION -->
-        <div class="afm-section-title"><i class="fa-solid fa-user"></i> Personal Information</div>
-        <div class="afm-grid">
-          <div class="afm-field">
-            <label>First Name <span>*</span></label>
-            <input type="text" id="afmFirstName" placeholder="e.g. Maria" required />
-          </div>
-          <div class="afm-field">
-            <label>Last Name <span>*</span></label>
-            <input type="text" id="afmLastName" placeholder="e.g. Santos" required />
-          </div>
-          <div class="afm-field">
-            <label>Middle Name</label>
-            <input type="text" id="afmMiddleName" placeholder="e.g. Dela Cruz" />
-          </div>
-          <div class="afm-field">
-            <label>Date of Birth <span>*</span></label>
-            <input type="date" id="afmDob" required />
-          </div>
-          <div class="afm-field">
-            <label>Sex <span>*</span></label>
-            <select id="afmSex" required>
-              <option value="">Select...</option>
-              <option>Male</option>
-              <option>Female</option>
-              <option>Prefer not to say</option>
-            </select>
-          </div>
-          <div class="afm-field">
-            <label>Contact Number <span>*</span></label>
-            <input type="tel" id="afmContact" placeholder="e.g. 09XX XXX XXXX" required />
-          </div>
-          <div class="afm-field full">
-            <label>Email Address <span>*</span></label>
-            <input type="email" id="afmEmail" placeholder="e.g. student@bcp.edu.ph" required />
-          </div>
-          <div class="afm-field full">
-            <label>Permanent Address <span>*</span></label>
-            <input type="text" id="afmAddress" placeholder="Street, Barangay, City, Province" required />
-          </div>
-        </div>
-
-        <!-- ACADEMIC INFORMATION -->
-        <div class="afm-section-title"><i class="fa-solid fa-graduation-cap"></i> Academic Information</div>
-        <div class="afm-grid">
-          <div class="afm-field">
-            <label>Student ID Number <span>*</span></label>
-            <input type="text" id="afmStudentId" placeholder="e.g. BCP-2024-00001" required />
-          </div>
-          <div class="afm-field">
-            <label>Year Level <span>*</span></label>
-            <select id="afmYearLevel" required>
-              <option value="">Select...</option>
-              <option>1st Year</option>
-              <option>2nd Year</option>
-              <option>3rd Year</option>
-              <option>4th Year</option>
-            </select>
-          </div>
-          <div class="afm-field">
-            <label>Program / Course <span>*</span></label>
-            <input type="text" id="afmCourse" placeholder="e.g. BSIT" required />
-          </div>
-          <div class="afm-field">
-            <label>Section</label>
-            <input type="text" id="afmSection" placeholder="e.g. BSIT 3-A" />
-          </div>
-        </div>
 
         <!-- SKILLS & INTERESTS -->
         <div class="afm-section-title"><i class="fa-solid fa-wand-magic-sparkles"></i> Skills &amp; Interests</div>
@@ -1264,36 +1401,23 @@ foreach ($organizations['independent']['orgs'] as $o) {
         <div class="afm-section-title"><i class="fa-solid fa-file-arrow-up"></i> Required Documents Submission</div>
         <div class="afm-grid">
           <div class="afm-field">
-            <label>Letter of Intent <span>*</span> <span
-                style="font-weight:400;color:#94a3b8;">(PDF/DOCX/Image)</span></label>
-            <input type="file" id="afmLetterIntent" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" required
-              style="padding:6px 10px; font-size:0.82rem;" />
+            <label>Letter of Intent <span>*</span> <span style="font-weight:400;color:#94a3b8;">(PDF/DOCX/Image)</span></label>
+            <div class="afm-file-upload-card" id="afmIntentCard">
+              <input type="file" id="afmLetterIntent" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" required onchange="handleFileSelect(this, 'afmIntentCard', 'afmLetterIntentName', 'afmIntentIcon')" />
+              <div class="afm-file-icon" id="afmIntentIcon"><i class="fa-solid fa-file-arrow-up"></i></div>
+              <span class="afm-file-btn"><i class="fa-solid fa-folder-open"></i> Choose File</span>
+              <div class="afm-file-name" id="afmLetterIntentName">No file chosen</div>
+              <span class="afm-file-hint">PDF, DOCX, PNG, JPG (Max 10MB)</span>
+            </div>
           </div>
           <div class="afm-field">
-            <label>Letter of Endorsement <span>*</span> <span
-                style="font-weight:400;color:#94a3b8;">(PDF/DOCX/Image)</span></label>
-            <input type="file" id="afmLetterEndorsement" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" required
-              style="padding:6px 10px; font-size:0.82rem;" />
-          </div>
-        </div>
-
-        <!-- COMMITMENT -->
-        <div class="afm-section-title"><i class="fa-solid fa-handshake"></i> Commitment &amp; Agreement</div>
-        <div class="afm-grid cols-1">
-          <div class="afm-field">
-            <div class="afm-checkbox-group">
-              <label class="afm-checkbox-item">
-                <input type="checkbox" id="afmChk1" />
-                I certify that all information provided is true and accurate.
-              </label>
-              <label class="afm-checkbox-item">
-                <input type="checkbox" id="afmChk2" />
-                I understand that membership is subject to the organization's screening and approval process.
-              </label>
-              <label class="afm-checkbox-item">
-                <input type="checkbox" id="afmChk3" />
-                I agree to abide by the BCP Student Handbook and the organization's constitution and by-laws.
-              </label>
+            <label>Letter of Endorsement <span>*</span> <span style="font-weight:400;color:#94a3b8;">(PDF/DOCX/Image)</span></label>
+            <div class="afm-file-upload-card" id="afmEndorsementCard">
+              <input type="file" id="afmLetterEndorsement" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" required onchange="handleFileSelect(this, 'afmEndorsementCard', 'afmLetterEndorsementName', 'afmEndorsementIcon')" />
+              <div class="afm-file-icon" id="afmEndorsementIcon"><i class="fa-solid fa-file-arrow-up"></i></div>
+              <span class="afm-file-btn"><i class="fa-solid fa-folder-open"></i> Choose File</span>
+              <div class="afm-file-name" id="afmLetterEndorsementName">No file chosen</div>
+              <span class="afm-file-hint">PDF, DOCX, PNG, JPG (Max 10MB)</span>
             </div>
           </div>
         </div>
@@ -1332,6 +1456,17 @@ foreach ($organizations['independent']['orgs'] as $o) {
   <script>
     // -- Org data from PHP -----------------------------------------
     const ORG_DATA = <?php echo json_encode($all_orgs, JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+    const studentDb = <?php echo json_encode($student_info ?? [
+      'first_name' => $sess_first,
+      'last_name' => $sess_last,
+      'email' => $_SESSION['email'] ?? '',
+      'student_number' => '',
+      'course' => '',
+      'year_level' => '',
+      'section' => '',
+      'phone' => '',
+      'birthday' => ''
+    ], JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
     let currentOrg = null; // { acronym, ...data }
 
     // -- CATEGORY & SEARCH FILTERS ---------------------------------
@@ -1360,126 +1495,217 @@ foreach ($organizations['independent']['orgs'] as $o) {
 
       // Hero
       const hero = document.getElementById('opmHero');
-      hero.style.background = data.color;
-      document.getElementById('opmAcronym').textContent = acronym;
-      document.getElementById('opmTitle').textContent = data.name;
+      if (hero) hero.style.background = data.color;
+      const acrEl = document.getElementById('opmAcronym');
+      if (acrEl) acrEl.textContent = acronym;
+      const titEl = document.getElementById('opmTitle');
+      if (titEl) titEl.textContent = data.name;
       const catEl = document.getElementById('opmCategory');
-      catEl.querySelector('span').textContent = data.category;
+      if (catEl && catEl.querySelector('span')) catEl.querySelector('span').textContent = data.category;
 
       // Description
-      document.getElementById('opmDescription').textContent = data.profile.desc;
+      const descEl = document.getElementById('opmDescription');
+      if (descEl) descEl.textContent = data.profile.desc;
 
       // Achievements
       const achList = document.getElementById('opmAchievements');
-      achList.innerHTML = data.profile.achievements.map(a =>
-        `<li><i class="fa-solid fa-medal"></i> ${a}</li>`
-      ).join('');
+      if (achList) {
+        achList.innerHTML = data.profile.achievements.map(a =>
+          `<li><i class="fa-solid fa-medal"></i> ${a}</li>`
+        ).join('');
+      }
 
       // Officers
       const officersGrid = document.getElementById('opmOfficers');
-      officersGrid.innerHTML = data.profile.officers.map(o => {
-        const initials = o.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
-        return `
-      <div class="opm-officer-card">
-        <div class="opm-officer-avatar" style="background:${data.color};">${initials}</div>
-        <div class="opm-officer-name">${o.name}</div>
-        <div class="opm-officer-pos">${o.pos}</div>
-      </div>`;
-      }).join('');
+      if (officersGrid) {
+        officersGrid.innerHTML = data.profile.officers.map(o => {
+          const initials = o.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+          return `
+        <div class="opm-officer-card">
+          <div class="opm-officer-avatar" style="background:${data.color};">${initials}</div>
+          <div class="opm-officer-name">${o.name}</div>
+          <div class="opm-officer-pos">${o.pos}</div>
+        </div>`;
+        }).join('');
+      }
 
-      document.getElementById('orgProfileOverlay').classList.add('active');
+      const profOverlay = document.getElementById('orgProfileOverlay');
+      if (profOverlay) {
+        profOverlay.classList.add('active');
+        profOverlay.style.display = 'flex';
+      }
       document.body.style.overflow = 'hidden';
     }
 
-    // Close profile modal
-    document.getElementById('opmClose').addEventListener('click', () => {
-      document.getElementById('orgProfileOverlay').classList.remove('active');
+    function closeOrgProfile() {
+      const profOverlay = document.getElementById('orgProfileOverlay');
+      if (profOverlay) {
+        profOverlay.classList.remove('active');
+        profOverlay.style.display = 'none';
+      }
       document.body.style.overflow = '';
-    });
-    document.getElementById('orgProfileOverlay').addEventListener('click', e => {
+    }
+
+    // Close profile modal
+    document.getElementById('opmClose')?.addEventListener('click', closeOrgProfile);
+    document.getElementById('orgProfileOverlay')?.addEventListener('click', e => {
       if (e.target === document.getElementById('orgProfileOverlay')) {
-        document.getElementById('orgProfileOverlay').classList.remove('active');
-        document.body.style.overflow = '';
+        closeOrgProfile();
       }
     });
 
-    // Apply CTA button ? close profile, open application form
-    document.getElementById('opmApplyBtn').addEventListener('click', () => {
-      document.getElementById('orgProfileOverlay').classList.remove('active');
-      openAppForm();
+    // Apply CTA button in profile modal -> close profile, open application form
+    document.getElementById('opmApplyBtn')?.addEventListener('click', () => {
+      if (currentOrg) {
+        openAppForm(currentOrg.acronym);
+      } else {
+        openAppForm();
+      }
     });
 
     // -- OPEN APPLICATION FORM MODAL -------------------------------
-    function openAppForm() {
-      if (!currentOrg) return;
-      document.getElementById('afmOrgName').textContent = currentOrg.acronym + ' Â— ' + currentOrg.name;
+    function openAppForm(acronym) {
+      if (acronym && ORG_DATA[acronym]) {
+        currentOrg = { acronym, ...ORG_DATA[acronym] };
+      } else if (acronym) {
+        const matchKey = Object.keys(ORG_DATA).find(k => k.toLowerCase() === acronym.toLowerCase() || k.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === acronym.replace(/[^A-Za-z0-9]/g, '').toLowerCase());
+        if (matchKey) {
+          currentOrg = { acronym: matchKey, ...ORG_DATA[matchKey] };
+        } else {
+          currentOrg = { acronym: acronym, name: acronym, club_id: 0 };
+        }
+      }
+
+      if (!currentOrg) {
+        const firstKey = Object.keys(ORG_DATA)[0];
+        if (firstKey) currentOrg = { acronym: firstKey, ...ORG_DATA[firstKey] };
+      }
+
+      const orgNameEl = document.getElementById('afmOrgName');
+      if (orgNameEl && currentOrg) {
+        orgNameEl.textContent = (currentOrg.acronym || 'ORG') + ' — ' + (currentOrg.name || 'Organization');
+      }
+
       resetForm();
-      document.getElementById('appFormOverlay').classList.add('active');
+      closeOrgProfile();
+
+      const appOverlay = document.getElementById('appFormOverlay');
+      if (appOverlay) {
+        appOverlay.classList.add('active');
+        appOverlay.style.display = 'flex';
+      }
       document.body.style.overflow = 'hidden';
     }
 
     function closeAppForm() {
-      document.getElementById('appFormOverlay').classList.remove('active');
+      const appOverlay = document.getElementById('appFormOverlay');
+      if (appOverlay) {
+        appOverlay.classList.remove('active');
+        appOverlay.style.display = 'none';
+      }
       document.body.style.overflow = '';
       resetForm();
     }
 
-    function resetForm() {
-      document.getElementById('afmFormBody').style.display = '';
-      document.getElementById('afmSuccess').classList.remove('active');
-      document.getElementById('afmFooter').style.display = '';
-      // Clear all inputs
-      document.querySelectorAll('#appFormModal input, #appFormModal select, #appFormModal textarea').forEach(el => {
-        if (el.type === 'checkbox') el.checked = false;
-        else el.value = '';
-      });
+    // File selection UI handler
+    function handleFileSelect(input, cardId, nameId, iconId) {
+      const card = document.getElementById(cardId);
+      const nameEl = document.getElementById(nameId);
+      const icon = document.getElementById(iconId);
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (nameEl) nameEl.textContent = file.name;
+        if (card) {
+          card.classList.add('has-file');
+          card.classList.remove('error');
+        }
+        if (icon) icon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+      } else {
+        if (nameEl) nameEl.textContent = 'No file chosen';
+        if (card) card.classList.remove('has-file');
+        if (icon) icon.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i>';
+      }
     }
 
-    document.getElementById('afmClose').addEventListener('click', closeAppForm);
-    document.getElementById('appFormOverlay').addEventListener('click', e => {
+    function resetForm() {
+      const formBody = document.getElementById('afmFormBody');
+      if (formBody) formBody.style.display = '';
+      const successEl = document.getElementById('afmSuccess');
+      if (successEl) successEl.classList.remove('active');
+      const footerEl = document.getElementById('afmFooter');
+      if (footerEl) footerEl.style.display = '';
+      
+      // Clear inputs
+      document.querySelectorAll('#appFormModal input, #appFormModal textarea').forEach(el => {
+        if (el.type === 'checkbox') el.checked = false;
+        else if (el.type !== 'submit' && el.type !== 'button') el.value = '';
+        el.classList.remove('error');
+      });
+
+      // Reset file upload cards
+      ['afmIntentCard', 'afmEndorsementCard'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.classList.remove('has-file');
+          el.classList.remove('error');
+        }
+      });
+      const intentName = document.getElementById('afmLetterIntentName');
+      if (intentName) intentName.textContent = 'No file chosen';
+      const intentIcon = document.getElementById('afmIntentIcon');
+      if (intentIcon) intentIcon.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i>';
+
+      const endName = document.getElementById('afmLetterEndorsementName');
+      if (endName) endName.textContent = 'No file chosen';
+      const endIcon = document.getElementById('afmEndorsementIcon');
+      if (endIcon) endIcon.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i>';
+    }
+
+    document.getElementById('afmClose')?.addEventListener('click', closeAppForm);
+    document.getElementById('appFormOverlay')?.addEventListener('click', e => {
       if (e.target === document.getElementById('appFormOverlay')) closeAppForm();
     });
+
+    // Bind to window object for global availability
+    window.openOrgProfile = openOrgProfile;
+    window.closeOrgProfile = closeOrgProfile;
+    window.openAppForm = openAppForm;
+    window.closeAppForm = closeAppForm;
+    window.handleFileSelect = handleFileSelect;
 
     // -- FORM VALIDATION -------------------------------------------
     function validateForm() {
       let valid = true;
-      const required = ['afmFirstName', 'afmLastName', 'afmDob', 'afmSex', 'afmContact', 'afmEmail', 'afmAddress', 'afmStudentId', 'afmYearLevel', 'afmCourse', 'afmMotivation'];
-      required.forEach(id => {
-        const el = document.getElementById(id);
-        if (el && !el.value.trim()) {
-          el.classList.add('error');
-          valid = false;
-        } else if (el) {
-          el.classList.remove('error');
-        }
-      });
+      const motiv = document.getElementById('afmMotivation');
+      if (motiv && !motiv.value.trim()) {
+        motiv.classList.add('error');
+        valid = false;
+      } else if (motiv) {
+        motiv.classList.remove('error');
+      }
 
       const intentInput = document.getElementById('afmLetterIntent');
       const endorsementInput = document.getElementById('afmLetterEndorsement');
+      const intentCard = document.getElementById('afmIntentCard');
+      const endorsementCard = document.getElementById('afmEndorsementCard');
+
       if (!intentInput || !intentInput.files.length) {
-        if (intentInput) intentInput.classList.add('error');
+        if (intentCard) intentCard.classList.add('error');
         valid = false;
-      } else if (intentInput) {
-        intentInput.classList.remove('error');
+      } else if (intentCard) {
+        intentCard.classList.remove('error');
       }
 
       if (!endorsementInput || !endorsementInput.files.length) {
-        if (endorsementInput) endorsementInput.classList.add('error');
+        if (endorsementCard) endorsementCard.classList.add('error');
         valid = false;
-      } else if (endorsementInput) {
-        endorsementInput.classList.remove('error');
-      }
-
-      // Checkboxes
-      const chks = ['afmChk1', 'afmChk2', 'afmChk3'];
-      if (!chks.every(id => document.getElementById(id).checked)) {
-        showToast('Please accept all commitment declarations before submitting.', 'error');
-        valid = false;
+      } else if (endorsementCard) {
+        endorsementCard.classList.remove('error');
       }
 
       if (!valid && document.querySelector('.error')) {
         document.querySelector('.error').scrollIntoView({ behavior: 'smooth', block: 'center' });
-        showToast('Please fill in all required fields and attach required documents.', 'error');
+        showToast('Please complete your motivation and attach the required documents.', 'error');
       }
       return valid;
     }
@@ -1489,10 +1715,8 @@ foreach ($organizations['independent']['orgs'] as $o) {
       if (!validateForm()) return;
 
       const clubId = currentOrg ? (currentOrg.club_id || 0) : 0;
-      if (!clubId) {
-        showToast('This organization is not yet registered in the system. Please contact the SSC.', 'error');
-        return;
-      }
+      const orgAcr = currentOrg ? (currentOrg.acronym || '') : '';
+      const orgName = currentOrg ? (currentOrg.name || '') : '';
 
       this.disabled = true;
       this.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting...';
@@ -1500,23 +1724,15 @@ foreach ($organizations['independent']['orgs'] as $o) {
       const fd = new FormData();
       fd.set('action', 'apply');
       fd.set('club_id', clubId);
-      fd.set('first_name', document.getElementById('afmFirstName')?.value.trim() || '');
-      fd.set('last_name', document.getElementById('afmLastName')?.value.trim() || '');
-      fd.set('dob', document.getElementById('afmDob')?.value.trim() || '');
-      fd.set('sex', document.getElementById('afmSex')?.value || '');
-      fd.set('contact', document.getElementById('afmContact')?.value.trim() || '');
-      fd.set('email', document.getElementById('afmEmail')?.value.trim() || '');
-      fd.set('address', document.getElementById('afmAddress')?.value.trim() || '');
-      fd.set('student_id_no', document.getElementById('afmStudentId')?.value.trim() || '');
-      fd.set('year_level', document.getElementById('afmYearLevel')?.value || '');
-      fd.set('course', document.getElementById('afmCourse')?.value || '');
+      fd.set('org_acronym', orgAcr);
+      fd.set('org_name', orgName);
+      fd.set('skills', document.getElementById('afmSkills')?.value.trim() || '');
       fd.set('motivation', document.getElementById('afmMotivation')?.value.trim() || '');
 
       const intentFile = document.getElementById('afmLetterIntent')?.files[0];
       const endorsementFile = document.getElementById('afmLetterEndorsement')?.files[0];
       if (intentFile) fd.append('letter_intent', intentFile);
       if (endorsementFile) fd.append('letter_endorsement', endorsementFile);
-
 
       fetch('../shared/roster_actions.php', { method: 'POST', body: fd })
         .then(r => r.json())
@@ -1540,7 +1756,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
     });
 
     // -- PDF GENERATION --------------------------------------------
-    document.getElementById('afmDownloadBtn').addEventListener('click', generatePDF);
+    document.getElementById('afmDownloadBtn')?.addEventListener('click', generatePDF);
 
     function generatePDF() {
       if (typeof window.jspdf === 'undefined' && typeof jsPDF === 'undefined') {
@@ -1551,24 +1767,24 @@ foreach ($organizations['independent']['orgs'] as $o) {
       const { jsPDF } = window.jspdf || { jsPDF };
       const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 
-      const orgName = currentOrg ? `${currentOrg.acronym} Â— ${currentOrg.name}` : 'Organization';
-      const fName = document.getElementById('afmFirstName').value.trim();
-      const lName = document.getElementById('afmLastName').value.trim();
-      const mName = document.getElementById('afmMiddleName').value.trim();
-      const dob = document.getElementById('afmDob').value;
-      const sex = document.getElementById('afmSex').value;
-      const contact = document.getElementById('afmContact').value.trim();
-      const email = document.getElementById('afmEmail').value.trim();
-      const address = document.getElementById('afmAddress').value.trim();
-      const studId = document.getElementById('afmStudentId').value.trim();
-      const year = document.getElementById('afmYearLevel').value;
-      const course = document.getElementById('afmCourse').value.trim();
-      const section = document.getElementById('afmSection').value.trim();
-      const skills = document.getElementById('afmSkills').value.trim();
-      const motiv = document.getElementById('afmMotivation').value.trim();
+      const orgName = currentOrg ? `${currentOrg.acronym} - ${currentOrg.name}` : 'Organization';
+      const fName = studentDb.first_name || '';
+      const lName = studentDb.last_name || '';
+      const mName = '';
+      const dob = studentDb.birthday || '';
+      const sex = '';
+      const contact = studentDb.phone || '';
+      const email = studentDb.email || '';
+      const address = '';
+      const studId = studentDb.student_number || '';
+      const year = studentDb.year_level || '';
+      const course = studentDb.course || '';
+      const section = studentDb.section || '';
+      const skills = document.getElementById('afmSkills')?.value.trim() || '';
+      const motiv = document.getElementById('afmMotivation')?.value.trim() || '';
 
-      const intentFile = document.getElementById('afmLetterIntent').files[0]?.name || 'Attached';
-      const endorsementFile = document.getElementById('afmLetterEndorsement').files[0]?.name || 'Attached';
+      const intentFile = document.getElementById('afmLetterIntent')?.files[0]?.name || 'Attached';
+      const endorsementFile = document.getElementById('afmLetterEndorsement')?.files[0]?.name || 'Attached';
 
       const pageW = 210, margin = 18, colW = pageW - margin * 2;
       let y = 0;
@@ -1585,7 +1801,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
       doc.text('Membership Application Form', pageW / 2, 20, { align: 'center' });
       doc.setFontSize(8);
       doc.text(orgName, pageW / 2, 27, { align: 'center' });
-      doc.text('Academic Year 2025Â–2026', pageW / 2, 33, { align: 'center' });
+      doc.text('Academic Year 2025-2026', pageW / 2, 33, { align: 'center' });
 
       // Reset text color
       doc.setTextColor(30, 30, 30);
@@ -1611,7 +1827,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(9);
         doc.setTextColor(15, 23, 42);
-        const lines = doc.splitTextToSize(value || 'Â—', fieldWidth - 2);
+        const lines = doc.splitTextToSize(value || '-', fieldWidth - 2);
         doc.text(lines, x, y + 4.5);
         return Math.max(lines.length * 4.5 + 4.5, 9);
       }
@@ -1624,7 +1840,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
 
       function oneField(label, value) {
         field(label, value, margin, colW);
-        const lines = doc.splitTextToSize(value || 'Â—', colW - 2);
+        const lines = doc.splitTextToSize(value || '-', colW - 2);
         y += Math.max(lines.length * 4.5 + 4.5, 9) + 5;
       }
 
@@ -1675,7 +1891,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
       doc.rect(0, 287, pageW, 10, 'F');
       doc.setTextColor(255, 255, 255);
       doc.setFontSize(7);
-      doc.text('Bestlink College of the Philippines Â— Co-Curricular Management System', pageW / 2, 293, { align: 'center' });
+      doc.text('Bestlink College of the Philippines - Co-Curricular Management System', pageW / 2, 293, { align: 'center' });
 
       const filename = `${(currentOrg?.acronym || 'ORG').replace(/[^a-zA-Z0-9]/g, '_')}_Application_${fName}_${lName}.pdf`;
       doc.save(filename);

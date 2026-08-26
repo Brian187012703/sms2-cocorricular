@@ -18,6 +18,7 @@ $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
 $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)$_SESSION['user_id'];
 
 // ── 1. Fetch Adviser Handled Organization ──────────────────────────
@@ -300,9 +301,13 @@ foreach ($raw_past as $pr) {
     .candidate-manage-chip .btn-del { color: #ef4444; cursor: pointer; font-size: 0.85rem; margin-left: 4px; transition: color 0.15s ease; }
     .candidate-manage-chip .btn-del:hover { color: #b91c1c; }
     @media print {
-      body * { visibility: hidden; }
-      #printableResultsArea, #printableResultsArea * { visibility: visible; }
-      #printableResultsArea { position: absolute; left: 0; top: 0; width: 100%; }
+      body { background: #fff !important; margin: 0; padding: 0; }
+      .sidebar, .topbar, .hamburger, .page-title-bar, .modal-close,
+      #closeResultsModalBtn, .card-btn, .election-view-nav, .footer,
+      #electionLanding, #boothView, #candidatesView { display: none !important; }
+      .modal-overlay { position: static !important; inset: auto !important; background: none !important; display: block !important; }
+      .modal-card { max-width: 100% !important; box-shadow: none !important; padding: 0 !important; max-height: none !important; overflow: visible !important; }
+      #printableResultsArea { display: block !important; width: 100% !important; }
     }
   </style>
 </head>
@@ -324,11 +329,17 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
       <div class="search-wrap">
-        <input type="text" id="electionSearch" placeholder="Search elections..."/>
+        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
         <i class="fa-solid fa-magnifying-glass"></i>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i class="fa-solid fa-qrcode"></i></button>
-      <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings"><?= $sess_initial ?></a>
+      <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
+        <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+        <?php else: ?>
+          <?= $sess_initial ?>
+        <?php endif; ?>
+      </a>
     </div>
   </div>
 
@@ -529,10 +540,12 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
         <!-- Past Results -->
         <div class="table-card" id="results" style="margin-top:28px;">
-          <h3 style="margin-bottom:16px;">
-            <i class="fa-solid fa-trophy" style="color:#2563eb;"></i> 
-            <?= $sess_role === 'club_adviser' ? htmlspecialchars($adviser_club['code'] ?? 'Org') . ' Past Election Results &amp; Archives' : 'Past Election Results &amp; Archives' ?>
-          </h3>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+            <h3 style="margin:0;">
+              <i class="fa-solid fa-trophy" style="color:#2563eb;"></i> 
+              <?= $sess_role === 'club_adviser' ? htmlspecialchars($adviser_club['code'] ?? 'Org') . ' Past Election Results &amp; Archives' : 'Past Election Results &amp; Archives' ?>
+            </h3>
+          </div>
           <div class="resp-table-wrap">
             <table class="data-table resp-table">
               <thead>
@@ -541,7 +554,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
                   <th style="padding:14px 18px;">Election Date</th>
                   <th style="padding:14px 18px;">Winning President</th>
                   <th style="padding:14px 18px;">Votes Cast</th>
-                  <th style="padding:14px 18px;">Action</th>
+                  <th style="padding:14px 18px; text-align:center;">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -551,10 +564,17 @@ require_once __DIR__ . '/../shared/sidebar.php';
                   <td data-label="Date" style="padding:14px 18px; font-size:0.85rem; color:#475569;"><?= $r['date'] ?></td>
                   <td data-label="Winner" style="padding:14px 18px; font-size:0.85rem; color:#1e293b; font-weight:600;"><?= $r['winner'] ?></td>
                   <td data-label="Votes" style="padding:14px 18px; font-size:0.85rem; color:#475569;"><?= $r['votes'] ?></td>
-                  <td data-label="Action" style="padding:14px 18px;">
-                    <button class="card-btn" style="height:38px; padding:0 16px; border-radius:8px; font-weight:700; background:#2563eb; color:#fff; display:inline-flex; align-items:center; gap:6px; font-size:0.85rem;" onclick="showArchivedResultsModal('<?= addslashes($r['org']) ?>', '<?= addslashes($r['winner']) ?>', '<?= $r['votes'] ?>', '<?= $r['date'] ?>')">
-                      <i class="fa-solid fa-file-invoice"></i> View Results
-                    </button>
+                  <td data-label="Action" style="padding:14px 18px; text-align:center;">
+                    <div style="display:inline-flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;">
+                      <button class="card-btn" style="height:36px; padding:0 14px; border-radius:8px; font-weight:700; background:#2563eb; color:#fff; display:inline-flex; align-items:center; gap:6px; font-size:0.82rem; cursor:pointer;" onclick="showArchivedResultsModal(<?= $r['id'] ?>, '<?= addslashes($r['org']) ?>', '<?= addslashes($r['winner']) ?>', '<?= $r['votes'] ?>', '<?= $r['date'] ?>')">
+                        <i class="fa-solid fa-eye"></i> View Results
+                      </button>
+                      <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+                      <button class="card-btn" style="height:36px; padding:0 14px; border-radius:8px; font-weight:700; background:#16a34a; color:#fff; display:inline-flex; align-items:center; gap:6px; font-size:0.82rem; cursor:pointer;" onclick="printSpecificPastElection(<?= $r['id'] ?>, '<?= addslashes($r['org']) ?>', '<?= addslashes($r['winner']) ?>', '<?= $r['votes'] ?>', '<?= $r['date'] ?>')">
+                        <i class="fa-solid fa-print"></i> Export Winners &amp; Results
+                      </button>
+                      <?php endif; ?>
+                    </div>
                   </td>
                 </tr>
                 <?php endforeach; ?>
@@ -607,7 +627,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
       <h3 style="margin:0; font-size:1.1rem; color:#0f172a; display:flex; align-items:center; gap:8px;">
         <i class="fa-solid fa-box-archive" style="color:#2563eb;"></i> Create Election Pool
       </h3>
-      <button onclick="closeModal('createElectionModal')" style="background:none; border:none; font-size:1.2rem; color:#64748b; cursor:pointer;">&times;</button>
+      <button onclick="closeModal('createElectionModal')" style="background:none; border:none; font-size:1.1rem; color:#64748b; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
     <form id="createElectionForm" onsubmit="handleCreateElection(event)">
@@ -641,9 +661,15 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <textarea name="description" rows="3" placeholder="Official balloting poll for active members..."></textarea>
       </div>
 
-      <div class="form-group">
-        <label>Voting Closing Date &amp; Time *</label>
-        <input type="datetime-local" name="closes_at" required/>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label>Voting Closing Date *</label>
+          <input type="date" name="closing_date" id="closingDateInput" min="<?= date('Y-m-d') ?>" required/>
+        </div>
+        <div class="form-group">
+          <label>Voting Closing Time *</label>
+          <input type="time" name="closing_time" id="closingTimeInput" value="23:59" required/>
+        </div>
       </div>
 
       <div class="form-group">
@@ -728,7 +754,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
       <h3 style="margin:0; font-size:1.1rem; color:#0f172a; display:flex; align-items:center; gap:8px;">
         <i class="fa-solid fa-user-plus" style="color:#2563eb;"></i> Add Candidate Profile
       </h3>
-      <button onclick="closeModal('addCandidateModal')" style="background:none; border:none; font-size:1.2rem; color:#64748b; cursor:pointer;">&times;</button>
+      <button onclick="closeModal('addCandidateModal')" style="background:none; border:none; font-size:1.1rem; color:#64748b; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
     <form id="addCandidateForm" onsubmit="handleAddCandidate(event)">
@@ -798,19 +824,21 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
 <!-- 3. OFFICIAL RESULTS & EXPORT MODAL -->
 <div class="modal-overlay" id="resultsModal" style="display:none;">
-  <div class="modal-card" style="max-width:680px; position:relative;">
-    <button type="button" class="modal-close" onclick="closeModal('resultsModal')" data-close="resultsModal" style="position:absolute; top:16px; right:16px; background:none; border:none; font-size:1.3rem; color:#64748b; cursor:pointer;" title="Close">&times;</button>
+  <div class="modal-card" style="max-width:760px; position:relative;">
+    <button type="button" class="modal-close" onclick="closeModal('resultsModal')" data-close="resultsModal" style="position:absolute; top:16px; right:16px; background:none; border:none; font-size:1.1rem; color:#64748b; cursor:pointer;" title="Close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     <div id="printableResultsArea">
-      <div style="text-align:center; padding-bottom:16px; border-bottom:2px solid #e2e8f0; margin-bottom:20px; padding-right:24px;">
-        <div style="font-size:0.75rem; font-weight:800; color:#2563eb; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">
-          Bestlink College of the Philippines &bull; Student Affairs &amp; Services
+      <!-- School Header with Official Logo -->
+      <div style="display:flex; align-items:center; justify-content:center; gap:16px; text-align:center; padding-bottom:16px; border-bottom:2px solid #1e3a8a; margin-bottom:18px;">
+        <img src="../images/BCP_LOGO.png" alt="Bestlink College of the Philippines Logo" style="height:64px; width:auto; object-fit:contain;" />
+        <div style="text-align:left;">
+          <div style="font-size:1.1rem; font-weight:800; color:#1e3a8a; text-transform:uppercase; letter-spacing:0.5px; line-height:1.2;">Bestlink College of the Philippines</div>
+          <div style="font-size:0.75rem; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.5px; margin-top:2px;">Office of Student Affairs &amp; Services &bull; Student Commission on Elections</div>
+          <div style="font-size:0.88rem; font-weight:800; color:#2563eb; margin-top:4px;" id="modalResHeader">Official Election Results Summary</div>
         </div>
-        <h2 style="margin:0; font-size:1.3rem; color:#0f172a; font-weight:800;" id="modalResHeader">
-          Official Election Results Summary
-        </h2>
-        <div style="font-size:0.82rem; color:#64748b; margin-top:4px;" id="modalResSub">
-          Verified Digital Balloting Audit Report
-        </div>
+      </div>
+
+      <div style="font-size:0.8rem; color:#475569; background:#f8fafc; padding:10px 14px; border-radius:8px; border:1px solid #e2e8f0; margin-bottom:16px;" id="modalResSub">
+        Verified Digital Balloting Audit Report
       </div>
 
       <div id="modalResBody"></div>
@@ -819,7 +847,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px; border-top:1px solid #f1f5f9; padding-top:16px;">
       <button type="button" class="card-btn" id="closeResultsModalBtn" onclick="closeModal('resultsModal')" data-close="resultsModal" style="background:#e2e8f0; color:#475569; font-weight:600; cursor:pointer;">Close</button>
       <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-      <button type="button" class="card-btn" onclick="window.print()" style="background:#16a34a; color:#fff; font-weight:700; cursor:pointer;">
+      <button type="button" class="card-btn" id="printResultsBtn" onclick="printCurrentElectionReport()" style="background:#16a34a; color:#fff; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
         <i class="fa-solid fa-print"></i> Print / Export Report
       </button>
       <?php endif; ?>
@@ -830,6 +858,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
 <script>
 // Serialise PHP elections data into JS
 const electionsData = <?= json_encode($active_elections) ?>;
+const pastResultsData = <?= json_encode($past_results) ?>;
 const sessRole = '<?= $sess_role ?>';
 
 let draftCandidates = [];
@@ -1044,111 +1073,520 @@ async function deleteCandidate(candidateId, name) {
   }
 }
 
+let currentViewingElection = null;
+
 function showResultsModal(electionId) {
   const el = electionsData.find(e => e.id == electionId);
   if (!el) return;
+  currentViewingElection = el;
 
-  const turnoutPct = el.eligible > 0 ? Math.min(100, Math.round((el.voted / el.eligible) * 100)) : 0;
+  const turnoutPct = el.eligible > 0 ? Math.min(100, Math.round((parseInt(el.voted) / parseInt(el.eligible)) * 100)) : 0;
   document.getElementById('modalResHeader').textContent = el.title + ' — Official Results';
-  document.getElementById('modalResSub').textContent = `Organization: ${el.org} (${el.acronym}) | Voter Turnout: ${el.voted}/${el.eligible} (${turnoutPct}%)`;
+  document.getElementById('modalResSub').innerHTML = `
+    <strong>Organization:</strong> ${el.org} (${el.acronym || ''}) &bull; 
+    <strong>Turnout:</strong> ${el.voted}/${el.eligible} (${turnoutPct}%) &bull; 
+    <strong>Status:</strong> <span style="text-transform:uppercase; font-weight:700; color:${el.status === 'open' ? '#16a34a' : '#2563eb'};">${el.status}</span> &bull; 
+    <strong>Closing Date:</strong> ${el.closes}
+  `;
 
-  let html = `<div style="margin-bottom:20px; font-size:0.85rem; color:#475569;">
-    <strong>Status:</strong> ${el.status.toUpperCase()} &bull; 
-    <strong>Closing Date:</strong> ${el.closes} &bull; 
-    <strong>Audit Log:</strong> Verifiable Digital UUID
-  </div>`;
-
+  // 1. Compute winners for each position
+  const winners = [];
   el.positions.forEach(pos => {
-    const posCands = el.candidates.filter(c => c.pos === pos);
-    html += `<div style="margin-bottom:20px; background:#f8fafc; padding:14px; border-radius:10px; border:1px solid #e2e8f0;">
-      <h4 style="margin:0 0 10px 0; color:#1e3a8a; font-size:0.95rem; text-transform:uppercase;">${pos}</h4>`;
-
-    if (!posCands.length) {
-      html += `<div style="font-size:0.8rem; color:#94a3b8;">No candidates registered.</div>`;
-    } else {
-      let maxVotes = -1;
-      posCands.forEach(c => { if (c.votes_count > maxVotes) maxVotes = c.votes_count; });
-
-      const totalPosVotes = posCands.reduce((sum, item) => sum + item.votes_count, 0);
-      const baseVoted = Math.max(el.voted, totalPosVotes, 1);
-
-      posCands.forEach(c => {
-        const pct = Math.min(100, Math.round((c.votes_count / baseVoted) * 100));
-        const isWinner = (c.votes_count === maxVotes && maxVotes > 0);
-
-        html += `<div style="margin-bottom:10px; padding:10px; background:#fff; border-radius:8px; border:1px solid ${isWinner ? '#22c55e' : '#cbd5e1'};">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-            <div>
-              <strong>${c.name}</strong> <span style="font-size:0.78rem; color:#64748b;">(${c.party})</span>
-              ${isWinner ? '<span style="background:#dcfce7; color:#166534; font-size:0.72rem; font-weight:800; padding:2px 8px; border-radius:12px; margin-left:6px;"><i class="fa-solid fa-trophy"></i> ELECTED</span>' : ''}
-            </div>
-            <div style="font-weight:800; color:#0f172a; font-size:0.9rem;">${c.votes_count} votes (${pct}%)</div>
-          </div>
-          <div style="background:#e2e8f0; height:8px; border-radius:4px; overflow:hidden;">
-            <div style="background:${isWinner ? '#22c55e' : '#2563eb'}; height:100%; width:${pct}%;"></div>
-          </div>
-        </div>`;
+    const posCands = (el.candidates || []).filter(c => c.pos === pos);
+    let maxVotes = -1;
+    let winnerCand = null;
+    posCands.forEach(c => {
+      if ((c.votes_count || 0) > maxVotes) {
+        maxVotes = c.votes_count || 0;
+        winnerCand = c;
+      }
+    });
+    if (winnerCand) {
+      const totalPosVotes = posCands.reduce((sum, item) => sum + (item.votes_count || 0), 0);
+      const baseVoted = Math.max(parseInt(el.voted) || 1, totalPosVotes, 1);
+      const pct = Math.min(100, Math.round((winnerCand.votes_count / baseVoted) * 100));
+      winners.push({
+        pos: pos,
+        name: winnerCand.name,
+        party: winnerCand.party || 'Independent',
+        prog: winnerCand.prog || '',
+        year: winnerCand.year || '',
+        votes: winnerCand.votes_count,
+        pct: pct
       });
     }
-    html += `</div>`;
+  });
+
+  let html = '';
+
+  // Proclaimed Winners Table
+  if (winners.length > 0) {
+    let winnersRows = '';
+    winners.forEach((w, idx) => {
+      winnersRows += `
+        <tr style="background-color:#f0fdf4;">
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center; font-weight:700; color:#166534;">${idx + 1}</td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; font-weight:700; color:#1e3a8a;">${w.pos}</td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0;">
+            <strong style="color:#0f172a; font-size:0.92rem;">${w.name}</strong>
+            <div style="font-size:0.75rem; color:#64748b;">${w.prog} ${w.year}</div>
+          </td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; font-size:0.85rem; color:#475569;">${w.party}</td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; text-align:right; font-weight:700; color:#0f172a;">${w.votes}</td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; text-align:right; font-weight:700; color:#16a34a;">${w.pct}%</td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center;">
+            <span style="background:#dcfce7; color:#166534; font-size:0.72rem; font-weight:800; padding:3px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
+              <i class="fa-solid fa-trophy"></i> ELECTED
+            </span>
+          </td>
+        </tr>
+      `;
+    });
+
+    html += `
+      <div style="margin-bottom:24px; border:1.5px solid #86efac; border-radius:10px; overflow:hidden; box-shadow:0 2px 6px rgba(34,197,94,0.08);">
+        <div style="background:#dcfce7; padding:10px 16px; font-weight:800; color:#166534; font-size:0.92rem; display:flex; align-items:center; gap:8px;">
+          <i class="fa-solid fa-crown" style="color:#eab308;"></i> Official Roster of Proclaimed Winners &amp; Elected Officers
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+            <thead>
+              <tr style="background:#f8fafc; color:#334155; font-weight:700; text-align:left;">
+                <th style="padding:10px 12px; border:1px solid #e2e8f0; width:35px; text-align:center;">#</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0;">Position</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0;">Proclaimed Winner</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0;">Party / Slate</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:right;">Votes</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:right;">Share</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${winnersRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  // 2. Position by Position Breakdown
+  html += `<div style="font-size:0.88rem; font-weight:700; color:#1e293b; margin-bottom:12px; border-bottom:1px solid #cbd5e1; padding-bottom:6px;">Full Tally &amp; Candidates Breakdown</div>`;
+
+  el.positions.forEach(pos => {
+    const posCands = (el.candidates || []).filter(c => c.pos === pos);
+    let maxVotes = -1;
+    posCands.forEach(c => { if (c.votes_count > maxVotes) maxVotes = c.votes_count; });
+
+    const totalPosVotes = posCands.reduce((sum, item) => sum + (item.votes_count || 0), 0);
+    const baseVoted = Math.max(parseInt(el.voted) || 1, totalPosVotes, 1);
+
+    let rowsHtml = '';
+    if (!posCands.length) {
+      rowsHtml = `<tr><td colspan="5" style="text-align:center; padding:12px; color:#64748b; font-style:italic;">No candidates registered for this position.</td></tr>`;
+    } else {
+      posCands.forEach((c, idx) => {
+        const pct = Math.min(100, Math.round(((c.votes_count || 0) / baseVoted) * 100));
+        const isWinner = (c.votes_count === maxVotes && maxVotes > 0);
+
+        rowsHtml += `
+          <tr style="${isWinner ? 'background-color:#f0fdf4;' : ''}">
+            <td style="padding:8px 12px; border:1px solid #e2e8f0; text-align:center; width:40px;">${idx + 1}</td>
+            <td style="padding:8px 12px; border:1px solid #e2e8f0;">
+              <strong>${c.name}</strong>
+              ${isWinner ? ' <span style="background:#dcfce7; color:#166534; font-size:0.7rem; font-weight:800; padding:2px 6px; border-radius:10px; margin-left:4px;"><i class="fa-solid fa-trophy"></i> WINNER</span>' : ''}
+              <div style="font-size:0.75rem; color:#64748b;">${c.prog || ''} ${c.year || ''}</div>
+            </td>
+            <td style="padding:8px 12px; border:1px solid #e2e8f0; font-size:0.82rem; color:#475569;">${c.party || 'Independent'}</td>
+            <td style="padding:8px 12px; border:1px solid #e2e8f0; text-align:right; font-weight:700; color:#0f172a;">${c.votes_count || 0}</td>
+            <td style="padding:8px 12px; border:1px solid #e2e8f0; text-align:right; font-weight:600; color:#2563eb;">${pct}%</td>
+          </tr>
+        `;
+      });
+    }
+
+    html += `
+      <div style="margin-bottom:16px;">
+        <h4 style="margin:0 0 6px 0; color:#1e3a8a; font-size:0.88rem; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
+          <i class="fa-solid fa-award" style="color:#2563eb;"></i> Position: ${pos}
+        </h4>
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:0.82rem; border:1px solid #e2e8f0; border-radius:8px;">
+            <thead>
+              <tr style="background:#f8fafc; color:#334155; font-weight:700; text-align:left;">
+                <th style="padding:8px 12px; border:1px solid #e2e8f0; text-align:center;">#</th>
+                <th style="padding:8px 12px; border:1px solid #e2e8f0;">Candidate Name</th>
+                <th style="padding:8px 12px; border:1px solid #e2e8f0;">Party / Slate</th>
+                <th style="padding:8px 12px; border:1px solid #e2e8f0; text-align:right;">Votes</th>
+                <th style="padding:8px 12px; border:1px solid #e2e8f0; text-align:right;">Share</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
   });
 
   document.getElementById('modalResBody').innerHTML = html;
   document.getElementById('resultsModal').style.display = 'flex';
 }
 
-function initCountdowns() {
-  const timers = document.querySelectorAll('.countdown-badge');
-  if (!timers.length) return;
-
-  function update() {
-    const now = new Date().getTime();
-    timers.forEach(t => {
-      const raw = t.getAttribute('data-closes');
-      if (!raw) return;
-      const target = new Date(raw.replace(' ', 'T')).getTime();
-      const diff = target - now;
-
-      if (isNaN(target) || diff <= 0) {
-        t.innerHTML = '<i class="fa-solid fa-lock"></i> Voting Ended';
-        t.style.color = '#ef4444';
-        t.style.background = '#fef2f2';
-      } else {
-        const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-        const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const s = Math.floor((diff % (1000 * 60)) / 1000);
-        let str = '';
-        if (d > 0) str += d + 'd ';
-        str += `${h}h ${m}m ${s}s left`;
-        t.innerHTML = `<i class="fa-solid fa-stopwatch"></i> ${str}`;
-      }
-    });
+function showArchivedResultsModal(electionId, org, winner, votes, date) {
+  const el = electionsData.find(e => e.id == electionId);
+  if (el) {
+    showResultsModal(electionId);
+    return;
   }
 
-  update();
-  setInterval(update, 1000);
-}
+  // Fallback for standalone archived record
+  currentViewingElection = {
+    id: electionId,
+    org: org,
+    acronym: org,
+    title: org + ' Past Concluded Election',
+    closes: date,
+    status: 'closed',
+    eligible: 42,
+    voted: votes,
+    positions: ['President'],
+    candidates: [{
+      id: 0,
+      name: winner,
+      pos: 'President',
+      party: 'Official Slate',
+      prog: 'Campus Organization',
+      year: 'Active Member',
+      votes_count: votes
+    }]
+  };
 
-document.addEventListener('DOMContentLoaded', () => {
-  initCountdowns();
-  updateCandidatePositions();
-});
+  document.getElementById('modalResHeader').textContent = org + ' — Past Election Results & Winners';
+  document.getElementById('modalResSub').innerHTML = `
+    <strong>Organization:</strong> ${org} &bull; 
+    <strong>Concluded Date:</strong> ${date} &bull; 
+    <strong>Status:</strong> <span style="color:#16a34a; font-weight:700;">CONCLUDED &amp; CERTIFIED</span>
+  `;
 
-function showArchivedResultsModal(org, winner, votes, date) {
-  document.getElementById('modalResHeader').textContent = org + ' Archived Results (' + date + ')';
-  document.getElementById('modalResSub').textContent = `Winning President: ${winner} | Total Votes Cast: ${votes}`;
-
-  let html = `<div style="padding:20px; background:#f8fafc; border-radius:10px; border:1px solid #e2e8f0; text-align:center;">
-    <i class="fa-solid fa-award" style="font-size:3rem; color:#f59e0b; margin-bottom:10px;"></i>
-    <h3 style="margin:0 0 6px 0; font-size:1.1rem; color:#0f172a;">Official Election Declaration</h3>
-    <p style="margin:0; font-size:0.85rem; color:#475569;">
-      The election for <strong>${org}</strong> concluded on ${date}. Candidate <strong>${winner}</strong> was officially declared elected President with a turnout rate of ${votes}.
-    </p>
-  </div>`;
+  let html = `
+    <div style="margin-bottom:20px; border:1.5px solid #86efac; border-radius:10px; overflow:hidden;">
+      <div style="background:#dcfce7; padding:10px 16px; font-weight:800; color:#166534; font-size:0.92rem; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-crown" style="color:#eab308;"></i> Official Proclamation of Past Election Winner
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+          <thead>
+            <tr style="background:#f8fafc; color:#334155; font-weight:700; text-align:left;">
+              <th style="padding:10px 14px; border:1px solid #e2e8f0;">Organization</th>
+              <th style="padding:10px 14px; border:1px solid #e2e8f0;">Position</th>
+              <th style="padding:10px 14px; border:1px solid #e2e8f0;">Elected Winner</th>
+              <th style="padding:10px 14px; border:1px solid #e2e8f0; text-align:right;">Voter Turnout</th>
+              <th style="padding:10px 14px; border:1px solid #e2e8f0; text-align:center;">Official Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background-color:#f0fdf4;">
+              <td style="padding:12px 14px; border:1px solid #e2e8f0;"><strong>${org}</strong></td>
+              <td style="padding:12px 14px; border:1px solid #e2e8f0; font-weight:700; color:#1e3a8a;">President</td>
+              <td style="padding:12px 14px; border:1px solid #e2e8f0;">
+                <strong style="color:#0f172a; font-size:0.92rem;">${winner}</strong>
+              </td>
+              <td style="padding:12px 14px; border:1px solid #e2e8f0; text-align:right; font-weight:700;">${votes}</td>
+              <td style="padding:12px 14px; border:1px solid #e2e8f0; text-align:center;">
+                <span style="background:#dcfce7; color:#166534; font-size:0.72rem; font-weight:800; padding:3px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
+                  <i class="fa-solid fa-trophy"></i> ELECTED
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
 
   document.getElementById('modalResBody').innerHTML = html;
   document.getElementById('resultsModal').style.display = 'flex';
+}
+
+function printSpecificPastElection(electionId, org, winner, votes, date) {
+  if (sessRole === 'student') {
+    alert('Exporting election certificates is reserved for Club Advisers and Administrators.');
+    return;
+  }
+
+  const el = electionsData.find(e => e.id == electionId);
+  if (el) {
+    currentViewingElection = el;
+    printCurrentElectionReport();
+    return;
+  }
+
+  // Fallback for standalone archived record
+  currentViewingElection = {
+    id: electionId,
+    org: org,
+    acronym: org,
+    title: org + ' Past Concluded Election',
+    closes: date,
+    status: 'closed',
+    eligible: 42,
+    voted: votes,
+    positions: ['President'],
+    candidates: [{
+      id: 0,
+      name: winner,
+      pos: 'President',
+      party: 'Official Slate',
+      prog: 'Campus Organization',
+      year: 'Active Member',
+      votes_count: votes
+    }]
+  };
+  printCurrentElectionReport();
+}
+
+function printCurrentElectionReport() {
+  if (sessRole === 'student') {
+    alert('Exporting election certificates is reserved for Club Advisers and Administrators.');
+    return;
+  }
+
+  if (!currentViewingElection) {
+    if (electionsData.length > 0) {
+      currentViewingElection = electionsData[0];
+    } else {
+      window.print();
+      return;
+    }
+  }
+
+  const el = currentViewingElection;
+  const turnoutPct = el.eligible > 0 ? Math.min(100, Math.round((parseInt(el.voted) / parseInt(el.eligible)) * 100)) : 0;
+
+  // 1. Build Winners Roster Table
+  const winners = [];
+  el.positions.forEach(pos => {
+    const posCands = (el.candidates || []).filter(c => c.pos === pos);
+    let maxVotes = -1;
+    let winnerCand = null;
+    posCands.forEach(c => {
+      if ((c.votes_count || 0) > maxVotes) {
+        maxVotes = c.votes_count || 0;
+        winnerCand = c;
+      }
+    });
+    if (winnerCand) {
+      const totalPosVotes = posCands.reduce((sum, item) => sum + (item.votes_count || 0), 0);
+      const baseVoted = Math.max(parseInt(el.voted) || 1, totalPosVotes, 1);
+      const pct = Math.min(100, Math.round((winnerCand.votes_count / baseVoted) * 100));
+      winners.push({
+        pos: pos,
+        name: winnerCand.name,
+        party: winnerCand.party || 'Independent',
+        prog: winnerCand.prog || '',
+        year: winnerCand.year || '',
+        votes: winnerCand.votes_count,
+        pct: pct
+      });
+    }
+  });
+
+  let winnersTableHtml = '';
+  if (winners.length > 0) {
+    let wRows = '';
+    winners.forEach((w, idx) => {
+      wRows += `
+        <tr style="background-color:#f0fdf4; font-weight:600;">
+          <td style="padding:8px 10px; border:1px solid #cbd5e1; text-align:center;">${idx + 1}</td>
+          <td style="padding:8px 10px; border:1px solid #cbd5e1; color:#1e3a8a; font-weight:800;">${w.pos}</td>
+          <td style="padding:8px 10px; border:1px solid #cbd5e1;">
+            <strong>${w.name}</strong>
+            ${w.prog ? `<span style="font-size:11px; color:#64748b; margin-left:4px;">(${w.prog} ${w.year})</span>` : ''}
+          </td>
+          <td style="padding:8px 10px; border:1px solid #cbd5e1;">${w.party}</td>
+          <td style="padding:8px 10px; border:1px solid #cbd5e1; text-align:right; font-weight:800;">${w.votes}</td>
+          <td style="padding:8px 10px; border:1px solid #cbd5e1; text-align:right; color:#16a34a;">${w.pct}%</td>
+          <td style="padding:8px 10px; border:1px solid #cbd5e1; text-align:center;">
+            <span style="background:#dcfce7; color:#166534; font-size:10px; font-weight:800; padding:2px 6px; border-radius:4px; display:inline-block;">ELECTED</span>
+          </td>
+        </tr>
+      `;
+    });
+
+    winnersTableHtml = `
+      <div style="margin-top:14px; margin-bottom:18px; page-break-inside:avoid;">
+        <div style="font-size:13px; font-weight:800; color:#166534; text-transform:uppercase; background:#dcfce7; border:1px solid #86efac; padding:6px 10px; border-radius:4px 4px 0 0;">
+          👑 Official Proclamation: Roster of Elected Officers &amp; Winners
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:11.5px; border:1px solid #cbd5e1;">
+          <thead>
+            <tr style="background:#f1f5f9; color:#1e293b; font-weight:700;">
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; width:35px; text-align:center;">#</th>
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; text-align:left; width:130px;">Position</th>
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; text-align:left;">Proclaimed Officer / Winner</th>
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; text-align:left;">Party / Slate</th>
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; text-align:right; width:70px;">Votes</th>
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; text-align:right; width:70px;">Share (%)</th>
+              <th style="padding:8px 10px; border:1px solid #cbd5e1; text-align:center; width:80px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${wRows}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  // 2. Position by Position Tabulation
+  let breakdownTablesHtml = '';
+  el.positions.forEach(pos => {
+    const posCands = (el.candidates || []).filter(c => c.pos === pos);
+    let maxVotes = -1;
+    posCands.forEach(c => { if (c.votes_count > maxVotes) maxVotes = c.votes_count; });
+    const totalPosVotes = posCands.reduce((sum, item) => sum + (item.votes_count || 0), 0);
+    const baseVoted = Math.max(parseInt(el.voted) || 1, totalPosVotes, 1);
+
+    let rowsHtml = '';
+    if (!posCands.length) {
+      rowsHtml = `<tr><td colspan="6" style="text-align:center; padding:8px; color:#64748b; font-style:italic;">No candidates registered for this position.</td></tr>`;
+    } else {
+      posCands.forEach((c, idx) => {
+        const pct = Math.min(100, Math.round(((c.votes_count || 0) / baseVoted) * 100));
+        const isWinner = (c.votes_count === maxVotes && maxVotes > 0);
+        rowsHtml += `
+          <tr style="${isWinner ? 'background-color:#f0fdf4; font-weight:600;' : ''}">
+            <td style="padding:6px 10px; border:1px solid #cbd5e1; text-align:center;">${idx + 1}</td>
+            <td style="padding:6px 10px; border:1px solid #cbd5e1;">
+              <strong>${c.name}</strong>
+              ${isWinner ? ' <span style="display:inline-block; background:#16a34a; color:#fff; font-size:9.5px; font-weight:800; padding:1px 5px; border-radius:3px; margin-left:4px;">WINNER</span>' : ''}
+            </td>
+            <td style="padding:6px 10px; border:1px solid #cbd5e1;">${c.party || 'Independent'}</td>
+            <td style="padding:6px 10px; border:1px solid #cbd5e1;">${c.prog || ''} ${c.year || ''}</td>
+            <td style="padding:6px 10px; border:1px solid #cbd5e1; text-align:right; font-weight:700;">${c.votes_count || 0}</td>
+            <td style="padding:6px 10px; border:1px solid #cbd5e1; text-align:right;">${pct}%</td>
+          </tr>
+        `;
+      });
+    }
+
+    breakdownTablesHtml += `
+      <div style="margin-top:12px; page-break-inside:avoid;">
+        <div style="font-size:11.5px; font-weight:800; color:#1e3a8a; text-transform:uppercase; border-bottom:1.5px solid #2563eb; padding-bottom:2px; margin-bottom:4px;">
+          Tally for Position: ${pos}
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:8px;">
+          <thead>
+            <tr style="background:#f1f5f9; color:#1e293b; font-weight:700;">
+              <th style="padding:6px 10px; border:1px solid #cbd5e1; width:30px; text-align:center;">#</th>
+              <th style="padding:6px 10px; border:1px solid #cbd5e1; text-align:left;">Candidate Name</th>
+              <th style="padding:6px 10px; border:1px solid #cbd5e1; text-align:left;">Party / Slate</th>
+              <th style="padding:6px 10px; border:1px solid #cbd5e1; text-align:left;">Program &amp; Year</th>
+              <th style="padding:6px 10px; border:1px solid #cbd5e1; text-align:right; width:70px;">Votes</th>
+              <th style="padding:6px 10px; border:1px solid #cbd5e1; text-align:right; width:70px;">Share (%)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  });
+
+  const printWin = window.open('', '_blank', 'width=920,height=780');
+  if (!printWin) {
+    alert('Please allow popups to export/print the official election report.');
+    return;
+  }
+
+  printWin.document.write(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <title></title>
+      <style>
+        @page { size: portrait; margin: 12mm 15mm; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; margin: 0; padding: 15px; font-size: 11.5px; line-height: 1.35; }
+        .header { display: flex; align-items: center; justify-content: center; gap: 14px; border-bottom: 2px solid #1e3a8a; padding-bottom: 12px; margin-bottom: 12px; text-align: center; }
+        .logo { width: 62px; height: 62px; object-fit: contain; }
+        .header-text h1 { margin: 0; font-size: 16.5px; color: #1e3a8a; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px; }
+        .header-text p { margin: 2px 0 0; font-size: 11px; color: #475569; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .doc-title { text-align: center; margin: 8px 0 10px; font-size: 14.5px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
+        .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; background: #f8fafc; }
+        .meta-table td { padding: 6px 10px; border: 1px solid #e2e8f0; font-size: 11px; }
+        .meta-table td strong { color: #1e293b; }
+        .signatures { display: flex; justify-content: space-between; margin-top: 32px; page-break-inside: avoid; }
+        .sign-box { width: 30%; text-align: center; font-size: 11px; }
+        .sign-line { border-top: 1px solid #334155; margin-top: 40px; padding-top: 4px; font-weight: 700; color: #0f172a; }
+        .print-btn-bar { text-align: right; margin-bottom: 12px; }
+        .print-btn { background: #2563eb; color: #fff; border: none; padding: 8px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 12px; }
+        @media print {
+          .print-btn-bar { display: none !important; }
+          body { padding: 0; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="print-btn-bar">
+        <button class="print-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+      </div>
+
+      <div class="header">
+        <img class="logo" src="../images/BCP_LOGO.png" alt="Bestlink College of the Philippines Logo" />
+        <div class="header-text">
+          <h1>Bestlink College of the Philippines</h1>
+          <p>Office of Student Affairs &amp; Services &bull; Student Commission on Elections</p>
+          <p style="font-size:10px; color:#64748b; margin-top:1px;">Campus Co-Curricular Student Organization Management System</p>
+        </div>
+      </div>
+
+      <div class="doc-title">Official Certificate of Past Election Results &amp; Winners</div>
+
+      <table class="meta-table">
+        <tr>
+          <td style="width:50%;"><strong>Organization:</strong> ${el.org} (${el.acronym || ''})</td>
+          <td style="width:50%;"><strong>Election Title:</strong> ${el.title}</td>
+        </tr>
+        <tr>
+          <td><strong>Concluded Date:</strong> ${el.closes}</td>
+          <td><strong>Status:</strong> CONCLUDED &amp; CERTIFIED</td>
+        </tr>
+        <tr>
+          <td><strong>Voter Turnout:</strong> ${el.voted} / ${el.eligible} Eligible Members (${turnoutPct}%)</td>
+          <td><strong>Certification:</strong> Official Electoral Proclamation Record</td>
+        </tr>
+      </table>
+
+      ${winnersTableHtml}
+
+      ${breakdownTablesHtml}
+
+      <div class="signatures">
+        <div class="sign-box">
+          <div class="sign-line">COMELEC Representative</div>
+          <span style="color:#64748b; font-size:10px;">Electoral Board</span>
+        </div>
+        <div class="sign-box">
+          <div class="sign-line">Organization Faculty Adviser</div>
+          <span style="color:#64748b; font-size:10px;">Faculty Supervision</span>
+        </div>
+        <div class="sign-box">
+          <div class="sign-line">Dean / Director of Student Affairs</div>
+          <span style="color:#64748b; font-size:10px;">Office of Student Affairs</span>
+        </div>
+      </div>
+    </body>
+    </html>
+  `);
+  printWin.document.close();
+  printWin.focus();
+  setTimeout(() => {
+    printWin.print();
+  }, 400);
 }
 
 function exportHandledOrgReport() {
@@ -1292,5 +1730,6 @@ async function handleCastVote(e, electionId) {
 }
 </script>
 <script src="../js/dashboard.js"></script>
+<script src="../js/table-pagination.js"></script>
 </body>
 </html>

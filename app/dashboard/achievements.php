@@ -1,7 +1,7 @@
 <?php
 // ============================================================
 //  ACHIEVEMENTS.PHP  (dashboard/)
-//  Co-Curricular System — Achievement & Awards Ledger (Live DB + Real AJAX)
+//  Co-Curricular System â€” Achievement & Awards Ledger (Live DB + Real AJAX)
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
 session_start();
@@ -11,10 +11,15 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
+// Module disabled system-wide
+header('Location: dashboard.php');
+exit;
+
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
 $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)$_SESSION['user_id'];
 
 // -- Fetch verified achievements ------------------------------
@@ -43,7 +48,7 @@ if ($sess_role === 'student') {
         $ach_where = 'WHERE a.status = "Verified"';
     }
 } else {
-    // Adviser, OSA, Admin, Finance see all verified
+    // Adviser, SSC, Admin, Finance see all verified
     $ach_where = 'WHERE a.status = "Verified"';
 }
 
@@ -72,7 +77,7 @@ if ($sess_role === 'student') {
     $stmt_p->close();
 }
 
-// -- Pending queue (OSA + Admin) ------------------------------
+// -- Pending queue (SSC + Admin) ------------------------------
 $pending_achievements = [];
 if (in_array($sess_role, ['ssc', 'admin'])) {
     $pending_achievements = $conn->query(
@@ -109,7 +114,7 @@ if (in_array($sess_role, ['student', 'club_adviser'])) {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Awards & Achievements – BCP Co-Curricular Portal</title>
+  <title>Awards & Achievements â€“ BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
@@ -158,7 +163,11 @@ require_once __DIR__ . '/../shared/sidebar.php';
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i class="fa-solid fa-qrcode"></i></button>
       <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
-        <?= $sess_initial ?>
+        <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+        <?php else: ?>
+          <?= $sess_initial ?>
+        <?php endif; ?>
       </a>
     </div>
   </div>
@@ -183,14 +192,14 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <div class="info-card">
           <div class="card-label"><i class="fa-solid fa-medal"></i> Verified Awards</div>
           <div class="card-amount"><?= count($verified_achievements) ?></div>
-          <div class="card-detail">OSA-endorsed records</div>
+          <div class="card-detail">SSC-endorsed records</div>
         </div>
 
         <?php if ($sess_role === 'student'): ?>
         <div class="info-card">
           <div class="card-label"><i class="fa-solid fa-clock"></i> Pending Review</div>
           <div class="card-amount"><?= $my_pending_count ?></div>
-          <div class="card-detail">Awaiting OSA sign-off</div>
+          <div class="card-detail">Awaiting SSC sign-off</div>
         </div>
         <?php endif; ?>
 
@@ -198,7 +207,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <div class="info-card">
           <div class="card-label"><i class="fa-solid fa-clock"></i> Pending Verification</div>
           <div class="card-amount"><?= count($pending_achievements) ?></div>
-          <div class="card-detail">Awaiting OSA sign-off</div>
+          <div class="card-detail">Awaiting SSC sign-off</div>
         </div>
         <?php endif; ?>
 
@@ -252,7 +261,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <?php endif; ?>
       </div>
 
-      <!-- OSA Verification Queue (OSA/Admin Only) -->
+      <!-- SSC Verification Queue (SSC/Admin Only) -->
       <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
       <div class="table-card" id="pending-queue">
         <h3>
@@ -308,13 +317,13 @@ require_once __DIR__ . '/../shared/sidebar.php';
   <div class="modal-card">
     <div class="modal-header">
       <h3><i class="fa-solid fa-trophy" style="color:#2563eb;"></i> Submit Competition Achievement</h3>
-      <button style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#64748b;" id="closeAchModal">&times;</button>
+      <button style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#64748b;" id="closeAchModal"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-body">
       <div class="form-row">
         <div class="form-group">
           <label>Award Title *</label>
-          <input type="text" id="achTitle" placeholder="e.g. 1st Place – IT Quiz Bee"/>
+          <input type="text" id="achTitle" placeholder="e.g. 1st Place â€“ IT Quiz Bee"/>
         </div>
         <div class="form-group">
           <label>Competition / Event *</label>
@@ -344,7 +353,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <label>Notes / Description</label>
         <textarea id="achNotes" placeholder="Describe the achievement, category, participants..."></textarea>
       </div>
-      <p style="font-size:0.78rem;color:#94a3b8;margin:0;">After submission, the OSA director will verify and endorse your achievement on the official ledger.</p>
+      <p style="font-size:0.78rem;color:#94a3b8;margin:0;">After submission, the SSC will verify and endorse your achievement on the official ledger.</p>
     </div>
     <div class="modal-footer">
       <button class="card-btn" style="background:#f1f5f9;color:#64748b;" id="cancelAchBtn">Cancel</button>
@@ -414,7 +423,7 @@ document.getElementById('submitAchBtn')?.addEventListener('click', function() {
       this.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Submit for Verification';
       if (data.success) {
         submitModal.classList.remove('active');
-        showAlert('Achievement submitted! Awaiting OSA verification.', 'success');
+        showAlert('Achievement submitted! Awaiting SSC verification.', 'success');
         // Clear fields
         ['achTitle','achCompetition','achDate','achNotes'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('achClub').value = '';
@@ -430,7 +439,7 @@ document.getElementById('submitAchBtn')?.addEventListener('click', function() {
 });
 <?php endif; ?>
 
-// -- Verify/Reject (OSA/Admin) ---------------------------------
+// -- Verify/Reject (SSC/Admin) ---------------------------------
 <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
 function verifyAch(id, action) {
   const label = action === 'verify' ? 'verify and endorse' : 'reject';

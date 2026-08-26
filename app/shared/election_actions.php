@@ -40,11 +40,13 @@ if ($action === 'create_election') {
         exit;
     }
 
-    $title       = trim($_POST['title'] ?? '');
-    $description = trim($_POST['description'] ?? '');
-    $closes_at   = trim($_POST['closes_at'] ?? '');
+    $title         = trim($_POST['title'] ?? '');
+    $description   = trim($_POST['description'] ?? '');
+    $closes_at     = trim($_POST['closes_at'] ?? '');
+    $closing_date  = trim($_POST['closing_date'] ?? '');
+    $closing_time  = trim($_POST['closing_time'] ?? '23:59');
     $positions_raw = trim($_POST['positions'] ?? 'President, Vice President, Secretary, Treasurer');
-    $club_id     = (int)($_POST['club_id'] ?? 0);
+    $club_id       = (int)($_POST['club_id'] ?? 0);
 
     if (empty($title)) {
         echo json_encode(['success' => false, 'message' => 'Election title is required.']);
@@ -66,7 +68,15 @@ if ($action === 'create_election') {
 
     $election_code = 'elec_' . time() . '_' . rand(100, 999);
     $positions_json = json_encode($pos_arr);
-    $closes_formatted = !empty($closes_at) ? date('Y-m-d H:i:s', strtotime($closes_at)) : date('Y-m-d H:i:s', strtotime('+7 days'));
+
+    if (!empty($closing_date)) {
+        if (empty($closing_time)) $closing_time = '23:59';
+        $closes_formatted = date('Y-m-d H:i:s', strtotime($closing_date . ' ' . $closing_time));
+    } elseif (!empty($closes_at)) {
+        $closes_formatted = date('Y-m-d H:i:s', strtotime($closes_at));
+    } else {
+        $closes_formatted = date('Y-m-d H:i:s', strtotime('+7 days'));
+    }
 
     $stmt = $conn->prepare("INSERT INTO elections (election_code, club_id, title, description, closes_at, status, positions, created_by) VALUES (?, ?, ?, ?, ?, 'open', ?, ?)");
     $stmt->bind_param('sissssi', $election_code, $club_id, $title, $description, $closes_formatted, $positions_json, $user_id);

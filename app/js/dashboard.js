@@ -157,6 +157,7 @@ function openModal(modalId) {
     if (el) {
         el.classList.add('active');
         el.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
     }
 }
 
@@ -166,6 +167,7 @@ function closeModal(modalId) {
     if (el) {
         el.classList.remove('active');
         el.style.display = 'none';
+        document.body.style.overflow = '';
     }
 }
 
@@ -186,11 +188,18 @@ document.addEventListener('click', event => {
                 window.closeGlobalQrModal();
             }
         }
+        if (closeBtn.id === 'afmClose' && typeof window.closeAppForm === 'function') {
+            window.closeAppForm();
+        }
+        if (closeBtn.id === 'opmClose' && typeof window.closeOrgProfile === 'function') {
+            window.closeOrgProfile();
+        }
         const parentModal = closeBtn.closest('.modal-overlay, .qr-modal-overlay, .org-profile-overlay, .app-form-overlay, .notif-panel, .notif-overlay');
         if (parentModal) {
             parentModal.classList.remove('active', 'open');
             parentModal.style.display = 'none';
         }
+        document.body.style.overflow = '';
         return;
     }
 
@@ -202,8 +211,15 @@ document.addEventListener('click', event => {
         event.target.classList.contains('modal-backdrop')) {
         event.target.classList.remove('active', 'open');
         event.target.style.display = 'none';
+        document.body.style.overflow = '';
         if (event.target.id === 'qrModalOverlay' && typeof window.closeGlobalQrModal === 'function') {
             window.closeGlobalQrModal();
+        }
+        if (event.target.id === 'appFormOverlay' && typeof window.closeAppForm === 'function') {
+            window.closeAppForm();
+        }
+        if (event.target.id === 'orgProfileOverlay' && typeof window.closeOrgProfile === 'function') {
+            window.closeOrgProfile();
         }
     }
 });
@@ -215,8 +231,15 @@ document.addEventListener('keydown', event => {
             m.classList.remove('active', 'open');
             m.style.display = 'none';
         });
+        document.body.style.overflow = '';
         if (typeof window.closeGlobalQrModal === 'function') {
             window.closeGlobalQrModal();
+        }
+        if (typeof window.closeAppForm === 'function') {
+            window.closeAppForm();
+        }
+        if (typeof window.closeOrgProfile === 'function') {
+            window.closeOrgProfile();
         }
     }
 });
@@ -237,7 +260,7 @@ document.addEventListener('keydown', event => {
 
 // Maps each type to the bold label shown at the top of the card
 const TOAST_LABELS = {
-    success : 'Submitted',
+    success : 'Success',
     updated : 'Updated',
     warning : 'Warning',
     error   : 'Error'
@@ -259,7 +282,7 @@ function showToast(message, type = 'success') {
     }
 
     // Set the label and message
-    toast.querySelector('.toast-title').textContent = TOAST_LABELS[type] ?? type;
+    toast.querySelector('.toast-title').textContent = TOAST_LABELS[type] ?? (type.charAt(0).toUpperCase() + type.slice(1));
     toast.querySelector('.toast-msg').textContent   = message;
 
     // Swap the colour class
@@ -351,6 +374,16 @@ notifMarkAll?.addEventListener('click', () => {
         .forEach(el => el.classList.remove('unread'));
     updateBellBadge();
 });
+
+// ============================================================
+//  7. GLOBAL SPOTLIGHT SEARCH AUTO-LOADER
+// ============================================================
+if (!window.openGlobalSpotlight) {
+    const searchScript = document.createElement('script');
+    searchScript.src = '../js/global-search.js';
+    document.head.appendChild(searchScript);
+}
+
 
 
 

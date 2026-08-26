@@ -1,9 +1,9 @@
 <?php
 // ============================================================
-//  BROADCASTS.PHP � Inter-Club Messenger
+//  BROADCASTS.PHP
 //  RBAC: Students see org rooms they belong to
 //        Officers see their org + can broadcast to members
-//        OSA/Admin see all rooms
+//        SSC/Admin see all rooms
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
 session_start();
@@ -15,6 +15,7 @@ $sess_first = htmlspecialchars($_SESSION['first_name'] ?? 'User');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
 $sess_role = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id = $_SESSION['user_id'] ?? 1;
 
 // -- RBAC: determine which channels this role can see --------
@@ -27,7 +28,7 @@ $all_channels = [
   ['id' => 'jfinex', 'acronym' => 'JFINEX', 'name' => 'Junior Financial Executives', 'members' => 41, 'last' => 'Finance seminar registration is open!', 'time' => 'Yesterday', 'unread' => 1],
   ['id' => 'sigma', 'acronym' => 'SIGMA', 'name' => "Students' Interactive Guild for Mathematics Major", 'members' => 27, 'last' => 'Problem set solutions posted on drive.', 'time' => 'Mon', 'unread' => 0],
   ['id' => 'dlc', 'acronym' => 'DLC', 'name' => 'Drum and Lyre Corporation', 'members' => 45, 'last' => 'Rehearsal schedule updated. Check pinned.', 'time' => 'Mon', 'unread' => 3],
-  ['id' => 'cdc', 'acronym' => 'CDC', 'name' => 'Criminology Dance Company', 'members' => 22, 'last' => 'Costume fittings: Thu 2�5 PM.', 'time' => 'Sun', 'unread' => 0],
+  ['id' => 'cdc', 'acronym' => 'CDC', 'name' => 'Criminology Dance Company', 'members' => 22, 'last' => 'Costume fittings: Thu 25 PM.', 'time' => 'Sun', 'unread' => 0],
   ['id' => 'newslink', 'acronym' => 'NEWSLINK', 'name' => 'Newslink: The School Publications', 'members' => 18, 'last' => 'Issue draft due by Jul 28.', 'time' => 'Sun', 'unread' => 0],
 ];
 
@@ -38,7 +39,7 @@ if ($sess_role === 'student') {
 } elseif ($sess_role === 'club_adviser') {
   $channels = array_slice($all_channels, 0, 5);
 } else {
-  // OSA / Admin / Finance see all
+  // SSC / Admin / Finance see all
   $channels = $all_channels;
 }
 
@@ -190,13 +191,18 @@ $mock_messages = [
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
         <div class="search-wrap">
-          <input type="text" placeholder="Search messages..." />
+          <input type="text" placeholder="Search pages, events..." autocomplete="off" />
           <i class="fa-solid fa-magnifying-glass"></i>
         </div>
         <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i
             class="fa-solid fa-qrcode"></i></button>
-        <a href="../dashboard/account.php" class="avatar" id="avatarBtn"
-          title="Account Settings"><?= $sess_initial ?></a>
+        <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
+          <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+            <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+          <?php else: ?>
+            <?= $sess_initial ?>
+          <?php endif; ?>
+        </a>
       </div>
     </div>
 

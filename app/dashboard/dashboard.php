@@ -16,6 +16,7 @@ $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? 'User');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
 $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
+$sess_pic     = $_SESSION['profile_pic'] ?? null;
 
 // Role Titles map
 $role_labels = [
@@ -30,10 +31,10 @@ $role_title = $role_labels[$sess_role] ?? 'User';
 
 $user_id = (int)($_SESSION['user_id'] ?? 0);
 
-// Fetch student profile details (Section, Program, Year) if student role
+// Fetch student profile details (Student Number, Section, Program, Year) if student role
 $student_info = null;
 if ($sess_role === 'student') {
-    $stmt = $conn->prepare("SELECT course, year_level, section FROM students WHERE first_name = ? AND last_name = ? LIMIT 1");
+    $stmt = $conn->prepare("SELECT student_number, course, year_level, section FROM students WHERE first_name = ? AND last_name = ? LIMIT 1");
     if ($stmt) {
         $stmt->bind_param('ss', $_SESSION['first_name'], $_SESSION['last_name']);
         $stmt->execute();
@@ -161,14 +162,18 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
       <div class="search-wrap">
-        <input type="text" placeholder="Search..."/>
+        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
         <i class="fa-solid fa-magnifying-glass"></i>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="View Personal Attendance QR Code" type="button">
         <i class="fa-solid fa-qrcode"></i>
       </button>
       <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
-        <?= $sess_initial ?>
+        <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
+          <img src="../uploads/avatars/<?= htmlspecialchars($sess_pic) ?>" alt="Profile"/>
+        <?php else: ?>
+          <?= $sess_initial ?>
+        <?php endif; ?>
       </a>
     </div>
   </div>
@@ -214,6 +219,9 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <div class="card-detail">
           <?php if ($sess_role === 'student' && !empty($student_info)): ?>
             <div style="margin-top:6px; font-size:0.8rem; color:#64748b; line-height:1.4; text-align:left;">
+              <?php if (!empty($student_info['student_number'])): ?>
+                <strong>Student Number:</strong> <?= htmlspecialchars($student_info['student_number']) ?><br/>
+              <?php endif; ?>
               <strong>Program:</strong> <?= htmlspecialchars($student_info['course']) ?><br/>
               <strong>Year &amp; Section:</strong> <?= htmlspecialchars($student_info['year_level']) ?> - <?= htmlspecialchars($student_info['section']) ?>
             </div>
@@ -301,21 +309,25 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <table class="data-table">
           <thead>
             <tr>
+              <th>#</th>
               <th>Request Title</th>
               <th>Organization</th>
-              <th>Amount / Details</th>
+              <th>Estimated Cost</th>
+              <th>Submission Date</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
             <?php if (empty($pending_endorsements)): ?>
-              <tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:20px;">No pending endorsements queue at this time.</td></tr>
+              <tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:20px;">No pending endorsements queue at this time.</td></tr>
             <?php else: ?>
-              <?php foreach ($pending_endorsements as $req): ?>
+              <?php $idx = 1; foreach ($pending_endorsements as $req): ?>
                 <tr>
-                  <td><?= htmlspecialchars($req['title']) ?></td>
+                  <td><?= $idx++ ?></td>
+                  <td><strong><?= htmlspecialchars($req['title']) ?></strong></td>
                   <td><?= htmlspecialchars($req['club_name']) ?></td>
                   <td>₱<?= number_format($req['amount'], 2) ?></td>
+                  <td><?= date('M d, Y', strtotime($req['created_at'] ?? 'now')) ?></td>
                   <td>
                     <a href="budget.php" class="card-btn"><i class="fa-solid fa-eye"></i> Go to Budget Portal</a>
                   </td>
@@ -333,70 +345,47 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <table class="data-table">
           <thead>
             <tr>
-              <th>Approval Type</th>
-              <th>Submitted By / Detail</th>
-              <th>Status</th>
+              <th>#</th>
+              <th>Category</th>
+              <th>Proposal / Item Title</th>
+              <th>Organization</th>
+              <th>Current Stage</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody>
             <?php if (empty($ssc_pending_budgets) && empty($ssc_pending_clubs) && empty($ssc_pending_events)): ?>
-              <tr><td colspan="4" style="text-align:center; color:#94a3b8; padding:20px;">No pending SSC approvals or reviews found.</td></tr>
+              <tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:20px;">No pending SSC approvals or reviews found.</td></tr>
             <?php else: ?>
+              <?php $sidx = 1; ?>
               <?php foreach ($ssc_pending_clubs as $cl): ?>
                 <tr>
-                  <td>New Org Charter: <?= htmlspecialchars($cl['name']) ?></td>
-                  <td>Student Founding Officers (<?= htmlspecialchars($cl['code']) ?>)</td>
-                  <td><span class="badge-inactive">Pending Review</span></td>
+                  <td><?= $sidx++ ?></td>
+                  <td><span class="badge-info">Charter</span></td>
+                  <td><strong>New Org Charter: <?= htmlspecialchars($cl['name']) ?></strong></td>
+                  <td><?= htmlspecialchars($cl['code']) ?></td>
+                  <td><span class="badge-warning">Pending SSC Review</span></td>
                   <td><a href="club_directory.php" class="card-btn">Review Charter</a></td>
                 </tr>
               <?php endforeach; ?>
               <?php foreach ($ssc_pending_budgets as $br): ?>
                 <tr>
-                  <td>Budget Request: <?= htmlspecialchars($br['title']) ?></td>
+                  <td><?= $sidx++ ?></td>
+                  <td><span class="badge-info">Budget</span></td>
+                  <td><strong><?= htmlspecialchars($br['title']) ?> (₱<?= number_format($br['amount'], 2) ?>)</strong></td>
                   <td><?= htmlspecialchars($br['club_name']) ?></td>
-                  <td>₱<?= number_format($br['amount'], 2) ?> &bull; <span class="badge-active">Adviser Endorsed</span></td>
+                  <td><span class="badge-active">Adviser Endorsed</span></td>
                   <td><a href="budget.php" class="card-btn">Review Budget</a></td>
                 </tr>
               <?php endforeach; ?>
               <?php foreach ($ssc_pending_events as $ev): ?>
                 <tr>
-                  <td>Event Activity: <?= htmlspecialchars($ev['title']) ?></td>
+                  <td><?= $sidx++ ?></td>
+                  <td><span class="badge-info">Event</span></td>
+                  <td><strong><?= htmlspecialchars($ev['title']) ?></strong></td>
                   <td><?= htmlspecialchars($ev['club_name']) ?></td>
-                  <td>Date: <?= date('M d, Y', strtotime($ev['event_date'])) ?></td>
+                  <td><?= date('M d, Y', strtotime($ev['event_date'])) ?></td>
                   <td><a href="events.php" class="card-btn">Review Activity</a></td>
-                </tr>
-              <?php endforeach; ?>
-            <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
-
-    <?php elseif ($sess_role === 'finance_officer'): ?>
-      <!-- FINANCE OFFICER VIEW -->
-      <div class="table-card" style="margin-bottom:20px;">
-        <h3><i class="fa-solid fa-money-check-dollar" style="color:#2563eb;"></i> Pending Budget Disbursement Vouchers</h3>
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Voucher #</th>
-              <th>Organization</th>
-              <th>Description</th>
-              <th>Amount</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            <?php if (empty($finance_pending_budgets)): ?>
-              <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:20px;">No pending disbursement vouchers.</td></tr>
-            <?php else: ?>
-              <?php foreach ($finance_pending_budgets as $br): ?>
-                <tr>
-                  <td>DV-<?= date('Y') ?>-<?= sprintf('%03d', $br['id']) ?></td>
-                  <td><?= htmlspecialchars($br['club_name']) ?></td>
-                  <td><?= htmlspecialchars($br['title']) ?></td>
-                  <td>₱<?= number_format($br['amount'], 2) ?></td>
-                  <td><a href="budget.php" class="card-btn"><i class="fa-solid fa-hand-holding-dollar"></i> Go to Disbursements</a></td>
                 </tr>
               <?php endforeach; ?>
             <?php endif; ?>
@@ -411,16 +400,19 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <table class="data-table">
           <thead>
             <tr>
+              <th>#</th>
               <th>Target SMS System</th>
-              <th>Integration Direction</th>
-              <th>Status</th>
+              <th>Sync Protocol</th>
+              <th>Data Direction</th>
+              <th>Connection Status</th>
+              <th>Health Check</th>
             </tr>
           </thead>
           <tbody>
-            <tr><td>Registrar SIS</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td></tr>
-            <tr><td>Enrollment Management</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td></tr>
-            <tr><td>Payment Management System</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td></tr>
-            <tr><td>Class Scheduling System</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td></tr>
+            <tr><td>1</td><td><strong>Registrar SIS</strong></td><td>REST API / OAuth 2.0</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> 99.9% Uptime</span></td></tr>
+            <tr><td>2</td><td><strong>Enrollment Management</strong></td><td>Encrypted Webhook</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Connected</span></td></tr>
+            <tr><td>3</td><td><strong>Payment Management System</strong></td><td>Direct SQL / REST</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Verified</span></td></tr>
+            <tr><td>4</td><td><strong>Class Scheduling System</strong></td><td>JSON Feed API</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Synced</span></td></tr>
           </tbody>
         </table>
       </div>
@@ -435,5 +427,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
 <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
 <script src="../js/dashboard.js"></script>
+<script src="../js/table-pagination.js"></script>
 </body>
 </html>

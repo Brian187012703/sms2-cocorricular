@@ -38,7 +38,9 @@ if (isset($conn) && $conn instanceof mysqli) {
         <i class="fa-solid fa-qrcode"></i>
         <span>QR Code Center</span>
       </div>
-      <button class="notif-close" id="closeQrModalBtn" title="Close" type="button">&times;</button>
+      <button class="notif-close" id="closeQrModalBtn" title="Close" type="button" aria-label="Close">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
     </div>
 
     <!-- Segmented Tabs Wrapper -->
@@ -143,9 +145,41 @@ if (isset($conn) && $conn instanceof mysqli) {
 
 <script src="https://unpkg.com/@zxing/library@0.21.1/umd/index.min.js"></script>
 <script>
-window.openGlobalQrModal = function() {
+window.openGlobalQrModal = function(tab = 'myqr') {
   const overlay = document.getElementById('qrModalOverlay');
+  const titleText = document.querySelector('.qr-modal-title span');
+  const tabsWrap = document.querySelector('.qr-tabs-wrapper');
+  
+  if (titleText) titleText.textContent = 'QR Code Center';
+  if (tabsWrap) tabsWrap.style.display = 'block';
+  
+  window.switchGlobalQrTab(tab);
   if (overlay) overlay.classList.add('active');
+};
+
+window.openScannerOnlyModal = function(eventId = null) {
+  const overlay = document.getElementById('qrModalOverlay');
+  const titleText = document.querySelector('.qr-modal-title span');
+  const tabsWrap = document.querySelector('.qr-tabs-wrapper');
+  
+  if (titleText) titleText.textContent = 'Live Attendance Scanner';
+  if (tabsWrap) tabsWrap.style.display = 'none'; // Show only scanning, hide QR code generation tab
+  
+  window.switchGlobalQrTab('scan');
+  if (overlay) overlay.classList.add('active');
+  
+  if (eventId) {
+    const sel = document.getElementById('scanEventSelect');
+    if (sel) sel.value = eventId;
+  }
+
+  // Automatically start camera scanner
+  setTimeout(() => {
+    const startBtn = document.getElementById('startGlobalScanBtn');
+    if (startBtn && !window.isQrScanning) {
+      startBtn.click();
+    }
+  }, 150);
 };
 
 window.closeGlobalQrModal = function() {
@@ -185,10 +219,18 @@ function downloadQR() {
 
   // Global click delegation for opening & closing modal
   document.addEventListener('click', function(e) {
+    const scannerBtn = e.target.closest('#btnLaunchScanner, [data-open-scanner]');
+    if (scannerBtn) {
+      e.preventDefault();
+      const eventId = scannerBtn.getAttribute('data-event-id');
+      window.openScannerOnlyModal(eventId);
+      return;
+    }
+
     const openBtn = e.target.closest('#qrFabBtn, .topbar-qr-btn, [data-open-qr]');
     if (openBtn) {
       e.preventDefault();
-      window.openGlobalQrModal();
+      window.openGlobalQrModal('myqr');
       return;
     }
 
@@ -236,7 +278,11 @@ function downloadQR() {
     }
 
     try {
-      codeReader = new ZXing.BrowserMultiFormatReader();
+      if (typeof ZXing.BrowserQRCodeReader === 'function') {
+        codeReader = new ZXing.BrowserQRCodeReader();
+      } else {
+        codeReader = new ZXing.BrowserMultiFormatReader();
+      }
       const devices = await codeReader.listVideoInputDevices();
 
       if (!devices || devices.length === 0) {
@@ -245,14 +291,14 @@ function downloadQR() {
         return;
       }
 
-      // Prefer back camera on mobile
+      // Prefer back/environment camera on mobile
       const device = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[0];
 
       if (placeholder) placeholder.style.setProperty('display', 'none', 'important');
       if (video)    { video.style.display = 'block'; }
       if (scanLine) scanLine.style.display = 'block';
       if (resultBox){ resultBox.style.display = 'flex'; resultBox.style.background = '#f8fafc'; resultBox.style.color = '#64748b'; }
-      if (resultText) resultText.textContent = 'Scanner active — point camera at a student QR badge...';
+      if (resultText) resultText.textContent = 'Scanner active — point camera directly at QR code...';
 
       isScanning = true;
       if (startBtn) {
@@ -262,7 +308,7 @@ function downloadQR() {
 
       codeReader.decodeFromVideoDevice(device.deviceId, 'qrGlobalVideo', (result, err) => {
         if (result) {
-          const text = result.getText();
+          const text = result.getText().trim();
           const now  = Date.now();
 
           // Debounce: same code within 3 seconds = skip
@@ -270,14 +316,19 @@ function downloadQR() {
           lastScanned  = text;
           lastScanTime = now;
 
+          // Haptic feedback
+          try { navigator.vibrate?.([60, 40, 60]); } catch (e) {}
+
           if (resultText) resultText.textContent = '📷 Scanned: ' + text;
           if (resultBox) { resultBox.style.background='#fef9c3'; resultBox.style.color='#92400e'; }
 
           const eventId = parseInt(document.getElementById('scanEventSelect')?.value || '0');
-          if (text.startsWith('BCP-EVENT-') || eventId > 0) {
+          const isEventQr = /^BCP-EVENT(?:-LOG)?-\d+/i.test(text);
+
+          if (isEventQr || eventId > 0 || <?= json_encode($qr_role === 'student') ?>) {
             logAttendanceViaQr(text, eventId);
           } else {
-            if (resultText) resultText.textContent = '⚠️ Scanned: ' + text + ' — Please select an event first!';
+            if (resultText) resultText.textContent = '⚠️ Scanned: ' + text + ' — Please select an event above first!';
             if (resultBox) { resultBox.style.background='#fef2f2'; resultBox.style.color='#dc2626'; }
           }
         }
@@ -294,7 +345,10 @@ function downloadQR() {
   }
 
   function stopScanner() {
-    if (codeReader) { codeReader.reset(); codeReader = null; }
+    if (codeReader) {
+      try { codeReader.reset(); } catch (e) {}
+      codeReader = null;
+    }
     isScanning = false;
     const video       = document.getElementById('qrGlobalVideo');
     const placeholder = document.getElementById('cameraGlobalPlaceholder');
@@ -303,7 +357,13 @@ function downloadQR() {
     const resultBox   = document.getElementById('qrGlobalScanResult');
     const resultText  = document.getElementById('qrGlobalScanText');
 
-    if (video)    { video.style.display='none'; video.srcObject=null; }
+    if (video) {
+      if (video.srcObject && typeof video.srcObject.getTracks === 'function') {
+        video.srcObject.getTracks().forEach(t => t.stop());
+      }
+      video.style.display = 'none';
+      video.srcObject = null;
+    }
     if (placeholder) placeholder.style.setProperty('display', 'flex', 'important');
     if (scanLine) scanLine.style.display='none';
     if (resultBox){ resultBox.style.display='none'; }

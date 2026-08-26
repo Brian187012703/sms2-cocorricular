@@ -22,9 +22,12 @@ runSQL($conn, "CREATE TABLE IF NOT EXISTS users (
     last_name     VARCHAR(100)  NOT NULL,
     password_hash VARCHAR(255)  NOT NULL,
     role          ENUM('admin','student','club_adviser','ssc') NOT NULL DEFAULT 'student',
+    profile_pic   VARCHAR(255)  DEFAULT NULL,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "Create users table", $errors);
+
+$conn->query("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_pic VARCHAR(255) DEFAULT NULL AFTER role");
 
 // Ensure role ENUM is up to date & migrate legacy roles
 $conn->query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','student','club_adviser','ssc') NOT NULL DEFAULT 'student'");
@@ -184,18 +187,21 @@ runSQL($conn, "CREATE TABLE IF NOT EXISTS audit_logs (
 //  10. Students table
 // ============================================================
 runSQL($conn, "CREATE TABLE IF NOT EXISTS students (
-    id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    first_name   VARCHAR(100)  NOT NULL,
-    last_name    VARCHAR(100)  NOT NULL,
-    birthday     DATE          NOT NULL,
-    course       VARCHAR(150)  NOT NULL,
-    year_level   VARCHAR(50)   NOT NULL,
-    section      VARCHAR(50)   NOT NULL,
-    phone        VARCHAR(20)   NOT NULL,
-    status       ENUM('Active','Inactive') NOT NULL DEFAULT 'Active',
-    created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    student_number VARCHAR(50)   DEFAULT NULL,
+    first_name     VARCHAR(100)  NOT NULL,
+    last_name      VARCHAR(100)  NOT NULL,
+    birthday       DATE          NOT NULL,
+    course         VARCHAR(150)  NOT NULL,
+    year_level     VARCHAR(50)   NOT NULL,
+    section        VARCHAR(50)   NOT NULL,
+    phone          VARCHAR(20)   NOT NULL,
+    status         ENUM('Active','Inactive') NOT NULL DEFAULT 'Active',
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "Create students table", $errors);
+
+$conn->query("ALTER TABLE students ADD COLUMN IF NOT EXISTS student_number VARCHAR(50) DEFAULT NULL AFTER id");
 
 // ============================================================
 //  10.1. AI Recommendation Logs table
@@ -257,9 +263,9 @@ if ($user_cnt === 0 || isset($_GET['seed'])) {
 // 2. Seed Students
 $std_cnt = (int)$conn->query("SELECT COUNT(*) AS c FROM students")->fetch_assoc()['c'];
 if ($std_cnt === 0 || isset($_GET['seed'])) {
-    $conn->query("INSERT INTO students (first_name, last_name, birthday, course, year_level, section, phone, status) VALUES
-    ('Juswa', 'Pudaders', '2004-06-20', 'Bachelor of Science in Information Technology', '4th Year', '41018', '09999999999', 'Active'),
-    ('Maria', 'Santos',   '2003-03-15', 'Bachelor of Science in Computer Science',       '3rd Year', '31011', '09111111111', 'Active')");
+    $conn->query("INSERT INTO students (student_number, first_name, last_name, birthday, course, year_level, section, phone, status) VALUES
+    ('2024-10017', 'Juswa', 'Pudaders', '2004-06-20', 'Bachelor of Science in Information Technology', '4th Year', '41018', '09999999999', 'Active'),
+    ('2024-10002', 'Maria', 'Santos',   '2003-03-15', 'Bachelor of Science in Computer Science',       '3rd Year', '31011', '09111111111', 'Active')");
 }
 
 // 3. Seed Accredited Campus Clubs
@@ -355,6 +361,9 @@ if (!is_dir($uploads_dir)) mkdir($uploads_dir, 0755, true);
 
 $apps_dir = __DIR__ . '/../uploads/applications/';
 if (!is_dir($apps_dir)) mkdir($apps_dir, 0755, true);
+
+$avatars_dir = __DIR__ . '/../uploads/avatars/';
+if (!is_dir($avatars_dir)) mkdir($avatars_dir, 0755, true);
 
 $conn->close();
 ?>
