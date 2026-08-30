@@ -307,3 +307,4 @@ INSERT INTO `notifications` (`id`, `user_id`, `title`, `message`, `type`, `is_re
 -- 11. System Audit Logs
 INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `target_table`, `target_id`, `detail`, `ip_address`) VALUES
 (1, 1, 'system_setup', 'users', 1, 'Database schema initialized with core tables and seed data.', '127.0.0.1');
+
