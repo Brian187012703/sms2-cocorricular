@@ -1174,15 +1174,18 @@ foreach ($organizations['independent']['orgs'] as $o) {
           <?php endif; ?>
         <?php endif; ?>
         <!-- Category Filters -->
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px;">
-          <button class="cat-filter-pill active" onclick="filterCat('all',this)"><i class="fa-solid fa-th-large"></i>
-            All Organizations</button>
-          <button class="cat-filter-pill" onclick="filterCat('academic',this)"><i
-              class="fa-solid fa-graduation-cap"></i> Academic</button>
-          <button class="cat-filter-pill" onclick="filterCat('talent',this)"><i class="fa-solid fa-star"></i> Talent
-            &amp; Cultural</button>
-          <button class="cat-filter-pill" onclick="filterCat('independent',this)"><i class="fa-solid fa-seedling"></i>
-            Independent</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:20px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="cat-filter-pill active" onclick="filterCat('all',this)"><i class="fa-solid fa-th-large"></i> All Organizations</button>
+            <button class="cat-filter-pill" onclick="filterCat('academic',this)"><i class="fa-solid fa-graduation-cap"></i> Academic</button>
+            <button class="cat-filter-pill" onclick="filterCat('talent',this)"><i class="fa-solid fa-star"></i> Talent &amp; Cultural</button>
+            <button class="cat-filter-pill" onclick="filterCat('independent',this)"><i class="fa-solid fa-seedling"></i> Independent</button>
+          </div>
+          <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+            <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px;" onclick="openCharterModal()">
+              <i class="fa-solid fa-plus-circle"></i> Charter New Organization
+            </button>
+          <?php endif; ?>
         </div>
 
         <div class="org-directory-wrap" id="orgDirectory">
@@ -1966,10 +1969,78 @@ foreach ($organizations['independent']['orgs'] as $o) {
               alert('Error: ' + data.message);
             }
           })
-          .catch(err => alert('Network error posting announcement.'));
-      }
     <?php endif; ?>
+
+    // -- CHARTER NEW ORGANIZATION (SSC & Admin) ---------------------
+    function openCharterModal() {
+      document.getElementById('charterModalOverlay')?.classList.add('active');
+    }
+    function closeCharterModal() {
+      document.getElementById('charterModalOverlay')?.classList.remove('active');
+    }
+    function handleCharterOrg(e) {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      fd.append('action', 'create_club');
+      fetch('../shared/club_actions.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(res => {
+          if (res.success) {
+            alert(res.message);
+            closeCharterModal();
+            location.reload();
+          } else {
+            alert(res.message || 'Failed to charter organization.');
+          }
+        })
+        .catch(() => alert('Network error.'));
+    }
   </script>
+
+  <!-- CHARTER ORGANIZATION MODAL (SSC / Admin) -->
+  <div class="org-profile-overlay" id="charterModalOverlay">
+    <div class="org-profile-modal" style="max-width:540px;">
+      <div class="opm-hero" style="background:#1a3a8c; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0; font-size:1.1rem; color:#fff; font-weight:800; display:flex; align-items:center; gap:8px;">
+          <i class="fa-solid fa-plus-circle" style="color:#facc15;"></i> Charter New Organization
+        </h3>
+        <button style="background:none; border:none; color:#fff; font-size:1.2rem; cursor:pointer;" onclick="closeCharterModal()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleCharterOrg(event)">
+        <div class="opm-body" style="padding:22px 26px;">
+          <div style="margin-bottom:14px;">
+            <label style="font-size:0.75rem; font-weight:800; color:#475569; display:block; margin-bottom:5px;">Org Acronym / Code <span style="color:#ef4444;">*</span></label>
+            <input type="text" name="code" required placeholder="e.g. JPCS" style="width:100%; padding:9px 12px; border-radius:8px; border:1.5px solid #cbd5e1; font-weight:700;"/>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="font-size:0.75rem; font-weight:800; color:#475569; display:block; margin-bottom:5px;">Organization Name <span style="color:#ef4444;">*</span></label>
+            <input type="text" name="name" required placeholder="e.g. Junior Philippine Computer Society" style="width:100%; padding:9px 12px; border-radius:8px; border:1.5px solid #cbd5e1;"/>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="font-size:0.75rem; font-weight:800; color:#475569; display:block; margin-bottom:5px;">Classification Category <span style="color:#ef4444;">*</span></label>
+            <select name="category" style="width:100%; padding:9px 12px; border-radius:8px; border:1.5px solid #cbd5e1; font-weight:600;">
+              <option value="Academic">Academic Organization (LOC)</option>
+              <option value="Cultural">Talent &amp; Cultural Organization (CTCE)</option>
+              <option value="Advocacy">Advocacy &amp; Civic</option>
+              <option value="Sports">Sports &amp; Athletics</option>
+            </select>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="font-size:0.75rem; font-weight:800; color:#475569; display:block; margin-bottom:5px;">Assigned Faculty Adviser</label>
+            <input type="text" name="adviser_name" placeholder="e.g. Prof. Maria Santos" style="width:100%; padding:9px 12px; border-radius:8px; border:1.5px solid #cbd5e1;"/>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="font-size:0.75rem; font-weight:800; color:#475569; display:block; margin-bottom:5px;">Charter Description &amp; Mission</label>
+            <textarea name="description" rows="3" placeholder="Charter objectives, target student body..." style="width:100%; padding:9px 12px; border-radius:8px; border:1.5px solid #cbd5e1;"></textarea>
+          </div>
+        </div>
+        <div style="padding:14px 26px; border-top:1px solid #f1f5f9; background:#f8fafc; display:flex; justify-content:flex-end; gap:10px; border-radius:0 0 20px 20px;">
+          <button type="button" class="card-btn" style="background:#e2e8f0; color:#475569;" onclick="closeCharterModal()">Cancel</button>
+          <button type="submit" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;"><i class="fa-solid fa-check"></i> Grant Charter Accreditation</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </body>
 
 </html>

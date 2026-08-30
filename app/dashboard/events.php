@@ -21,12 +21,13 @@ $ph_holidays_all = get_ph_holidays(2025) + get_ph_holidays(2026) + get_ph_holida
 
 // -- Fetch events from DB -------------------------------------
 $events = $conn->query(
-    "SELECT e.id, e.title, e.description, e.event_date, e.venue,
-            e.status, e.rejection_note, e.created_by,
-            c.name AS club_name, c.code AS club_code,
-            u.first_name, u.last_name
+    "SELECT e.id, e.club_id, e.event_type, e.title, e.description, e.event_date, e.venue,
+            e.status, e.endorsement_notes, e.rejection_note, e.created_by,
+            COALESCE(c.name, 'BCP Institutional / Campus-Wide') AS club_name,
+            COALESCE(c.code, 'INSTITUTIONAL') AS club_code,
+            u.first_name, u.last_name, u.role AS creator_role
      FROM events e
-     JOIN clubs c ON c.id = e.club_id
+     LEFT JOIN clubs c ON c.id = e.club_id
      LEFT JOIN users u ON u.id = e.created_by
      ORDER BY e.event_date ASC"
 )->fetch_all(MYSQLI_ASSOC);
@@ -41,16 +42,19 @@ if ($sess_role === 'student') {
 }
 
 // -- Calculate event statistics --------------------------------
-$total_approved = 0;
-$total_pending  = 0;
-$total_upcoming = 0;
-$today_str      = date('Y-m-d');
+$total_approved      = 0;
+$total_pending_ssc   = 0;
+$total_pending_admin = 0;
+$total_upcoming      = 0;
+$today_str           = date('Y-m-d');
 
 foreach ($events as $ev) {
     if ($ev['status'] === 'Approved' || $ev['status'] === 'Completed') {
         $total_approved++;
-    } elseif ($ev['status'] === 'Pending OSA' || $ev['status'] === 'Pending SSC') {
-        $total_pending++;
+    } elseif ($ev['status'] === 'Pending SSC' || $ev['status'] === 'Pending OSA') {
+        $total_pending_ssc++;
+    } elseif ($ev['status'] === 'Pending Admin') {
+        $total_pending_admin++;
     }
     if (substr($ev['event_date'], 0, 10) >= $today_str && $ev['status'] !== 'Rejected') {
         $total_upcoming++;
@@ -68,12 +72,13 @@ if ($r_reg) {
 }
 
 $status_badges = [
-    'Approved'    => 'badge-active',
-    'Completed'   => 'badge-info',
-    'Upcoming'    => 'badge-info',
-    'Pending OSA' => 'badge-warning',
-    'Pending SSC' => 'badge-warning',
-    'Rejected'    => 'badge-inactive',
+    'Approved'      => 'badge-active',
+    'Completed'     => 'badge-info',
+    'Upcoming'      => 'badge-info',
+    'Pending SSC'   => 'badge-warning',
+    'Pending OSA'   => 'badge-warning',
+    'Pending Admin' => 'badge-info',
+    'Rejected'      => 'badge-inactive',
 ];
 ?>
 <!DOCTYPE html>
@@ -600,12 +605,17 @@ $status_badges = [
         <div class="info-card">
           <div class="card-label"><i class="fa-solid fa-calendar-check"></i> Approved Events</div>
           <div class="card-amount"><?= $total_approved ?></div>
-          <div class="card-detail">SSC-cleared activities</div>
+          <div class="card-detail">Active on Campus Calendar</div>
         </div>
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-clock"></i> Pending SSC</div>
-          <div class="card-amount"><?= $total_pending ?></div>
-          <div class="card-detail">Awaiting sign-off</div>
+          <div class="card-label"><i class="fa-solid fa-clock"></i> Pending SSC Endorsement</div>
+          <div class="card-amount"><?= $total_pending_ssc ?></div>
+          <div class="card-detail">Awaiting SSC Review</div>
+        </div>
+        <div class="info-card">
+          <div class="card-label"><i class="fa-solid fa-stamp"></i> Pending Admin Approval</div>
+          <div class="card-amount"><?= $total_pending_admin ?></div>
+          <div class="card-detail">Awaiting Final Calendar Clearance</div>
         </div>
       </div><!-- /info-row -->
       <?php endif; ?>
@@ -820,14 +830,26 @@ $status_badges = [
                       <i class="fa-solid fa-users-rectangle"></i> Registrations
                     </button>
                   <?php endif; ?>
-                  <?php if (in_array($sess_role, ['ssc','admin']) && in_array($ev['status'], ['Pending OSA','Pending SSC'])): ?>
-                    <button class="card-btn btn-sm btn-success" onclick="approveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
-                      <i class="fa-solid fa-check"></i> Approve
+                  
+                  <?php /* STAGE 2: SSC Endorsement */ ?>
+                  <?php if (in_array($sess_role, ['ssc', 'admin']) && in_array($ev['status'], ['Pending SSC', 'Pending OSA'])): ?>
+                    <button class="card-btn btn-sm" style="background:#16a34a; color:#fff; font-weight:700;" onclick="endorseEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                      <i class="fa-solid fa-arrow-right"></i> Endorse to Admin
                     </button>
                     <button class="card-btn btn-sm btn-danger" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
                       <i class="fa-solid fa-times"></i> Reject
                     </button>
-                  <?php elseif ($sess_role === 'club_adviser' && in_array($ev['status'], ['Pending OSA','Pending SSC','Rejected'])): ?>
+
+                  <?php /* STAGE 3: Admin Final Calendar Approval */ ?>
+                  <?php elseif (in_array($sess_role, ['admin']) && $ev['status'] === 'Pending Admin'): ?>
+                    <button class="card-btn btn-sm" style="background:#2563eb; color:#fff; font-weight:700;" onclick="adminApproveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                      <i class="fa-solid fa-check"></i> Approve for Calendar
+                    </button>
+                    <button class="card-btn btn-sm btn-danger" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                      <i class="fa-solid fa-times"></i> Reject
+                    </button>
+
+                  <?php elseif ($sess_role === 'club_adviser' && in_array($ev['status'], ['Pending SSC', 'Pending OSA', 'Rejected'])): ?>
                     <button class="card-btn btn-sm" onclick="editEvent(<?= htmlspecialchars(json_encode($ev)) ?>)">
                       <i class="fa-solid fa-edit"></i> Edit
                     </button>
@@ -846,25 +868,37 @@ $status_badges = [
   <div class="footer">Co-Curricular Management System &copy; 2026</div>
 </div>
 
-<!-- ------ CREATE EVENT MODAL (Passed to SSC for Review & Approval) ------ -->
+<!-- ------ CREATE EVENT MODAL (Supports Club & School-Wide Events) ------ -->
 <?php if (in_array($sess_role, ['club_adviser','ssc','admin'])): ?>
 <div class="modal-overlay" id="createEventModal">
   <div class="modal modal-lg" style="max-width:600px; padding:0; overflow:hidden; border-radius:16px;">
     <div class="modal-header" style="background: linear-gradient(135deg, #1e3a8a, #2563eb); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
       <h3 style="margin:0; font-size:1.08rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
-        <i class="fa-solid fa-calendar-plus" style="color:#f59e0b;"></i> Create Event Proposal <span style="font-size:0.75rem; font-weight:500; opacity:0.85;">(SSC Review)</span>
+        <i class="fa-solid fa-calendar-plus" style="color:#f59e0b;"></i> 
+        <span id="createEventModalTitle">Create Event Proposal</span>
       </h3>
       <button class="modal-close" onclick="closeModal('createEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <form id="createEventForm">
       <div class="modal-body" style="padding:24px;">
+        
+        <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+        <div class="form-group" style="margin-bottom:14px;">
+          <label style="font-weight:700; font-size:0.8rem; color:#475569;">Event Scope / Type <span style="color:#ef4444;">*</span></label>
+          <select name="event_type" id="createEventTypeSelect" onchange="toggleEventScopeFields(this.value)" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.85rem; font-weight:600;">
+            <option value="Club">Organization / Club Event</option>
+            <option value="Institutional" <?= ($sess_role === 'ssc') ? 'selected' : '' ?>>School-Wide / Institutional Event (e.g. Foundation Day, Valentine's Day)</option>
+          </select>
+        </div>
+        <?php endif; ?>
+
         <div class="form-group">
           <label>Event Title <span style="color:#ef4444;">*</span></label>
-          <input type="text" name="title" placeholder="e.g. Annual Hackathon & Innovation Summit 2026" required/>
+          <input type="text" name="title" id="createEventTitleInput" placeholder="e.g. BCP Foundation Day Grand Fest / Tech Hackathon" required/>
         </div>
         <div class="form-group">
           <label>Description &amp; Objectives</label>
-          <textarea name="description" rows="3" placeholder="Specify event details, objectives, and schedule..."></textarea>
+          <textarea name="description" rows="3" placeholder="Specify event details, objectives, target attendees, and schedule..."></textarea>
         </div>
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
           <div class="form-group">
@@ -873,7 +907,7 @@ $status_badges = [
           </div>
           <div class="form-group">
             <label>Venue <span style="color:#ef4444;">*</span></label>
-            <input type="text" name="venue" id="createEventVenueInput" placeholder="e.g. Main Auditorium" required onchange="autoCheckModalDate()"/>
+            <input type="text" name="venue" id="createEventVenueInput" placeholder="e.g. Main Gymnasium / Auditorium" required onchange="autoCheckModalDate()"/>
           </div>
         </div>
         <div style="margin-bottom:16px;">
@@ -882,8 +916,8 @@ $status_badges = [
           </button>
           <div id="conflictAuditResult" style="display:none; margin-top:10px; font-size:0.82rem; border-radius:10px; padding:12px 16px; line-height:1.45; box-shadow:0 2px 6px rgba(0,0,0,0.03);"></div>
         </div>
-        <?php if (in_array($sess_role, ['club_adviser','ssc','admin'])): ?>
-        <div class="form-group">
+
+        <div class="form-group" id="hostOrgGroupWrap">
           <label>Host Organization <span style="color:#ef4444;">*</span></label>
           <select name="club_id" id="createEventClubSelect">
             <?php foreach ($clubs as $cl): ?>
@@ -891,11 +925,12 @@ $status_badges = [
             <?php endforeach; ?>
           </select>
         </div>
-        <?php endif; ?>
       </div>
       <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px;">
         <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600;" onclick="closeModal('createEventModal')">Cancel</button>
-        <button type="submit" class="card-btn" id="createEventBtn" style="background:#16a34a; color:#fff; font-weight:700; padding:9px 18px;"><i class="fa-solid fa-paper-plane"></i> Submit to SSC for Approval</button>
+        <button type="submit" class="card-btn" id="createEventBtn" style="background:#16a34a; color:#fff; font-weight:700; padding:9px 18px;">
+          <i class="fa-solid fa-paper-plane"></i> <?= ($sess_role === 'admin') ? 'Create & Publish Event' : (($sess_role === 'ssc') ? 'Endorse Event to Admin' : 'Submit to SSC for Review') ?>
+        </button>
       </div>
     </form>
   </div>
@@ -1560,16 +1595,56 @@ function editEvent(ev) {
   openModal('editEventModal');
 }
 
-// Approve event
-function approveEvent(id, title) {
-  if (!confirm(`Approve event: "${title}"?`)) return;
+// Endorse Event (SSC -> Admin)
+function endorseEvent(id, title) {
+  const notes = prompt(`Endorse event "${title}" to System Admin for final calendar clearance? Optional endorsement notes:`, 'Endorsed by SSC.');
+  if (notes === null) return;
   const fd = new FormData();
-  fd.append('action', 'approve'); fd.append('id', id);
-  fetch('../shared/event_actions.php', { method:'POST', body:fd })
+  fd.append('action', 'ssc_endorse');
+  fd.append('id', id);
+  fd.append('notes', notes);
+  fetch('../shared/event_actions.php', { method: 'POST', body: fd })
     .then(r => r.json()).then(res => {
-      if (res.success) { showToast('Event approved!'); setTimeout(() => location.reload(), 1500); }
+      if (res.success) { showToast('Event endorsed to System Admin!', 'success'); setTimeout(() => location.reload(), 1200); }
       else showToast(res.message, 'error');
-    });
+    }).catch(() => showToast('Network error.', 'error'));
+}
+
+// Admin Final Approve (Admin -> Approved on Calendar)
+function adminApproveEvent(id, title) {
+  if (!confirm(`Grant final clearance and publish "${title}" to the active campus calendar?`)) return;
+  const fd = new FormData();
+  fd.append('action', 'admin_approve');
+  fd.append('id', id);
+  fetch('../shared/event_actions.php', { method: 'POST', body: fd })
+    .then(r => r.json()).then(res => {
+      if (res.success) { showToast('Event approved and posted to campus calendar!', 'success'); setTimeout(() => location.reload(), 1200); }
+      else showToast(res.message, 'error');
+    }).catch(() => showToast('Network error.', 'error'));
+}
+
+// Approve event (generic legacy alias)
+function approveEvent(id, title) {
+  <?php if ($sess_role === 'ssc'): ?>
+    endorseEvent(id, title);
+  <?php else: ?>
+    adminApproveEvent(id, title);
+  <?php endif; ?>
+}
+
+// Toggle Institutional vs Club fields in modal
+function toggleEventScopeFields(val) {
+  const wrap = document.getElementById('hostOrgGroupWrap');
+  const titleInp = document.getElementById('createEventTitleInput');
+  if (wrap) {
+    if (val === 'Institutional') {
+      wrap.style.display = 'none';
+      if (titleInp && !titleInp.value) titleInp.placeholder = 'e.g. BCP Foundation Day 2026 Grand Celebration';
+    } else {
+      wrap.style.display = 'block';
+      if (titleInp && !titleInp.value) titleInp.placeholder = 'e.g. Annual Hackathon & Innovation Summit 2026';
+    }
+  }
 }
 
 // Reject event

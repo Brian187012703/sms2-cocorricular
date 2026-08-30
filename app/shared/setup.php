@@ -87,19 +87,24 @@ runSQL($conn, "CREATE TABLE IF NOT EXISTS event_registrations (
 //  4. Events table
 // ============================================================
 runSQL($conn, "CREATE TABLE IF NOT EXISTS events (
-    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    club_id     INT UNSIGNED NOT NULL,
-    title       VARCHAR(200) NOT NULL,
-    description TEXT,
-    event_date  DATETIME NOT NULL,
-    venue       VARCHAR(150) NOT NULL,
-    status      ENUM('Upcoming','Approved','Completed','Pending SSC','Rejected') NOT NULL DEFAULT 'Pending SSC',
-    created_by  INT UNSIGNED DEFAULT NULL,
-    rejection_note TEXT DEFAULT NULL,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    club_id           INT UNSIGNED DEFAULT NULL,
+    event_type        ENUM('Club','Institutional') NOT NULL DEFAULT 'Club',
+    title             VARCHAR(200) NOT NULL,
+    description       TEXT,
+    event_date        DATETIME NOT NULL,
+    venue             VARCHAR(150) NOT NULL,
+    status            ENUM('Upcoming','Approved','Completed','Pending SSC','Pending Admin','Rejected') NOT NULL DEFAULT 'Pending SSC',
+    created_by        INT UNSIGNED DEFAULT NULL,
+    endorsement_notes TEXT DEFAULT NULL,
+    rejection_note    TEXT DEFAULT NULL,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "Create events table", $errors);
 
-$conn->query("ALTER TABLE events MODIFY COLUMN status ENUM('Upcoming','Approved','Completed','Pending SSC','Rejected') NOT NULL DEFAULT 'Pending SSC'");
+$conn->query("ALTER TABLE events MODIFY COLUMN club_id INT UNSIGNED DEFAULT NULL");
+$conn->query("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type ENUM('Club','Institutional') NOT NULL DEFAULT 'Club' AFTER club_id");
+$conn->query("ALTER TABLE events ADD COLUMN IF NOT EXISTS endorsement_notes TEXT DEFAULT NULL AFTER created_by");
+$conn->query("ALTER TABLE events MODIFY COLUMN status ENUM('Upcoming','Approved','Completed','Pending SSC','Pending Admin','Rejected') NOT NULL DEFAULT 'Pending SSC'");
 $conn->query("UPDATE events SET status='Pending SSC' WHERE status IN ('Pending OSA')");
 
 // ============================================================
