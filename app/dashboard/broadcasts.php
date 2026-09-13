@@ -335,7 +335,7 @@ $mock_messages = [
       </div>
     </div>
 
-    <div class="footer" style="flex-shrink:0;">Co-Curricular Management System &copy; 2026</div>
+    <div class="footer" style="flex-shrink:0;">eLearning Commons &copy; 2026</div>
   </div>
 
   <script src="../js/dashboard.js"></script>

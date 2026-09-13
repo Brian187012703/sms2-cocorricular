@@ -96,6 +96,87 @@ $status_badges = [
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <style>
+  /* ── Event Table Action Buttons ───────────────────────────── */
+  .event-act-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  .event-act-btn {
+    height: 30px;
+    padding: 0 11px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    text-decoration: none;
+    line-height: 1;
+  }
+  .event-act-btn-locate {
+    background: #eef2ff;
+    color: #4f46e5;
+    border-color: #e0e7ff;
+  }
+  .event-act-btn-locate:hover {
+    background: #4f46e5;
+    color: #ffffff;
+    border-color: #4f46e5;
+    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2);
+  }
+  .event-act-btn-details {
+    background: #f1f5f9;
+    color: #334155;
+    border-color: #cbd5e1;
+  }
+  .event-act-btn-details:hover {
+    background: #1e293b;
+    color: #ffffff;
+    border-color: #1e293b;
+    box-shadow: 0 2px 8px rgba(30, 41, 59, 0.2);
+  }
+  .event-act-btn-reg {
+    background: #2563eb;
+    color: #ffffff;
+    border-color: #2563eb;
+  }
+  .event-act-btn-reg:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+  }
+  .event-act-btn-endorse {
+    background: #16a34a;
+    color: #ffffff;
+    border-color: #16a34a;
+  }
+  .event-act-btn-endorse:hover {
+    background: #15803d;
+  }
+  .event-act-btn-reject {
+    background: #dc2626;
+    color: #ffffff;
+    border-color: #dc2626;
+  }
+  .event-act-btn-reject:hover {
+    background: #b91c1c;
+  }
+  .event-act-btn-edit {
+    background: #d97706;
+    color: #ffffff;
+    border-color: #d97706;
+  }
+  .event-act-btn-edit:hover {
+    background: #b45309;
+  }
+
   /* ── AI Event Planner & Schedule Conflict Analyzer ───────── */
   .ai-recommendations-section {
     background: #fff;
@@ -788,7 +869,7 @@ $status_badges = [
               <th>Date & Time</th>
               <th>Venue</th>
               <th>Status</th>
-              <th>Actions</th>
+              <th style="text-align:right; white-space:nowrap; min-width:260px;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -817,40 +898,40 @@ $status_badges = [
               </td>
               <td style="font-size:0.82rem;"><?= htmlspecialchars($ev['venue']) ?></td>
               <td><span class="<?= $status_badges[$ev['status']] ?? 'badge-info' ?>"><?= htmlspecialchars($ev['status']) ?></span></td>
-              <td>
-                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                  <button class="card-btn btn-sm" style="background:#4f46e5; color:#fff;" onclick="locateOnCalendar('<?= $ev_date_str ?>', <?= $ev['id'] ?>)" title="Locate event on Calendar">
+              <td style="text-align:right; white-space:nowrap;">
+                <div class="event-act-group">
+                  <button type="button" class="event-act-btn event-act-btn-locate" onclick="locateOnCalendar('<?= $ev_date_str ?>', <?= $ev['id'] ?>)" title="Locate event on Calendar">
                     <i class="fa-solid fa-location-crosshairs"></i> Locate
                   </button>
-                  <button class="card-btn btn-sm" onclick="viewEvent(<?= htmlspecialchars(json_encode($ev)) ?>)">
+                  <button type="button" class="event-act-btn event-act-btn-details" onclick="viewEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="View Event Details">
                     <i class="fa-solid fa-eye"></i> Details
                   </button>
                   <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-                    <button class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                    <button type="button" class="event-act-btn event-act-btn-reg" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="View Event Registrations">
                       <i class="fa-solid fa-users-rectangle"></i> Registrations
                     </button>
                   <?php endif; ?>
                   
                   <?php /* STAGE 2: SSC Endorsement */ ?>
                   <?php if (in_array($sess_role, ['ssc', 'admin']) && in_array($ev['status'], ['Pending SSC', 'Pending OSA'])): ?>
-                    <button class="card-btn btn-sm" style="background:#16a34a; color:#fff; font-weight:700;" onclick="endorseEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
-                      <i class="fa-solid fa-arrow-right"></i> Endorse to Admin
+                    <button type="button" class="event-act-btn event-act-btn-endorse" onclick="endorseEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Endorse to Admin">
+                      <i class="fa-solid fa-arrow-right"></i> Endorse
                     </button>
-                    <button class="card-btn btn-sm btn-danger" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                    <button type="button" class="event-act-btn event-act-btn-reject" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
                       <i class="fa-solid fa-times"></i> Reject
                     </button>
 
                   <?php /* STAGE 3: Admin Final Calendar Approval */ ?>
                   <?php elseif (in_array($sess_role, ['admin']) && $ev['status'] === 'Pending Admin'): ?>
-                    <button class="card-btn btn-sm" style="background:#2563eb; color:#fff; font-weight:700;" onclick="adminApproveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
-                      <i class="fa-solid fa-check"></i> Approve for Calendar
+                    <button type="button" class="event-act-btn event-act-btn-endorse" onclick="adminApproveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Approve for Calendar">
+                      <i class="fa-solid fa-check"></i> Approve
                     </button>
-                    <button class="card-btn btn-sm btn-danger" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')">
+                    <button type="button" class="event-act-btn event-act-btn-reject" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
                       <i class="fa-solid fa-times"></i> Reject
                     </button>
 
                   <?php elseif ($sess_role === 'club_adviser' && in_array($ev['status'], ['Pending SSC', 'Pending OSA', 'Rejected'])): ?>
-                    <button class="card-btn btn-sm" onclick="editEvent(<?= htmlspecialchars(json_encode($ev)) ?>)">
+                    <button type="button" class="event-act-btn event-act-btn-edit" onclick="editEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="Edit Event Proposal">
                       <i class="fa-solid fa-edit"></i> Edit
                     </button>
                   <?php endif; ?>
@@ -865,7 +946,7 @@ $status_badges = [
 
     </div>
   </div>
-  <div class="footer">Co-Curricular Management System &copy; 2026</div>
+  <div class="footer">eLearning Commons &copy; 2026</div>
 </div>
 
 <!-- ------ CREATE EVENT MODAL (Supports Club & School-Wide Events) ------ -->

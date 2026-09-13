@@ -1,7 +1,7 @@
-<?php
+ï»¿<?php
 // ============================================================
 //  OVERVIEW.PHP  (app/home_tab/)
-//  Home > Overview page — uses the shared sidebar.
+//  Home > Overview page â€” uses the shared sidebar.
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
 session_start();
@@ -27,7 +27,7 @@ $inactive = $total - $active;
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Overview – BCP Co-Curricular Portal</title>
+  <title>Overview â€“ BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
@@ -37,7 +37,7 @@ $inactive = $total - $active;
 <body>
 
 <?php
-// Include shared sidebar — set $APP_ROOT so paths inside resolve correctly
+// Include shared sidebar â€” set $APP_ROOT so paths inside resolve correctly
 $APP_ROOT   = '../';
 $ACTIVE_NAV = 'reports'; // change this depening on the name of your dashboard tab
 require_once __DIR__ . '/../shared/sidebar.php';
@@ -135,7 +135,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
   </div><!-- end content -->
 
-  <div class="footer">Co-Curricular Management System &copy; 2026</div>
+  <div class="footer">eLearning Commons &copy; 2026</div>
 
 </div><!-- end main -->
 
@@ -144,3 +144,4 @@ require_once __DIR__ . '/../shared/sidebar.php';
 </body>
 </html>
 <?php $conn->close(); ?>
+

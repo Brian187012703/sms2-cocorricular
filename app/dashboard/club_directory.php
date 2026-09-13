@@ -224,6 +224,111 @@ foreach ($organizations['independent']['orgs'] as $o) {
       border-color: transparent;
     }
 
+    /* -- Directory Search Box -- */
+    .org-search-box {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      min-width: 260px;
+      flex: 1;
+      max-width: 380px;
+    }
+
+    .org-search-box input {
+      width: 100%;
+      background: #ffffff;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 20px;
+      padding: 7px 34px 7px 36px;
+      font-size: 0.82rem;
+      color: #1e293b;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      outline: none;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .org-search-box input:focus {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .org-search-box .org-search-icon {
+      position: absolute;
+      left: 13px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+      pointer-events: none;
+    }
+
+    .org-search-box .org-search-clear {
+      position: absolute;
+      right: 8px;
+      background: none;
+      border: none;
+      color: #94a3b8;
+      font-size: 0.82rem;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 50%;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s;
+    }
+
+    .org-search-box .org-search-clear:hover {
+      color: #ef4444;
+    }
+
+    /* -- No Results State -- */
+    .org-no-results {
+      display: none;
+      text-align: center;
+      padding: 40px 20px;
+      background: #ffffff;
+      border-radius: 16px;
+      border: 1.5px dashed #cbd5e1;
+      margin-top: 15px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+
+    .org-no-results > i,
+    .org-no-results-icon {
+      font-size: 2.4rem !important;
+      color: #94a3b8;
+      margin-bottom: 12px;
+      display: inline-block;
+    }
+
+    .org-no-results h3 {
+      font-size: 1.1rem;
+      font-weight: 800;
+      color: #1e293b;
+      margin: 0 0 6px;
+    }
+
+    .org-no-results p {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin: 0 0 16px;
+    }
+
+    .org-reset-btn {
+      border-color: #2563eb !important;
+      color: #2563eb !important;
+      background: #eff6ff !important;
+      padding: 6px 16px !important;
+      font-size: 0.8rem !important;
+      gap: 6px !important;
+    }
+
+    .org-reset-btn i {
+      font-size: 0.8rem !important;
+      margin-bottom: 0 !important;
+      color: inherit !important;
+    }
+
     /* -- Org Profile Modal -- */
     .org-profile-overlay {
       position: fixed;
@@ -1173,19 +1278,26 @@ foreach ($organizations['independent']['orgs'] as $o) {
             </div>
           <?php endif; ?>
         <?php endif; ?>
-        <!-- Category Filters -->
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:20px;">
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="cat-filter-pill active" onclick="filterCat('all',this)"><i class="fa-solid fa-th-large"></i> All Organizations</button>
-            <button class="cat-filter-pill" onclick="filterCat('academic',this)"><i class="fa-solid fa-graduation-cap"></i> Academic</button>
-            <button class="cat-filter-pill" onclick="filterCat('talent',this)"><i class="fa-solid fa-star"></i> Talent &amp; Cultural</button>
-            <button class="cat-filter-pill" onclick="filterCat('independent',this)"><i class="fa-solid fa-seedling"></i> Independent</button>
+        <!-- Category Filters & Live Search -->
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:20px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="cat-filter-pill active" onclick="filterCat('all',this)"><i class="fa-solid fa-th-large"></i> All Organizations</button>
+            <button type="button" class="cat-filter-pill" onclick="filterCat('academic',this)"><i class="fa-solid fa-graduation-cap"></i> Academic</button>
+            <button type="button" class="cat-filter-pill" onclick="filterCat('talent',this)"><i class="fa-solid fa-star"></i> Talent &amp; Cultural</button>
+            <button type="button" class="cat-filter-pill" onclick="filterCat('independent',this)"><i class="fa-solid fa-seedling"></i> Independent</button>
           </div>
-          <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
-            <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px;" onclick="openCharterModal()">
-              <i class="fa-solid fa-plus-circle"></i> Charter New Organization
-            </button>
-          <?php endif; ?>
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex:1; justify-content:flex-end;">
+            <div class="org-search-box">
+              <i class="fa-solid fa-magnifying-glass org-search-icon"></i>
+              <input type="text" id="orgSearchInput" placeholder="Search organization by name or acronym..." oninput="handleOrgSearch(this.value)" autocomplete="off" />
+              <button type="button" class="org-search-clear" id="clearOrgSearchBtn" onclick="clearOrgSearch()" title="Clear search"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+              <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px; white-space:nowrap;" onclick="openCharterModal()">
+                <i class="fa-solid fa-plus-circle"></i> Charter New Organization
+              </button>
+            <?php endif; ?>
+          </div>
         </div>
 
         <div class="org-directory-wrap" id="orgDirectory">
@@ -1311,10 +1423,20 @@ foreach ($organizations['independent']['orgs'] as $o) {
             </div>
           </div>
 
+          <!-- Empty State when no org matches search / filter -->
+          <div class="org-no-results" id="orgNoResults">
+            <i class="fa-solid fa-magnifying-glass org-no-results-icon"></i>
+            <h3>No Organizations Found</h3>
+            <p>We couldn't find any organization matching your search or category criteria.</p>
+            <button type="button" class="cat-filter-pill org-reset-btn" onclick="resetAllFilters()">
+              <i class="fa-solid fa-rotate-left"></i> Reset Search &amp; Filters
+            </button>
+          </div>
+
         </div><!-- end #orgDirectory -->
       </div>
     </div>
-    <div class="footer">Co-Curricular Management System &copy; 2026</div>
+    <div class="footer">eLearning Commons &copy; 2026</div>
   </div>
 
   <!-- ----------------------------------------------------------
@@ -1473,22 +1595,90 @@ foreach ($organizations['independent']['orgs'] as $o) {
     let currentOrg = null; // { acronym, ...data }
 
     // -- CATEGORY & SEARCH FILTERS ---------------------------------
+    let currentCategory = 'all';
+    let currentSearchQuery = '';
+
+    function filterDirectory() {
+      const q = currentSearchQuery.toLowerCase().trim();
+      const cat = currentCategory;
+      let totalVisible = 0;
+
+      document.querySelectorAll('.org-category-section').forEach(section => {
+        const sectionCat = section.dataset.category;
+        const matchesCategory = (cat === 'all' || sectionCat === cat);
+
+        if (!matchesCategory) {
+          section.style.display = 'none';
+          return;
+        }
+
+        let sectionVisibleCount = 0;
+        section.querySelectorAll('.org-subcategory').forEach(sub => {
+          let subVisibleCount = 0;
+          sub.querySelectorAll('.org-card').forEach(card => {
+            const name = (card.dataset.name || '').toLowerCase();
+            const matchesQuery = (!q || name.includes(q));
+
+            if (matchesQuery) {
+              card.style.display = '';
+              subVisibleCount++;
+              sectionVisibleCount++;
+              totalVisible++;
+            } else {
+              card.style.display = 'none';
+            }
+          });
+
+          sub.style.display = subVisibleCount > 0 ? '' : 'none';
+        });
+
+        section.style.display = sectionVisibleCount > 0 ? '' : 'none';
+      });
+
+      const noRes = document.getElementById('orgNoResults');
+      if (noRes) {
+        noRes.style.display = totalVisible === 0 ? 'block' : 'none';
+      }
+    }
+
     function filterCat(cat, btn) {
+      currentCategory = cat;
       document.querySelectorAll('.cat-filter-pill').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.org-category-section').forEach(s => {
-        s.style.display = (cat === 'all' || s.dataset.category === cat) ? '' : 'none';
-      });
+      if (btn) btn.classList.add('active');
+      filterDirectory();
     }
-    function filterOrgs(q) {
-      q = q.toLowerCase().trim();
-      document.querySelectorAll('.org-card').forEach(c => {
-        c.style.display = (!q || c.dataset.name.includes(q)) ? '' : 'none';
-      });
-      document.querySelectorAll('.org-category-section').forEach(s => {
-        s.style.display = [...s.querySelectorAll('.org-card')].some(c => c.style.display !== 'none') ? '' : 'none';
-      });
+    window.filterCat = filterCat;
+
+    function handleOrgSearch(val) {
+      currentSearchQuery = val || '';
+      const clearBtn = document.getElementById('clearOrgSearchBtn');
+      if (clearBtn) {
+        clearBtn.style.display = currentSearchQuery.trim().length > 0 ? 'inline-flex' : 'none';
+      }
+      filterDirectory();
     }
+    window.handleOrgSearch = handleOrgSearch;
+
+    function clearOrgSearch() {
+      const input = document.getElementById('orgSearchInput');
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+      handleOrgSearch('');
+    }
+    window.clearOrgSearch = clearOrgSearch;
+
+    function resetAllFilters() {
+      const allBtn = document.querySelector('.cat-filter-pill');
+      currentCategory = 'all';
+      if (allBtn) {
+        document.querySelectorAll('.cat-filter-pill').forEach(p => p.classList.remove('active'));
+        allBtn.classList.add('active');
+      }
+      clearOrgSearch();
+    }
+    window.resetAllFilters = resetAllFilters;
 
     // -- OPEN ORG PROFILE MODAL ------------------------------------
     function openOrgProfile(acronym) {
@@ -1948,28 +2138,31 @@ foreach ($organizations['independent']['orgs'] as $o) {
         document.getElementById(tab === 'myqr' ? 'tabMyQr' : 'tabScan').classList.add('active');
         document.getElementById(tab === 'myqr' ? 'panelMyQr' : 'panelScan').classList.add('active');
       }
-      function openBroadcastModal(clubId, orgName) {
-        const title = prompt(`Post Official Announcement for ${orgName}:\nTitle:`);
-        if (!title) return;
-        const message = prompt(`Announcement Details / Content:`);
-        if (!message) return;
-
-        const formData = new FormData();
-        formData.append('action', 'broadcast');
-        formData.append('club_id', clubId);
-        formData.append('title', title);
-        formData.append('message', message);
-
-        fetch('../shared/notification_actions.php', { method: 'POST', body: formData })
-          .then(res => res.json())
-          .then(data => {
-            if (data.success) {
-              alert('? Announcement successfully posted to active organization members!');
-            } else {
-              alert('Error: ' + data.message);
-            }
-          })
     <?php endif; ?>
+
+    function openBroadcastModal(clubId, orgName) {
+      const title = prompt(`Post Official Announcement for ${orgName}:\nTitle:`);
+      if (!title) return;
+      const message = prompt(`Announcement Details / Content:`);
+      if (!message) return;
+
+      const formData = new FormData();
+      formData.append('action', 'broadcast');
+      formData.append('club_id', clubId);
+      formData.append('title', title);
+      formData.append('message', message);
+
+      fetch('../shared/notification_actions.php', { method: 'POST', body: formData })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            alert('Announcement successfully posted to active organization members!');
+          } else {
+            alert('Error: ' + data.message);
+          }
+        })
+        .catch(() => alert('Network error.'));
+    }
 
     // -- CHARTER NEW ORGANIZATION (SSC & Admin) ---------------------
     function openCharterModal() {

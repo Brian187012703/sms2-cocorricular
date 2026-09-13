@@ -23,7 +23,7 @@
         pageSize: 5,
         pageSizeOptions: [5, 10, 25, 50, 0], // 0 means 'All'
         showPageSizeSelector: true,
-        showInfo: true,
+        showInfo: false,
         showTopBar: false,
         showBottomBar: true,
         searchFilterSelector: null,
@@ -51,8 +51,11 @@
       this.toolbar.className = 'pagination-toolbar';
       
       // Info section (left)
-      this.infoEl = document.createElement('div');
-      this.infoEl.className = 'pagination-info';
+      if (this.options.showInfo) {
+        this.infoEl = document.createElement('div');
+        this.infoEl.className = 'pagination-info';
+        this.toolbar.appendChild(this.infoEl);
+      }
       
       // Controls section (right)
       this.controlsEl = document.createElement('div');
@@ -85,7 +88,6 @@
       this.buttonsEl.className = 'pagination-buttons';
       this.controlsEl.appendChild(this.buttonsEl);
 
-      this.toolbar.appendChild(this.infoEl);
       this.toolbar.appendChild(this.controlsEl);
 
       // Insert toolbar after responsive container
@@ -113,9 +115,9 @@
       if (!tbody) return [];
       // Get all non-empty / non-notice rows
       return Array.from(tbody.querySelectorAll('tr')).filter(tr => {
-        // Exclude system empty placeholders if they span all cols
+        // Exclude system empty placeholders if they span 3+ cols
         const singleTd = tr.querySelector('td[colspan]');
-        return !(singleTd && singleTd.getAttribute('colspan') >= 4 && tr.classList.contains('no-paginate'));
+        return !(singleTd && parseInt(singleTd.getAttribute('colspan') || '1', 10) >= 3);
       });
     }
 
@@ -134,6 +136,12 @@
       });
 
       const totalEntries = visibleRows.length;
+      if (totalEntries === 0) {
+        this.toolbar.style.display = 'none';
+        return;
+      }
+      this.toolbar.style.display = 'flex';
+
       const effectivePageSize = this.pageSize === 0 ? totalEntries : this.pageSize;
       const totalPages = Math.max(1, Math.ceil(totalEntries / (effectivePageSize || 1)));
 
@@ -153,9 +161,7 @@
       });
 
       // Update info text
-      if (totalEntries === 0) {
-        this.infoEl.innerHTML = `Showing <strong>0</strong> to <strong>0</strong> of <strong>0</strong> entries`;
-      } else {
+      if (this.options.showInfo && this.infoEl) {
         this.infoEl.innerHTML = `Showing <strong>${startIndex + 1}</strong> to <strong>${endIndex}</strong> of <strong>${totalEntries}</strong> entries`;
       }
 
@@ -165,18 +171,14 @@
 
     renderButtons(totalPages) {
       this.buttonsEl.innerHTML = '';
-      if (totalPages <= 1 && this.pageSize !== 0) {
-        this.buttonsEl.style.display = 'none';
-        return;
-      }
-      this.buttonsEl.style.display = 'flex';
+      this.buttonsEl.style.display = 'inline-flex';
 
       // Prev Button
       const prevBtn = document.createElement('button');
       prevBtn.type = 'button';
-      prevBtn.className = `pagination-btn prev-btn ${this.currentPage === 1 ? 'disabled' : ''}`;
-      prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i> <span>Prev</span>';
-      prevBtn.disabled = (this.currentPage === 1);
+      prevBtn.className = `pagination-btn prev-btn ${this.currentPage <= 1 ? 'disabled' : ''}`;
+      prevBtn.innerHTML = '&laquo; Previous';
+      prevBtn.disabled = (this.currentPage <= 1);
       prevBtn.addEventListener('click', () => {
         if (this.currentPage > 1) {
           this.currentPage--;
@@ -209,9 +211,9 @@
       // Next Button
       const nextBtn = document.createElement('button');
       nextBtn.type = 'button';
-      nextBtn.className = `pagination-btn next-btn ${this.currentPage === totalPages ? 'disabled' : ''}`;
-      nextBtn.innerHTML = '<span>Next</span> <i class="fa-solid fa-chevron-right"></i>';
-      nextBtn.disabled = (this.currentPage === totalPages);
+      nextBtn.className = `pagination-btn next-btn ${this.currentPage >= totalPages ? 'disabled' : ''}`;
+      nextBtn.innerHTML = 'Next &raquo;';
+      nextBtn.disabled = (this.currentPage >= totalPages);
       nextBtn.addEventListener('click', () => {
         if (this.currentPage < totalPages) {
           this.currentPage++;
@@ -245,16 +247,21 @@
     return new TablePaginator(tableOrSelector, options);
   };
 
-  // Auto-init tables on DOM ready
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('table.data-table, table.ledger-table, table.resp-table').forEach(tbl => {
-      // Don't auto-paginate tiny static/meta tables or report printouts
-      if (tbl.closest('.modal') && !tbl.id) return;
+  function autoInit() {
+    document.querySelectorAll('table.data-table, table.ledger-table, table.resp-table, table.matrix-table').forEach(tbl => {
+      // Don't auto-paginate modal tables without explicit id or meta tables
+      if (tbl.closest('.modal-card') || tbl.closest('.modal-overlay')) return;
       if (tbl.classList.contains('meta-table') || tbl.classList.contains('no-auto-paginate')) return;
       if (!tbl._paginator) {
         window.initTablePagination(tbl, { pageSize: 5 });
       }
     });
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoInit);
+  } else {
+    autoInit();
+  }
 
 })();

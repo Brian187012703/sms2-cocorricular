@@ -288,7 +288,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
     </div><!-- end content-body -->
   </div><!-- end content -->
 
-  <div class="footer">Co-Curricular Management System &copy; 2026</div>
+  <div class="footer">eLearning Commons &copy; 2026</div>
 </div><!-- end main -->
 
 <script src="../js/dashboard.js?v=<?= filemtime(__DIR__ . '/../js/dashboard.js') ?>"></script>

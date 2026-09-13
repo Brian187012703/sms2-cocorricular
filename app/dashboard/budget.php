@@ -80,20 +80,27 @@ foreach ($budget_requests as $req) {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Budget &amp; Finance Management — BCP Co-Curricular Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <meta name="loader-logo" content="../images/BCP_LOGO.png"/>
   <script src="../js/page-loader.js"></script>
   <style>
-    /* Clean, Modern Professional Budget UI (Solid Palette - No Gradients) */
+    /* Clean, Modern Professional Budget UI */
+    body, input, button, select, textarea {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
     .budget-section-card {
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 16px;
       padding: 22px 24px;
       margin-bottom: 24px;
-      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
     }
     
     /* 3-Stage Pipeline Stepper */
@@ -106,11 +113,11 @@ foreach ($budget_requests as $req) {
       border-bottom: 1px solid #f1f5f9;
     }
     .wf-stepper-title {
-      font-size: 0.85rem;
-      font-weight: 800;
+      font-size: 0.82rem;
+      font-weight: 700;
       color: #1a3a8c;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.05em;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -123,19 +130,19 @@ foreach ($budget_requests as $req) {
     }
     .wf-card {
       background: #f8fafc;
-      border: 1.5px solid #e2e8f0;
+      border: 1px solid #e2e8f0;
       border-radius: 12px;
-      padding: 16px;
+      padding: 16px 18px;
       display: flex;
       align-items: flex-start;
-      gap: 12px;
+      gap: 14px;
       transition: all 0.2s ease;
       position: relative;
     }
     .wf-card.active {
       background: #eff6ff;
       border-color: #93c5fd;
-      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08);
     }
     .wf-card.done {
       background: #f0fdf4;
@@ -148,7 +155,7 @@ foreach ($budget_requests as $req) {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       flex-shrink: 0;
       background: #e2e8f0;
       color: #64748b;
@@ -164,14 +171,15 @@ foreach ($budget_requests as $req) {
     }
     .wf-info {
       flex: 1;
+      min-width: 0;
     }
     .wf-stage-tag {
       font-size: 0.68rem;
-      font-weight: 800;
+      font-weight: 700;
       color: #64748b;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      margin-bottom: 2px;
+      margin-bottom: 3px;
     }
     .wf-card.active .wf-stage-tag {
       color: #2563eb;
@@ -180,16 +188,16 @@ foreach ($budget_requests as $req) {
       color: #16a34a;
     }
     .wf-name {
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       font-weight: 700;
       color: #0f172a;
-      line-height: 1.3;
-      margin-bottom: 3px;
+      line-height: 1.35;
+      margin-bottom: 4px;
     }
     .wf-desc {
-      font-size: 0.75rem;
+      font-size: 0.76rem;
       color: #64748b;
-      line-height: 1.35;
+      line-height: 1.4;
     }
 
     /* KPI Metrics Grid */
@@ -203,57 +211,78 @@ foreach ($budget_requests as $req) {
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 14px;
-      padding: 18px 20px;
+      padding: 20px 22px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.02);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      position: relative;
     }
     .kpi-box:hover {
       transform: translateY(-2px);
-      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+      box-shadow: 0 10px 24px -4px rgba(15, 23, 42, 0.08), 0 6px 12px -4px rgba(15, 23, 42, 0.03);
       border-color: #cbd5e1;
     }
     .kpi-top {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     .kpi-label {
-      font-size: 0.72rem;
-      font-weight: 800;
+      font-size: 0.74rem;
+      font-weight: 700;
       color: #64748b;
       text-transform: uppercase;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.05em;
     }
     .kpi-icon-wrap {
-      width: 36px;
-      height: 36px;
+      width: 38px;
+      height: 38px;
       border-radius: 10px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1rem;
+      font-size: 0.95rem;
+      flex-shrink: 0;
     }
-    .kpi-icon-blue    { background: #eff6ff; color: #1a3a8c; }
+    .kpi-icon-blue    { background: #eff6ff; color: #2563eb; }
     .kpi-icon-amber   { background: #fffbeb; color: #d97706; }
     .kpi-icon-green   { background: #f0fdf4; color: #16a34a; }
     .kpi-icon-red     { background: #fef2f2; color: #dc2626; }
     
     .kpi-num {
-      font-size: 1.65rem;
-      font-weight: 800;
+      font-size: 1.75rem;
+      font-weight: 700;
       color: #0f172a;
-      line-height: 1.1;
+      line-height: 1.2;
       letter-spacing: -0.02em;
+      font-feature-settings: "tnum";
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: baseline;
+      gap: 2px;
+      margin: 4px 0 2px;
+    }
+    .kpi-currency {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: #475569;
+      margin-right: 1px;
     }
     .kpi-subtext {
-      font-size: 0.72rem;
-      color: #94a3b8;
-      font-weight: 600;
-      margin-top: 6px;
+      font-size: 0.78rem;
+      color: #64748b;
+      font-weight: 500;
+      margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .kpi-subtext i {
+      font-size: 0.75rem;
+      opacity: 0.75;
     }
 
     /* Ledger Table & Toolbar */
@@ -262,10 +291,10 @@ foreach ($budget_requests as $req) {
       border: 1px solid #e2e8f0;
       border-radius: 16px;
       overflow: hidden;
-      box-shadow: 0 2px 12px rgba(15, 23, 42, 0.04);
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 2px 8px rgba(15, 23, 42, 0.02);
     }
     .ledger-header {
-      padding: 18px 24px;
+      padding: 20px 24px;
       background: #ffffff;
       border-bottom: 1px solid #e2e8f0;
       display: flex;
@@ -274,146 +303,241 @@ foreach ($budget_requests as $req) {
       flex-wrap: wrap;
       gap: 16px;
     }
+    .ledger-title-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .ledger-title-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1a3a8c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.05rem;
+      flex-shrink: 0;
+    }
     .ledger-title h3 {
       margin: 0;
       font-size: 1.1rem;
-      font-weight: 800;
+      font-weight: 700;
       color: #0f172a;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      letter-spacing: -0.01em;
+      line-height: 1.3;
     }
     .ledger-title p {
-      margin: 3px 0 0;
-      font-size: 0.8rem;
+      margin: 2px 0 0;
+      font-size: 0.82rem;
       color: #64748b;
+      line-height: 1.4;
     }
     .ledger-actions-bar {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       flex-wrap: wrap;
     }
     .search-input-wrap {
       position: relative;
-      min-width: 240px;
+      min-width: 250px;
     }
     .search-input-wrap i {
       position: absolute;
-      left: 12px;
+      left: 13px;
       top: 50%;
       transform: translateY(-50%);
       color: #94a3b8;
       font-size: 0.85rem;
+      pointer-events: none;
     }
     .search-input-wrap input {
       width: 100%;
-      padding: 8px 12px 8px 34px;
-      font-size: 0.85rem;
-      border: 1.5px solid #cbd5e1;
+      height: 38px;
+      padding: 0 14px 0 36px;
+      font-size: 0.84rem;
+      font-weight: 500;
+      color: #1e293b;
+      border: 1px solid #cbd5e1;
       border-radius: 8px;
-      background: #f8fafc;
-      transition: all 0.2s;
+      background: #ffffff;
+      transition: all 0.2s ease;
+    }
+    .search-input-wrap input::placeholder {
+      color: #94a3b8;
+      font-weight: 400;
     }
     .search-input-wrap input:focus {
       outline: none;
-      background: #ffffff;
       border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+    
+    .filter-select-wrap {
+      position: relative;
+      display: inline-block;
     }
     .filter-select {
-      padding: 8px 12px;
-      font-size: 0.85rem;
+      height: 38px;
+      padding: 0 34px 0 13px;
+      font-size: 0.84rem;
       font-weight: 600;
-      border: 1.5px solid #cbd5e1;
+      border: 1px solid #cbd5e1;
       border-radius: 8px;
-      background: #f8fafc;
+      background: #ffffff;
       color: #334155;
       cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      transition: all 0.2s ease;
+    }
+    .filter-select-wrap::after {
+      content: "\f078";
+      font-family: "Font Awesome 6 Free";
+      font-weight: 900;
+      font-size: 0.65rem;
+      color: #64748b;
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
     }
     .filter-select:focus {
       outline: none;
       border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
     }
 
     .btn-create-req {
+      height: 38px;
       background: #1a3a8c;
       color: #ffffff;
-      font-weight: 700;
-      font-size: 0.85rem;
-      padding: 8px 18px;
+      font-weight: 600;
+      font-size: 0.84rem;
+      padding: 0 16px;
       border-radius: 8px;
       border: none;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 7px;
-      transition: background 0.15s ease, transform 0.15s ease;
+      gap: 8px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      transition: all 0.18s ease;
+      white-space: nowrap;
     }
     .btn-create-req:hover {
       background: #2563eb;
       transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
     }
 
     /* Table & Rows */
+    .ledger-table-wrap {
+      overflow-x: auto;
+      width: 100%;
+    }
     .ledger-table {
       width: 100%;
       border-collapse: collapse;
       text-align: left;
-      font-size: 0.88rem;
     }
     .ledger-table thead tr {
       background: #f8fafc;
       border-bottom: 1px solid #e2e8f0;
-      color: #475569;
-      font-size: 0.75rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
     }
     .ledger-table th {
-      padding: 14px 18px;
-      font-weight: 800;
+      padding: 13px 20px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
     }
     .ledger-table tbody tr {
       border-bottom: 1px solid #f1f5f9;
       transition: background 0.15s ease;
     }
+    .ledger-table tbody tr:last-child {
+      border-bottom: none;
+    }
     .ledger-table tbody tr:hover {
       background: #f8fafc;
     }
     .ledger-table td {
-      padding: 15px 18px;
+      padding: 14px 20px;
       vertical-align: middle;
-      color: #1e293b;
+      color: #334155;
+      font-size: 0.85rem;
+    }
+
+    .empty-state-cell {
+      text-align: center;
+      padding: 56px 24px !important;
+    }
+    .empty-state-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: #f1f5f9;
+      color: #94a3b8;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 14px;
+      font-size: 1.4rem;
+    }
+    .empty-state-title {
+      margin: 0 0 5px;
+      color: #334155;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .empty-state-desc {
+      margin: 0;
+      font-size: 0.82rem;
+      color: #64748b;
+      max-width: 360px;
+      margin: 0 auto;
+      line-height: 1.4;
     }
 
     .org-code-chip {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      background: #1a3a8c;
-      color: #ffffff;
-      font-size: 0.65rem;
-      font-weight: 800;
-      padding: 3px 7px;
+      background: #e0e7ff;
+      color: #1e40af;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 2px 7px;
       border-radius: 6px;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.02em;
       margin-bottom: 3px;
     }
     .org-name-text {
-      font-weight: 700;
+      font-weight: 600;
       color: #0f172a;
       font-size: 0.88rem;
+      line-height: 1.3;
     }
     .requester-meta {
-      font-size: 0.74rem;
+      font-size: 0.75rem;
       color: #64748b;
-      margin-top: 1px;
+      margin-top: 2px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
     .req-title-text {
-      font-weight: 700;
+      font-weight: 600;
       color: #0f172a;
-      font-size: 0.92rem;
+      font-size: 0.9rem;
+      line-height: 1.35;
       margin-bottom: 2px;
     }
     .req-desc-excerpt {
@@ -423,30 +547,33 @@ foreach ($budget_requests as $req) {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      line-height: 1.3;
     }
     .req-amount-val {
-      font-size: 1.05rem;
-      font-weight: 800;
+      font-size: 0.98rem;
+      font-weight: 700;
       color: #0f172a;
       white-space: nowrap;
+      font-feature-settings: "tnum";
+      font-variant-numeric: tabular-nums;
     }
 
     /* Status Badges */
     .status-pill {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       padding: 4px 10px;
       border-radius: 20px;
       font-size: 0.72rem;
-      font-weight: 700;
+      font-weight: 600;
       white-space: nowrap;
     }
-    .status-pill-adviser { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
-    .status-pill-ssc     { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
-    .status-pill-admin   { background: #fce7f3; color: #9d174d; border: 1px solid #fbcfe8; }
-    .status-pill-disbursed { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-    .status-pill-rejected  { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .status-pill-adviser { background: #fffbeb; color: #b45309; border: 1px solid #fef3c7; }
+    .status-pill-ssc     { background: #f5f3ff; color: #6d28d9; border: 1px solid #ede9fe; }
+    .status-pill-admin   { background: #fdf2f8; color: #be185d; border: 1px solid #fce7f3; }
+    .status-pill-disbursed { background: #f0fdf4; color: #15803d; border: 1px solid #dcfce7; }
+    .status-pill-rejected  { background: #fef2f2; color: #b91c1c; border: 1px solid #fee2e2; }
 
     /* Action Buttons */
     .action-btn-group {
@@ -456,9 +583,10 @@ foreach ($budget_requests as $req) {
       gap: 6px;
     }
     .act-btn {
-      padding: 6px 12px;
+      height: 32px;
+      padding: 0 11px;
       font-size: 0.75rem;
-      font-weight: 700;
+      font-weight: 600;
       border-radius: 7px;
       border: none;
       cursor: pointer;
@@ -535,7 +663,7 @@ foreach ($budget_requests as $req) {
     .modal-header-solid h3 {
       margin: 0;
       font-size: 1.05rem;
-      font-weight: 800;
+      font-weight: 700;
       color: #ffffff;
       display: flex;
       align-items: center;
@@ -573,8 +701,8 @@ foreach ($budget_requests as $req) {
     }
     .form-group-custom label {
       display: block;
-      font-size: 0.82rem;
-      font-weight: 700;
+      font-size: 0.78rem;
+      font-weight: 600;
       color: #334155;
       margin-bottom: 6px;
       text-transform: uppercase;
@@ -582,9 +710,10 @@ foreach ($budget_requests as $req) {
     }
     .form-control-custom {
       width: 100%;
-      padding: 10px 14px;
-      font-size: 0.9rem;
-      border: 1.5px solid #cbd5e1;
+      padding: 9px 13px;
+      font-size: 0.88rem;
+      font-weight: 500;
+      border: 1px solid #cbd5e1;
       border-radius: 8px;
       background: #ffffff;
       color: #0f172a;
@@ -605,15 +734,15 @@ foreach ($budget_requests as $req) {
     .currency-prefix {
       position: absolute;
       left: 14px;
-      font-weight: 800;
+      font-weight: 700;
       color: #64748b;
-      font-size: 1rem;
+      font-size: 0.95rem;
       pointer-events: none;
     }
     .currency-input-wrap input {
       padding-left: 32px !important;
-      font-weight: 700;
-      font-size: 1rem;
+      font-weight: 600;
+      font-size: 0.95rem;
     }
 
     @media (max-width: 992px) {
@@ -664,7 +793,7 @@ foreach ($budget_requests as $req) {
               <span class="kpi-label">Total Requested</span>
               <div class="kpi-icon-wrap kpi-icon-blue"><i class="fa-solid fa-coins"></i></div>
             </div>
-            <div class="kpi-num">&#8369;<?= number_format($total_requested, 2) ?></div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($total_requested, 2) ?></div>
             <div class="kpi-subtext"><i class="fa-solid fa-file-invoice"></i> All submitted requisitions</div>
           </div>
 
@@ -684,7 +813,7 @@ foreach ($budget_requests as $req) {
               <span class="kpi-label">Total Disbursed</span>
               <div class="kpi-icon-wrap kpi-icon-green"><i class="fa-solid fa-circle-check"></i></div>
             </div>
-            <div class="kpi-num">&#8369;<?= number_format($disbursed_total, 2) ?></div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($disbursed_total, 2) ?></div>
             <div class="kpi-subtext"><i class="fa-solid fa-hand-holding-dollar"></i> Successfully released funds</div>
           </div>
 
@@ -703,8 +832,13 @@ foreach ($budget_requests as $req) {
         <div class="ledger-container">
           <div class="ledger-header">
             <div class="ledger-title">
-              <h3><i class="fa-solid fa-receipt" style="color:#1a3a8c;"></i> Requisitions &amp; Disbursals Ledger</h3>
-              <p>Real-time audit log of all organizational budget allocations and disbursements.</p>
+              <div class="ledger-title-row">
+                <div class="ledger-title-icon"><i class="fa-solid fa-receipt"></i></div>
+                <div>
+                  <h3>Requisitions &amp; Disbursals Ledger</h3>
+                  <p>Real-time audit log of all organizational budget allocations and disbursements.</p>
+                </div>
+              </div>
             </div>
             
             <div class="ledger-actions-bar">
@@ -715,14 +849,16 @@ foreach ($budget_requests as $req) {
               </div>
 
               <!-- Status Filter Dropdown -->
-              <select class="filter-select" id="budgetStatusFilter" onchange="filterLedgerTable()">
-                <option value="ALL">All Statuses</option>
-                <option value="Pending Adviser">Stage 1: Pending Adviser</option>
-                <option value="Pending SSC">Stage 2: Pending SSC</option>
-                <option value="Pending Admin">Stage 3: Pending Admin</option>
-                <option value="Disbursed">Disbursed (Released)</option>
-                <option value="Rejected">Rejected</option>
-              </select>
+              <div class="filter-select-wrap">
+                <select class="filter-select" id="budgetStatusFilter" onchange="filterLedgerTable()">
+                  <option value="ALL">All Statuses</option>
+                  <option value="Pending Adviser">Stage 1: Pending Adviser</option>
+                  <option value="Pending SSC">Stage 2: Pending SSC</option>
+                  <option value="Pending Admin">Stage 3: Pending Admin</option>
+                  <option value="Disbursed">Disbursed (Released)</option>
+                  <option value="Rejected">Rejected</option>
+                </select>
+              </div>
 
               <?php if (in_array($sess_role, ['student', 'club_adviser', 'admin'])): ?>
               <button class="btn-create-req" onclick="openNewRequestModal()">
@@ -733,7 +869,7 @@ foreach ($budget_requests as $req) {
           </div>
 
           <!-- Responsive Table -->
-          <div style="overflow-x:auto;">
+          <div class="ledger-table-wrap">
             <table class="ledger-table" id="budgetLedgerTable">
               <thead>
                 <tr>
@@ -749,12 +885,12 @@ foreach ($budget_requests as $req) {
               <tbody id="budgetTableBody">
                 <?php if (empty($budget_requests)): ?>
                   <tr id="emptyRow">
-                    <td colspan="7" style="text-align:center; padding:50px 20px; color:#94a3b8;">
-                      <div style="width:56px; height:56px; border-radius:50%; background:#f1f5f9; color:#94a3b8; display:flex; align-items:center; justify-content:center; margin:0 auto 12px; font-size:1.5rem;">
+                    <td colspan="7" class="empty-state-cell">
+                      <div class="empty-state-icon">
                         <i class="fa-solid fa-folder-open"></i>
                       </div>
-                      <h4 style="margin:0 0 4px; color:#475569; font-size:1rem; font-weight:700;">No Budget Requisitions Found</h4>
-                      <p style="margin:0; font-size:0.82rem;">There are currently no budget proposals filed under this category.</p>
+                      <h4 class="empty-state-title">No Budget Requisitions Found</h4>
+                      <p class="empty-state-desc">There are currently no budget proposals filed under this category.</p>
                     </td>
                   </tr>
                 <?php else: ?>
@@ -899,7 +1035,7 @@ foreach ($budget_requests as $req) {
 
       </div>
     </div>
-    <div class="footer">Co-Curricular Management System &copy; 2026</div>
+    <div class="footer">eLearning Commons &copy; 2026</div>
   </div>
 
   <!-- -------------------------------------------------------------------------
@@ -1269,27 +1405,6 @@ foreach ($budget_requests as $req) {
         }
       } catch {
         alert('Network error.');
-      }
-    }
-
-    // Filter budget ledger table
-    function filterLedgerTable() {
-      const q = (document.getElementById('budgetSearchInput')?.value || '').toLowerCase().trim();
-      const statusFilter = (document.getElementById('budgetStatusFilter')?.value || 'ALL');
-      
-      const rows = document.querySelectorAll('#budgetTableBody tr:not(#emptyRow)');
-      rows.forEach(tr => {
-        const text = tr.textContent.toLowerCase();
-        const matchesQuery = !q || text.includes(q);
-        const matchesStatus = (statusFilter === 'ALL') || tr.textContent.includes(statusFilter);
-        const isVisible = matchesQuery && matchesStatus;
-        tr.setAttribute('data-search-hidden', isVisible ? 'false' : 'true');
-      });
-
-      const tbl = document.getElementById('budgetLedgerTable');
-      if (tbl && tbl._paginator) {
-        tbl._paginator.currentPage = 1;
-        tbl._paginator.refresh();
       }
     }
   </script>

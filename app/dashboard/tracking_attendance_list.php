@@ -233,7 +233,7 @@ $unique_attendees_count = (int)($conn->query("SELECT COUNT(DISTINCT user_id) FRO
       </div><!-- end content-body -->
     </div><!-- end content -->
 
-    <div class="footer">Co-Curricular Management System &copy; 2026</div>
+    <div class="footer">eLearning Commons &copy; 2026</div>
   </div><!-- end main -->
 
   <!-- Manual Override Modal (SSC / Admin) -->

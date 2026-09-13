@@ -231,7 +231,7 @@ if ($ev_res) {
       </div><!-- end content-body -->
     </div><!-- end content -->
 
-    <div class="footer">Co-Curricular Management System &copy; 2026</div>
+    <div class="footer">eLearning Commons &copy; 2026</div>
   </div><!-- end main -->
 
   <script src="../js/dashboard.js"></script>

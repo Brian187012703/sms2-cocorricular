@@ -471,7 +471,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
     </div>
   </div>
-  <div class="footer">Co-Curricular Management System &copy; 2026</div>
+  <div class="footer">eLearning Commons &copy; 2026</div>
 </div>
 
 <!-- ─────────────────────────────────────────────────────────────
@@ -627,6 +627,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
 <?php endif; ?>
 
 <script src="../js/dashboard.js"></script>
+<script src="../js/table-pagination.js"></script>
 <script>
 function switchAdminTab(tabId, btn) {
   document.querySelectorAll('.admin-tab-content').forEach(el => el.classList.remove('active'));
