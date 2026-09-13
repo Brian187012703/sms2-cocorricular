@@ -857,7 +857,7 @@ $status_badges = [
               Show All
             </button>
             <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-              <button type="button" class="card-btn btn-sm" id="openCreateEvent" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openModal('createEventModal')" title="Create event proposal to submit to SSC for review and approval">
+              <button type="button" class="card-btn btn-sm" id="openCreateEvent" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openCreateEventModal()" title="Create event proposal to submit to SSC for review and approval">
                 <i class="fa-solid fa-calendar-plus"></i> Create Event Proposal
               </button>
             <?php endif; ?>
@@ -870,7 +870,7 @@ $status_badges = [
             No events yet.
             <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
               <div style="margin-top:14px;">
-                <button type="button" class="card-btn" onclick="openModal('createEventModal')" style="background:#16a34a; color:#fff; font-weight:700;">
+                <button type="button" class="card-btn" onclick="openCreateEventModal()" style="background:#16a34a; color:#fff; font-weight:700;">
                   <i class="fa-solid fa-calendar-plus"></i> Create First Event Proposal
                 </button>
               </div>
@@ -1073,7 +1073,7 @@ $status_badges = [
       </h3>
       <button class="modal-close" onclick="closeModal('createEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <form id="createEventForm">
+    <form id="createEventForm" autocomplete="off">
       <div class="modal-body" style="padding:24px;">
         
         <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
@@ -1684,10 +1684,34 @@ document.getElementById('calNextBtn')?.addEventListener('click', () => {
   renderCalendar();
 });
 
+function resetCreateEventForm() {
+  const form = document.getElementById('createEventForm');
+  if (form) form.reset();
+  const resBox = document.getElementById('conflictAuditResult');
+  if (resBox) {
+    resBox.style.display = 'none';
+    resBox.innerHTML = '';
+  }
+  const btnAudit = document.getElementById('btnAuditModalDate');
+  if (btnAudit) {
+    btnAudit.disabled = false;
+    btnAudit.innerHTML = '<i class="fa-solid fa-shield-halved"></i> AI Audit Date &amp; Check Conflicts';
+  }
+}
+
+function openCreateEventModal() {
+  resetCreateEventForm();
+  openModal('createEventModal');
+}
+
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', renderCalendar);
+  document.addEventListener('DOMContentLoaded', () => {
+    renderCalendar();
+    resetCreateEventForm();
+  });
 } else {
   renderCalendar();
+  resetCreateEventForm();
 }
 
 function openModal(id)  {
@@ -1697,6 +1721,9 @@ function openModal(id)  {
 function closeModal(id) {
   const el = document.getElementById(id);
   if (el) { el.classList.remove('active', 'open'); el.style.display = 'none'; }
+  if (id === 'createEventModal') {
+    resetCreateEventForm();
+  }
 }
 
 function showToast(msg, type = 'success') {
