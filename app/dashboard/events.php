@@ -5,10 +5,9 @@
 //  Integrated with Philippine Holidays & Conflict Detection Engine
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
+require_once __DIR__ . '/../shared/security.php';
 require_once __DIR__ . '/../shared/ph_holidays.php';
-session_start();
-
-if (empty($_SESSION['user_id'])) { header('Location: ../auth/signin.php'); exit; }
+require_auth();
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -29,10 +28,11 @@ $events = $conn->query(
      FROM events e
      LEFT JOIN clubs c ON c.id = e.club_id
      LEFT JOIN users u ON u.id = e.created_by
+     WHERE e.deleted_at IS NULL
      ORDER BY e.event_date ASC"
 )->fetch_all(MYSQLI_ASSOC);
 
-$clubs = $conn->query("SELECT id, name, code FROM clubs WHERE status='Active' ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+$clubs = $conn->query("SELECT id, name, code FROM clubs WHERE status='Active' AND deleted_at IS NULL ORDER BY name")->fetch_all(MYSQLI_ASSOC);
 
 // For student role, filter out unposted / pending / rejected events
 if ($sess_role === 'student') {

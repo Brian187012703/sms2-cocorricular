@@ -60,6 +60,7 @@ switch ($action) {
                 FROM events e
                 LEFT JOIN clubs c ON c.id = e.club_id
                 LEFT JOIN users u ON u.id = e.created_by
+                WHERE e.deleted_at IS NULL
                 ORDER BY e.event_date ASC";
         $result = $conn->query($sql);
         $rows = $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
@@ -317,11 +318,11 @@ switch ($action) {
             eRespond(false, 'Not authorized.');
         }
         $id = (int)($_POST['id'] ?? 0);
-        $stmt = $conn->prepare("DELETE FROM events WHERE id = ?");
+        $stmt = $conn->prepare("UPDATE events SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?");
         $stmt->bind_param('i', $id);
         $stmt->execute();
         $stmt->close();
-        log_audit($conn, $user_id, 'event_delete', 'events', $id, "Deleted event #$id");
+        log_audit($conn, $user_id, 'event_delete', 'events', $id, "Soft-deleted event #$id");
         eRespond(true, 'Event deleted.');
     }
 

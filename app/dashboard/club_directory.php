@@ -5,12 +5,8 @@
 //  "Apply Now" flow: Org Profile ? Application Form ? PDF Download
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
-session_start();
-
-if (empty($_SESSION['user_id'])) {
-  header('Location: ../auth/signin.php');
-  exit;
-}
+require_once __DIR__ . '/../shared/security.php';
+require_auth();
 
 $sess_first = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
@@ -47,7 +43,7 @@ if ($can_apply) {
 
 // -- Fetch real club IDs from DB, indexed by code --
 $db_clubs = [];
-$club_res = $conn->query("SELECT id, code FROM clubs WHERE status='Active'");
+$club_res = $conn->query("SELECT id, code FROM clubs WHERE status='Active' AND deleted_at IS NULL");
 if ($club_res) {
   while ($rc = $club_res->fetch_assoc()) {
     $db_clubs[strtoupper($rc['code'])] = (int) $rc['id'];
@@ -1231,12 +1227,12 @@ foreach ($organizations['independent']['orgs'] as $o) {
                                  (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id=c.id AND cm.status='Pending') as pending_count
                                  FROM clubs c 
                                  JOIN club_memberships cm ON cm.club_id=c.id 
-                                 WHERE cm.user_id=$user_id AND cm.status='Active' LIMIT 1")->fetch_assoc();
+                                 WHERE cm.user_id=$user_id AND cm.status='Active' AND c.deleted_at IS NULL LIMIT 1")->fetch_assoc();
           if (!$my_org) {
             $my_org = $conn->query("SELECT c.*, 
                                      (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id=c.id AND cm.status='Active') as active_count,
                                      (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id=c.id AND cm.status='Pending') as pending_count
-                                     FROM clubs c WHERE c.status='Active' LIMIT 1")->fetch_assoc();
+                                     FROM clubs c WHERE c.status='Active' AND c.deleted_at IS NULL LIMIT 1")->fetch_assoc();
           }
           ?>
           <?php if ($my_org): ?>

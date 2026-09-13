@@ -123,8 +123,11 @@ runSQL($conn, "CREATE TABLE IF NOT EXISTS budget_requests (
     updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci", "Create budget_requests table", $errors);
 
+$conn->query("ALTER TABLE events ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL DEFAULT NULL");
 $conn->query("ALTER TABLE budget_requests MODIFY COLUMN status ENUM('Pending Adviser','Pending SSC','Pending Admin','Disbursed','Rejected') NOT NULL DEFAULT 'Pending Adviser'");
 $conn->query("UPDATE budget_requests SET status='Pending SSC' WHERE status IN ('Pending OSA', 'Pending Finance')");
+$conn->query("ALTER TABLE budget_requests ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL DEFAULT NULL");
+$conn->query("ALTER TABLE clubs ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL DEFAULT NULL");
 
 // ============================================================
 //  6. Attendance Logs table

@@ -28,12 +28,12 @@ switch ($action) {
 
     // ── 1. LIST Budget Requests ──────────────────────────────
     case 'list': {
-        $where  = '';
+        $where  = 'WHERE br.deleted_at IS NULL';
         $params = [];
         $types  = '';
 
         if ($user_role === 'student') {
-            $where  = "WHERE br.requested_by = ?";
+            $where  .= " AND br.requested_by = ?";
             $params = [$user_id];
             $types  = 'i';
         } elseif ($user_role === 'club_adviser') {
@@ -44,14 +44,14 @@ switch ($action) {
             $cm->fetch();
             $cm->close();
             if (!empty($my_club_id)) {
-                $where  = "WHERE br.club_id = ?";
+                $where  .= " AND br.club_id = ?";
                 $params = [(int)$my_club_id];
                 $types  = 'i';
             }
         } elseif ($user_role === 'ssc') {
-            $where = "WHERE br.status IN ('Pending SSC','Pending Admin','Disbursed','Rejected')";
+            $where .= " AND br.status IN ('Pending SSC','Pending Admin','Disbursed','Rejected')";
         }
-        // admin sees all
+        // admin sees all active (non-deleted) requests
 
         $sql = "SELECT br.id, br.club_id, br.title, br.description, br.amount, br.status, br.notes, br.created_at, br.updated_at,
                        c.name AS club_name, c.code AS club_code,

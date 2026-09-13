@@ -4,14 +4,10 @@
 //  3-Stage Approval Pipeline: Adviser -> SSC -> Admin
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
+require_once __DIR__ . '/../shared/security.php';
 require_once __DIR__ . '/../shared/notification_actions.php';
-if (session_status() === PHP_SESSION_NONE) { session_start(); }
+require_auth();
 header('Content-Type: text/html; charset=UTF-8');
-
-if (empty($_SESSION['user_id'])) {
-    header('Location: ../auth/signin.php');
-    exit;
-}
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -22,17 +18,17 @@ $user_id      = (int)$_SESSION['user_id'];
 
 // Fetch user clubs for new request dropdown
 if ($sess_role === 'student' || $sess_role === 'club_adviser') {
-    $stmt = $conn->prepare("SELECT c.id, c.name, c.code FROM clubs c JOIN club_memberships cm ON cm.club_id=c.id WHERE cm.user_id=? AND cm.status='Active' ORDER BY c.name");
+    $stmt = $conn->prepare("SELECT c.id, c.name, c.code FROM clubs c JOIN club_memberships cm ON cm.club_id=c.id WHERE cm.user_id=? AND cm.status='Active' AND c.deleted_at IS NULL ORDER BY c.name");
     $stmt->bind_param('i', $user_id);
     $stmt->execute();
     $user_clubs = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     $stmt->close();
 } else {
-    $user_clubs = $conn->query("SELECT id, name, code FROM clubs WHERE status='Active' ORDER BY name")->fetch_all(MYSQLI_ASSOC);
+    $user_clubs = $conn->query("SELECT id, name, code FROM clubs WHERE status='Active' AND deleted_at IS NULL ORDER BY name")->fetch_all(MYSQLI_ASSOC);
 }
 
 // Fetch budget requests based on role
-$where = '';
+$where = 'WHERE br.deleted_at IS NULL';
 if ($sess_role === 'club_adviser') {
     $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
     $cm->bind_param('i', $user_id);
@@ -41,12 +37,12 @@ if ($sess_role === 'club_adviser') {
     $cm->fetch();
     $cm->close();
     if (!empty($my_club_id)) {
-        $where = "WHERE br.club_id = " . (int)$my_club_id;
+        $where .= " AND br.club_id = " . (int)$my_club_id;
     }
 } elseif ($sess_role === 'ssc') {
-    $where = "WHERE br.status IN ('Pending SSC','Pending Admin','Disbursed','Rejected')";
+    $where .= " AND br.status IN ('Pending SSC','Pending Admin','Disbursed','Rejected')";
 }
-// admin sees all
+// admin sees all active (non-deleted) requests
 
 $budget_requests = $conn->query(
     "SELECT br.id, br.club_id, br.title, br.description, br.amount, br.status, br.notes, br.created_at, br.updated_at,

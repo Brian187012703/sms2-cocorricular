@@ -5,17 +5,8 @@
 //  Accessible to: System Admin (Full CRUD), SSC (Audited Oversight)
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
-session_start();
-
-if (empty($_SESSION['user_id'])) { 
-    header('Location: ../auth/signin.php'); 
-    exit; 
-}
-
-if (!in_array($_SESSION['role'] ?? '', ['admin', 'ssc'])) { 
-    header('Location: dashboard.php'); 
-    exit; 
-}
+require_once __DIR__ . '/../shared/security.php';
+require_role(['admin', 'ssc']);
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -32,9 +23,9 @@ $adviser_count  = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='club
 $ssc_count      = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='ssc'")->fetch_row()[0];
 $admin_count    = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetch_row()[0];
 
-$club_count     = (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Active'")->fetch_row()[0];
+$club_count     = (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Active' AND deleted_at IS NULL")->fetch_row()[0];
 $pending_apps   = (int)$conn->query("SELECT COUNT(*) FROM club_memberships WHERE status='Pending'")->fetch_row()[0];
-$stuck_budgets  = (int)$conn->query("SELECT COUNT(*) FROM budget_requests WHERE status NOT IN ('Disbursed','Rejected') AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)")->fetch_row()[0];
+$stuck_budgets  = (int)$conn->query("SELECT COUNT(*) FROM budget_requests WHERE status NOT IN ('Disbursed','Rejected') AND deleted_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)")->fetch_row()[0];
 
 // -- Fetch all users with profile data -------------------------
 $all_users = $conn->query(

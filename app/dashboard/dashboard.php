@@ -5,12 +5,8 @@
 //  Role-Tailored Views: Student, Club Adviser, SSC Officer, Admin
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
-session_start();
-
-if (!isset($_SESSION['user_id'])) {
-    header('Location: ../auth/signin.php');
-    exit;
-}
+require_once __DIR__ . '/../shared/security.php';
+require_auth();
 
 // Testing role switcher via ?switch_role=...
 if (isset($_GET['switch_role']) && in_array($_GET['switch_role'], ['student', 'club_adviser', 'ssc', 'admin'])) {
@@ -54,16 +50,16 @@ $r = $conn->query("SELECT COUNT(*) AS c FROM club_memberships WHERE user_id = {$
 if ($r) $active_clubs_joined = (int)$r->fetch_assoc()['c'];
 
 $active_campus_events = 0;
-$r = $conn->query("SELECT COUNT(*) AS c FROM events WHERE status IN ('Approved', 'Upcoming')");
+$r = $conn->query("SELECT COUNT(*) AS c FROM events WHERE status IN ('Approved', 'Upcoming') AND deleted_at IS NULL");
 if ($r) $active_campus_events = (int)$r->fetch_assoc()['c'];
 
-$total_active_clubs = (int)$conn->query("SELECT COUNT(*) AS c FROM clubs WHERE status = 'Active'")->fetch_assoc()['c'];
+$total_active_clubs = (int)$conn->query("SELECT COUNT(*) AS c FROM clubs WHERE status = 'Active' AND deleted_at IS NULL")->fetch_assoc()['c'];
 $total_students_in_orgs = (int)$conn->query("SELECT COUNT(DISTINCT user_id) AS c FROM club_memberships WHERE status = 'Active'")->fetch_assoc()['c'];
-$total_budgets_disbursed = (float)$conn->query("SELECT COALESCE(SUM(amount), 0) AS s FROM budget_requests WHERE status = 'Disbursed'")->fetch_assoc()['s'];
+$total_budgets_disbursed = (float)$conn->query("SELECT COALESCE(SUM(amount), 0) AS s FROM budget_requests WHERE status = 'Disbursed' AND deleted_at IS NULL")->fetch_assoc()['s'];
 
 // ── Dynamic Announcements ─────────────────────────────────────
 $announcements = [];
-$ann_res = $conn->query("SELECT oa.*, c.name AS club_name, c.code AS club_code FROM org_announcements oa JOIN clubs c ON c.id = oa.club_id ORDER BY oa.created_at DESC LIMIT 3");
+$ann_res = $conn->query("SELECT oa.*, c.name AS club_name, c.code AS club_code FROM org_announcements oa JOIN clubs c ON c.id = oa.club_id WHERE c.deleted_at IS NULL ORDER BY oa.created_at DESC LIMIT 3");
 if ($ann_res) {
     while ($row = $ann_res->fetch_assoc()) {
         $announcements[] = $row;
@@ -78,23 +74,23 @@ $club_categories_counts = [];
 
 if ($sess_role === 'ssc' || $sess_role === 'admin') {
     // Pending Budgets for SSC review
-    $res = $conn->query("SELECT br.id, br.title, br.amount, br.created_at, c.name AS club_name, c.code AS club_code FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.status = 'Pending SSC' ORDER BY br.created_at DESC LIMIT 5");
+    $res = $conn->query("SELECT br.id, br.title, br.amount, br.created_at, c.name AS club_name, c.code AS club_code FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.status = 'Pending SSC' AND br.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY br.created_at DESC LIMIT 5");
     if ($res) {
         while ($row = $res->fetch_assoc()) { $ssc_pending_budgets[] = $row; }
     }
     // Pending Charters
-    $res = $conn->query("SELECT id, name, code, category, created_at FROM clubs WHERE status = 'Pending Charter' ORDER BY created_at DESC LIMIT 5");
+    $res = $conn->query("SELECT id, name, code, category, created_at FROM clubs WHERE status = 'Pending Charter' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 5");
     if ($res) {
         while ($row = $res->fetch_assoc()) { $ssc_pending_clubs[] = $row; }
     }
     // Pending Events for SSC Review
-    $res = $conn->query("SELECT e.id, e.title, e.event_date, e.venue, c.name AS club_name, c.code AS club_code FROM events e LEFT JOIN clubs c ON c.id = e.club_id WHERE e.status = 'Pending SSC' ORDER BY e.event_date ASC LIMIT 5");
+    $res = $conn->query("SELECT e.id, e.title, e.event_date, e.venue, c.name AS club_name, c.code AS club_code FROM events e LEFT JOIN clubs c ON c.id = e.club_id WHERE e.status = 'Pending SSC' AND e.deleted_at IS NULL ORDER BY e.event_date ASC LIMIT 5");
     if ($res) {
         while ($row = $res->fetch_assoc()) { $ssc_pending_events[] = $row; }
     }
 
     // Category distribution for Chart.js
-    $c_res = $conn->query("SELECT category, COUNT(*) as c FROM clubs GROUP BY category");
+    $c_res = $conn->query("SELECT category, COUNT(*) as c FROM clubs WHERE deleted_at IS NULL GROUP BY category");
     if ($c_res) {
         while ($row = $c_res->fetch_assoc()) {
             $club_categories_counts[$row['category']] = (int)$row['c'];
@@ -110,12 +106,12 @@ $audit_24h_count = 0;
 
 if ($sess_role === 'admin') {
     // Events awaiting Admin calendar clearance
-    $res = $conn->query("SELECT e.id, e.title, e.event_date, e.venue, e.event_type, COALESCE(c.name, 'BCP Institutional') AS club_name FROM events e LEFT JOIN clubs c ON c.id = e.club_id WHERE e.status = 'Pending Admin' ORDER BY e.event_date ASC LIMIT 5");
+    $res = $conn->query("SELECT e.id, e.title, e.event_date, e.venue, e.event_type, COALESCE(c.name, 'BCP Institutional') AS club_name FROM events e LEFT JOIN clubs c ON c.id = e.club_id WHERE e.status = 'Pending Admin' AND e.deleted_at IS NULL ORDER BY e.event_date ASC LIMIT 5");
     if ($res) {
         while ($row = $res->fetch_assoc()) { $admin_pending_events[] = $row; }
     }
     // Budgets awaiting Admin final disbursement
-    $res = $conn->query("SELECT br.id, br.title, br.amount, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.status = 'Pending Admin' ORDER BY br.created_at DESC LIMIT 5");
+    $res = $conn->query("SELECT br.id, br.title, br.amount, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.status = 'Pending Admin' AND br.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY br.created_at DESC LIMIT 5");
     if ($res) {
         while ($row = $res->fetch_assoc()) { $admin_pending_budgets[] = $row; }
     }
@@ -141,7 +137,7 @@ if ($sess_role === 'club_adviser') {
         $stmt->fetch();
         $stmt->close();
         if (!empty($adv_cid)) {
-            $stmt2 = $conn->prepare("SELECT br.id, br.title, br.amount, br.created_at, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.club_id = ? AND br.status = 'Pending Adviser' ORDER BY br.created_at DESC");
+            $stmt2 = $conn->prepare("SELECT br.id, br.title, br.amount, br.created_at, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.club_id = ? AND br.status = 'Pending Adviser' AND br.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY br.created_at DESC");
             $stmt2->bind_param('i', $adv_cid);
             $stmt2->execute();
             $pending_endorsements = $stmt2->get_result()->fetch_all(MYSQLI_ASSOC);

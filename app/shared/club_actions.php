@@ -8,6 +8,7 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Not authenticated.']);
@@ -32,7 +33,8 @@ switch ($action) {
                        COUNT(DISTINCT e.id) AS event_count
                 FROM clubs c
                 LEFT JOIN club_memberships cm ON (cm.club_id = c.id AND cm.status = 'Active')
-                LEFT JOIN events e ON (e.club_id = c.id AND e.status IN ('Approved','Upcoming'))
+                LEFT JOIN events e ON (e.club_id = c.id AND e.status IN ('Approved','Upcoming') AND e.deleted_at IS NULL)
+                WHERE c.deleted_at IS NULL
                 GROUP BY c.id
                 ORDER BY c.category, c.name";
         $res = $conn->query($sql);
@@ -126,6 +128,28 @@ switch ($action) {
 
         log_audit($conn, $user_id, 'club_create', 'clubs', $new_cid, "Chartered new organization: $name ($code)");
         cRespond(true, "Organization \"$name\" ($code) chartered successfully!", ['club_id' => $new_cid]);
+    }
+
+    // ── SOFT DELETE ORGANIZATION (SSC / Admin) ───────────────
+    case 'delete_club': {
+        if (!in_array($user_role, ['ssc', 'admin'])) {
+            cRespond(false, 'Only SSC and Admin can delete organizations.');
+        }
+
+        $club_id = (int)($_POST['club_id'] ?? 0);
+        if ($club_id <= 0) {
+            cRespond(false, 'Invalid club ID.');
+        }
+
+        $stmt = $conn->prepare("UPDATE clubs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?");
+        $stmt->bind_param('i', $club_id);
+        if (!$stmt->execute()) {
+            cRespond(false, 'Failed to delete organization: ' . $stmt->error);
+        }
+        $stmt->close();
+
+        log_audit($conn, $user_id, 'club_delete', 'clubs', $club_id, "Soft-deleted organization #$club_id");
+        cRespond(true, "Organization deleted successfully.");
     }
 
     default:
