@@ -857,9 +857,6 @@ $status_badges = [
               Show All
             </button>
             <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-              <button type="button" class="card-btn btn-sm" style="background:linear-gradient(135deg, #1e3a8a, #3b82f6); color:#fff; font-weight:700;" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Optimizer">
-                <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> AI Planner
-              </button>
               <button type="button" class="card-btn btn-sm" id="openCreateEvent" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openModal('createEventModal')" title="Create event proposal to submit to SSC for review and approval">
                 <i class="fa-solid fa-calendar-plus"></i> Create Event Proposal
               </button>
