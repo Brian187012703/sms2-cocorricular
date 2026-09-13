@@ -288,6 +288,80 @@ $status_badges = [
     .ai-rec-generate-btn { justify-content: center; }
   }
 
+  /* ── AI Event Planner Floating Action Button (FAB) ────────── */
+  .ai-fab-btn {
+    position: fixed;
+    bottom: 28px;
+    right: 28px;
+    z-index: 1050;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px 10px 12px;
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #2563eb 100%);
+    color: #ffffff;
+    border: 1.5px solid rgba(255, 255, 255, 0.28);
+    border-radius: 50px;
+    font-size: 0.88rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 10px 28px rgba(30, 58, 138, 0.42), 0 3px 10px rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(10px);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    outline: none;
+    user-select: none;
+  }
+  .ai-fab-btn:hover {
+    transform: translateY(-4px) scale(1.03);
+    box-shadow: 0 16px 36px rgba(37, 99, 235, 0.55), 0 6px 16px rgba(0, 0, 0, 0.22);
+    border-color: rgba(245, 158, 11, 0.7);
+    color: #ffffff;
+  }
+  .ai-fab-btn:active {
+    transform: translateY(-1px) scale(0.98);
+  }
+  .ai-fab-icon-wrap {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.95rem;
+    position: relative;
+    box-shadow: 0 2px 8px rgba(217, 119, 6, 0.4);
+    flex-shrink: 0;
+  }
+  .ai-fab-pulse {
+    position: absolute;
+    top: -1px;
+    right: -1px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #22c55e;
+    border: 2px solid #0f172a;
+    animation: aiPulse 2s ease-in-out infinite;
+  }
+  .ai-fab-label {
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+  @media (max-width: 640px) {
+    .ai-fab-btn {
+      bottom: 20px;
+      right: 20px;
+      padding: 10px;
+      border-radius: 50%;
+    }
+    .ai-fab-label {
+      display: none;
+    }
+  }
+
   /* ── Modal & Form Layout System ── */
   .modal-overlay {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -701,64 +775,7 @@ $status_badges = [
       </div><!-- /info-row -->
       <?php endif; ?>
 
-      <!-- ──────────────────────────────────────────────────────
-           AI EVENT PLANNER & SCHEDULE CONFLICT OPTIMIZER (Adviser & SSC)
-      ────────────────────────────────────────────────────── -->
-      <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-      <div class="ai-recommendations-section" id="aiPlannerSection">
-        <div class="ai-rec-header">
-          <div class="ai-rec-header-left">
-            <div class="ai-rec-icon-wrap">
-              <i class="fa-solid fa-brain"></i>
-              <span class="ai-pulse-dot"></span>
-            </div>
-            <div>
-              <h3><i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b; margin-right:6px;"></i> AI Event Planner &amp; Schedule Conflict Optimizer</h3>
-              <p>Generative AI event proposal engine analyzing historical activity trends, future campus schedules, and 2026 Philippine holidays to produce conflict-free dates.</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- AI Prompt Controls Row -->
-        <div style="background:#f8fafc; border-bottom:1px solid #e2e8f0; padding:14px 24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-          <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
-          <div style="display:flex; flex-direction:column; gap:4px;">
-            <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-sitemap"></i> Organization</label>
-            <select id="aiPlannerClubSelect" style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; background:#fff; font-weight:600; color:#1e293b; height:38px;" title="Select organization to plan events for">
-              <?php foreach ($clubs as $cl): ?>
-              <option value="<?= $cl['id'] ?>"><?= htmlspecialchars($cl['name']) ?> (<?= htmlspecialchars($cl['code']) ?>)</option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <?php endif; ?>
-
-          <div style="flex:1; min-width:260px; display:flex; flex-direction:column; gap:4px;">
-            <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-lightbulb"></i> Custom Event Theme / Focus (Optional)</label>
-            <input type="text" id="aiPlannerThemeInput" placeholder="e.g. AI & Cybersecurity Bootcamp, Cultural Dance Festival, Leadership Forum, Outreach..." style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.84rem; color:#1e293b; background:#fff; width:100%; height:38px;" onkeydown="if(event.key==='Enter') generateAIEventPlans();"/>
-          </div>
-
-          <div style="display:flex; align-items:flex-end; height:100%; padding-top:18px;">
-            <button type="button" class="ai-rec-generate-btn" id="aiPlanBtn" onclick="generateAIEventPlans()" style="height:38px; padding:0 20px;">
-              <i class="fa-solid fa-wand-magic-sparkles"></i>
-              <span>Generate AI Event Ideas &amp; Dates</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- AI Result Container -->
-        <div class="ai-rec-body" id="aiPlannerBody" style="display:none;">
-          <!-- Loading Shimmer -->
-          <div class="ai-rec-loading" id="aiPlannerLoading" style="display:none;">
-            <div class="ai-shimmer-bar"></div>
-            <div class="ai-shimmer-bar short"></div>
-            <div class="ai-shimmer-bar"></div>
-            <div class="ai-thinking-text"><i class="fa-solid fa-brain fa-beat-fade"></i> Connecting to Google Gemini AI &amp; analyzing campus calendar schedules...</div>
-          </div>
-          <!-- Results -->
-          <div id="aiPlannerResults"></div>
-        </div>
-      </div>
-      <?php endif; ?>
+      <!-- AI Event Planner is accessible via the Floating Action Button and Modal -->
 
       <!-- ----------------------------------------------------------
            ACTIVE INTERACTIVE EVENT CALENDAR
@@ -840,6 +857,9 @@ $status_badges = [
               Show All
             </button>
             <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+              <button type="button" class="card-btn btn-sm" style="background:linear-gradient(135deg, #1e3a8a, #3b82f6); color:#fff; font-weight:700;" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Optimizer">
+                <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> AI Planner
+              </button>
               <button type="button" class="card-btn btn-sm" id="openCreateEvent" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openModal('createEventModal')" title="Create event proposal to submit to SSC for review and approval">
                 <i class="fa-solid fa-calendar-plus"></i> Create Event Proposal
               </button>
@@ -948,6 +968,102 @@ $status_badges = [
   </div>
   <div class="footer">eLearning Commons &copy; 2026</div>
 </div>
+
+<!-- ────────────────────────────────────────────────────────────
+     AI EVENT PLANNER FLOATING ACTION BUTTON & MODAL
+──────────────────────────────────────────────────────────── -->
+<?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+<!-- Floating Action Button (Always Accessible) -->
+<button type="button" class="ai-fab-btn" id="aiPlannerFabBtn" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner">
+  <div class="ai-fab-icon-wrap">
+    <i class="fa-solid fa-wand-magic-sparkles"></i>
+    <span class="ai-fab-pulse"></span>
+  </div>
+  <span class="ai-fab-label">AI Event Planner</span>
+</button>
+
+<!-- AI Event Planner Dialog Modal -->
+<div class="modal-overlay" id="aiPlannerModal">
+  <div class="modal modal-lg" style="max-width:900px; width:95%; max-height:90vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-radius:18px; box-shadow:0 25px 50px -12px rgba(15,23,42,0.35);">
+    <div class="modal-header" style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #2563eb 100%); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div class="ai-rec-icon-wrap">
+          <i class="fa-solid fa-brain"></i>
+          <span class="ai-pulse-dot"></span>
+        </div>
+        <div>
+          <h3 style="margin:0; font-size:1.05rem; font-weight:800; color:#fff; display:flex; align-items:center; gap:8px;">
+            <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> AI Event Planner &amp; Schedule Conflict Optimizer
+          </h3>
+          <p style="margin:3px 0 0; font-size:0.75rem; color:rgba(255,255,255,0.8); line-height:1.4;">
+            Generative AI event proposal engine analyzing historical activity trends, future campus schedules, and 2026 Philippine holidays to produce conflict-free dates.
+          </p>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeModal('aiPlannerModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.2rem; background:none; border:none; cursor:pointer; padding:6px; margin-left:12px;" aria-label="Close">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <!-- AI Prompt Controls Row -->
+    <div style="background:#f8fafc; border-bottom:1px solid #e2e8f0; padding:14px 24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; flex-shrink:0;">
+      <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-sitemap"></i> Organization</label>
+        <select id="aiPlannerClubSelect" style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; background:#fff; font-weight:600; color:#1e293b; height:38px;" title="Select organization to plan events for">
+          <?php foreach ($clubs as $cl): ?>
+          <option value="<?= $cl['id'] ?>"><?= htmlspecialchars($cl['name']) ?> (<?= htmlspecialchars($cl['code']) ?>)</option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <?php endif; ?>
+
+      <div style="flex:1; min-width:260px; display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-lightbulb"></i> Custom Event Theme / Focus (Optional)</label>
+        <input type="text" id="aiPlannerThemeInput" placeholder="e.g. AI &amp; Cybersecurity Bootcamp, Cultural Dance Festival, Leadership Forum, Outreach..." style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.84rem; color:#1e293b; background:#fff; width:100%; height:38px;" onkeydown="if(event.key==='Enter') generateAIEventPlans();"/>
+      </div>
+
+      <div style="display:flex; align-items:flex-end; height:100%; padding-top:18px;">
+        <button type="button" class="ai-rec-generate-btn" id="aiPlanBtn" onclick="generateAIEventPlans()" style="height:38px; padding:0 20px;">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span>Generate AI Event Ideas &amp; Dates</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- AI Result Container -->
+    <div class="ai-rec-body" id="aiPlannerBody" style="padding:20px 24px; overflow-y:auto; flex:1; max-height:calc(90vh - 170px);">
+      <!-- Initial Guide / Empty State -->
+      <div id="aiPlannerEmptyState" style="text-align:center; padding:36px 20px; color:#64748b;">
+        <div style="width:60px; height:60px; border-radius:18px; background:linear-gradient(135deg, #eff6ff, #dbeafe); color:#2563eb; display:flex; align-items:center; justify-content:center; font-size:1.6rem; margin:0 auto 14px; box-shadow:0 8px 16px rgba(37,99,235,0.12);">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+        </div>
+        <h4 style="font-size:1rem; font-weight:700; color:#1e293b; margin:0 0 6px;">Ready to Plan Conflict-Free Campus Events</h4>
+        <p style="font-size:0.82rem; color:#64748b; max-width:480px; margin:0 auto 16px; line-height:1.5;">
+          Specify a custom theme above or leave it blank, then click <strong>"Generate AI Event Ideas &amp; Dates"</strong>. The AI engine will analyze campus calendars and Philippine holidays to craft conflict-free proposals.
+        </p>
+      </div>
+
+      <!-- Loading Shimmer -->
+      <div class="ai-rec-loading" id="aiPlannerLoading" style="display:none;">
+        <div class="ai-shimmer-bar"></div>
+        <div class="ai-shimmer-bar short"></div>
+        <div class="ai-shimmer-bar"></div>
+        <div class="ai-thinking-text"><i class="fa-solid fa-brain fa-beat-fade"></i> Connecting to Google Gemini AI &amp; analyzing campus calendar schedules...</div>
+      </div>
+
+      <!-- Results -->
+      <div id="aiPlannerResults"></div>
+    </div>
+
+    <!-- Modal Footer -->
+    <div class="modal-actions" style="padding:12px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+      <span style="font-size:0.75rem; color:#64748b;"><i class="fa-solid fa-shield-halved" style="color:#16a34a;"></i> Automatically checked against 2026 Academic &amp; PH Holidays</span>
+      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600; padding:8px 18px;" onclick="closeModal('aiPlannerModal')">Close</button>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <!-- ------ CREATE EVENT MODAL (Supports Club & School-Wide Events) ------ -->
 <?php if (in_array($sess_role, ['club_adviser','ssc','admin'])): ?>
@@ -2270,6 +2386,8 @@ async function generateAIEventPlans() {
   btn.disabled = true;
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Generating AI Event Proposals &amp; Schedules...</span>';
   body.style.display = 'block';
+  const emptyState = document.getElementById('aiPlannerEmptyState');
+  if (emptyState) emptyState.style.display = 'none';
   loading.style.display = 'flex';
   results.innerHTML = '';
 
@@ -2387,6 +2505,8 @@ async function generateAIEventPlans() {
 function applyAIEventPlan(planIndex) {
   const plan = CURRENT_AI_PLANS[planIndex];
   if (!plan) return;
+
+  closeModal('aiPlannerModal');
 
   const titleInput = document.querySelector('#createEventForm input[name="title"]');
   const descInput  = document.querySelector('#createEventForm textarea[name="description"]');
