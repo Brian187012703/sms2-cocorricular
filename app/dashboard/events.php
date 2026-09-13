@@ -1749,7 +1749,7 @@ function filterEventTable() {
 function viewEvent(ev) {
   const isRegistered = MY_REG_IDS.includes(parseInt(ev.id));
   let regActionHtml = '';
-  if (ev.status !== 'Rejected') {
+  if (ROLE !== 'club_adviser' && ev.status !== 'Rejected') {
     if (isRegistered) {
       regActionHtml = `
         <div style="padding:8px 14px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; display:inline-flex; align-items:center; gap:6px; color:#15803d; font-weight:700; font-size:0.82rem;">

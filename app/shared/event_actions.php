@@ -281,8 +281,12 @@ switch ($action) {
         eRespond(true, 'Event updated successfully.');
     }
 
-    // ── REGISTER for event (All Roles) ─────────────────────────
+    // ── REGISTER for event ──────────────────────────────────────
     case 'register': {
+        if ($user_role === 'club_adviser') {
+            eRespond(false, 'Club Advisers are not eligible to register as event participants.');
+        }
+
         $event_id = (int)($_POST['event_id'] ?? 0);
         if ($event_id <= 0) eRespond(false, 'Invalid event ID.');
 
