@@ -126,23 +126,46 @@ if ($sess_role === 'admin') {
     $audit_24h_count = (int)$conn->query("SELECT COUNT(*) AS c FROM audit_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)")->fetch_assoc()['c'];
 }
 
-// ── Adviser Endorsement Queue ─────────────────────────────────
-$pending_endorsements = [];
+// ── Adviser Endorsement Queue & Active Members ────────────────
+$pending_endorsements   = [];
+$adviser_active_members = 0;
+$adviser_club_name      = '';
 if ($sess_role === 'club_adviser') {
-    $stmt = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id = ? AND status = 'Active' LIMIT 1");
+    $stmt = $conn->prepare("SELECT c.id, c.name, c.code FROM clubs c JOIN club_memberships cm ON cm.club_id = c.id WHERE cm.user_id = ? AND cm.status = 'Active' AND c.deleted_at IS NULL LIMIT 1");
     if ($stmt) {
         $stmt->bind_param('i', $user_id);
         $stmt->execute();
-        $stmt->bind_result($adv_cid);
-        $stmt->fetch();
-        $stmt->close();
-        if (!empty($adv_cid)) {
-            $stmt2 = $conn->prepare("SELECT br.id, br.title, br.amount, br.created_at, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.club_id = ? AND br.status = 'Pending Adviser' AND br.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY br.created_at DESC");
-            $stmt2->bind_param('i', $adv_cid);
-            $stmt2->execute();
-            $pending_endorsements = $stmt2->get_result()->fetch_all(MYSQLI_ASSOC);
-            $stmt2->close();
+        $res = $stmt->get_result();
+        if ($res && $res->num_rows > 0) {
+            $adv_club = $res->fetch_assoc();
+            $adv_cid = (int)$adv_club['id'];
+            $adviser_club_name = $adv_club['code'];
         }
+        $stmt->close();
+    }
+    // Fallback if testing persona switch or unassigned
+    if (empty($adv_cid)) {
+        $first_c = $conn->query("SELECT id, name, code FROM clubs WHERE status = 'Active' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc();
+        if ($first_c) {
+            $adv_cid = (int)$first_c['id'];
+            $adviser_club_name = $first_c['code'];
+        }
+    }
+    if (!empty($adv_cid)) {
+        // Count active student members in adviser's organization
+        $m_stmt = $conn->prepare("SELECT COUNT(*) AS c FROM club_memberships WHERE club_id = ? AND status = 'Active' AND role != 'Adviser'");
+        if ($m_stmt) {
+            $m_stmt->bind_param('i', $adv_cid);
+            $m_stmt->execute();
+            $adviser_active_members = (int)$m_stmt->get_result()->fetch_assoc()['c'];
+            $m_stmt->close();
+        }
+
+        $stmt2 = $conn->prepare("SELECT br.id, br.title, br.amount, br.created_at, c.name AS club_name FROM budget_requests br JOIN clubs c ON c.id = br.club_id WHERE br.club_id = ? AND br.status = 'Pending Adviser' AND br.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY br.created_at DESC");
+        $stmt2->bind_param('i', $adv_cid);
+        $stmt2->execute();
+        $pending_endorsements = $stmt2->get_result()->fetch_all(MYSQLI_ASSOC);
+        $stmt2->close();
     }
 }
 ?>
@@ -359,8 +382,21 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <div class="card-detail">Security &amp; User Actions</div>
           </div>
 
+        <?php elseif ($sess_role === 'club_adviser'): ?>
+          <!-- Adviser Cards -->
+          <div class="info-card">
+            <div class="card-label"><i class="fa-solid fa-users"></i> Active Members</div>
+            <div class="card-amount"><?= $adviser_active_members ?></div>
+            <div class="card-detail"><?= !empty($adviser_club_name) ? htmlspecialchars($adviser_club_name) . ' Enrolled Members' : 'Enrolled Organization Members' ?></div>
+          </div>
+          <div class="info-card">
+            <div class="card-label"><i class="fa-solid fa-calendar-days"></i> Campus Events</div>
+            <div class="card-amount"><?= $active_campus_events ?></div>
+            <div class="card-detail">Approved Campus Activities</div>
+          </div>
+
         <?php else: ?>
-          <!-- Student & Adviser Cards -->
+          <!-- Student Cards -->
           <div class="info-card">
             <div class="card-label"><i class="fa-solid fa-sitemap"></i> Active Orgs</div>
             <div class="card-amount"><?= $active_clubs_joined ?></div>
