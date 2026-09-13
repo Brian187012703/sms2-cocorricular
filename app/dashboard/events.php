@@ -1054,9 +1054,8 @@ $status_badges = [
     </div>
 
     <!-- Modal Footer -->
-    <div class="modal-actions" style="padding:12px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+    <div class="modal-actions" style="padding:12px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; align-items:center; flex-shrink:0;">
       <span style="font-size:0.75rem; color:#64748b;"><i class="fa-solid fa-shield-halved" style="color:#16a34a;"></i> Automatically checked against 2026 Academic &amp; PH Holidays</span>
-      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600; padding:8px 18px;" onclick="closeModal('aiPlannerModal')">Close</button>
     </div>
   </div>
 </div>
@@ -1157,9 +1156,6 @@ $status_badges = [
     </div>
     <div class="modal-body" style="padding:24px;">
       <div id="holidayModalBody" style="color:#334155;"></div>
-    </div>
-    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end;">
-      <button type="button" class="card-btn" style="background:#1a3a8c; color:#fff; font-weight:600; padding:8px 18px; border-radius:8px;" onclick="closeModal('viewHolidayModal')">Understood</button>
     </div>
   </div>
 </div>
@@ -1278,15 +1274,13 @@ $status_badges = [
         </table>
       </div>
     </div>
-    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600;" onclick="closeModal('eventRegistrationsModal')">Close</button>
-      
-      <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+    <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; align-items:center;">
       <button type="button" class="card-btn" onclick="exportRegistrationsPDF()" style="background:#2563eb; color:#fff; font-weight:700; display:inline-flex; align-items:center; gap:6px; font-size:0.85rem; cursor:pointer;">
         <i class="fa-solid fa-file-pdf"></i> Export
       </button>
-      <?php endif; ?>
     </div>
+    <?php endif; ?>
   </div>
 </div>
 
@@ -1796,10 +1790,10 @@ function viewEvent(ev) {
         <div style="color:#991b1b; background:#fef2f2; border:1px solid #fca5a5; padding:12px 14px; border-radius:10px; font-size:0.85rem;">
           <strong>Rejection Note:</strong> ${ev.rejection_note}
         </div>` : ''}
-      <div style="margin-top:8px; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-        <button type="button" class="card-btn" style="background:#e2e8f0; color:#475569; font-weight:600; padding:10px 20px; border-radius:8px; border:none; cursor:pointer;" onclick="closeModal('viewEventModal')">Close</button>
+      ${regActionHtml ? `
+      <div style="margin-top:12px; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; align-items:center;">
         ${regActionHtml}
-      </div>
+      </div>` : ''}
     </div>`;
   openModal('viewEventModal');
 }

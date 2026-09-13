@@ -844,14 +844,13 @@ require_once __DIR__ . '/../shared/sidebar.php';
       <div id="modalResBody"></div>
     </div>
 
+    <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
     <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px; border-top:1px solid #f1f5f9; padding-top:16px;">
-      <button type="button" class="card-btn" id="closeResultsModalBtn" onclick="closeModal('resultsModal')" data-close="resultsModal" style="background:#e2e8f0; color:#475569; font-weight:600; cursor:pointer;">Close</button>
-      <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
       <button type="button" class="card-btn" id="printResultsBtn" onclick="printCurrentElectionReport()" style="background:#16a34a; color:#fff; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
         <i class="fa-solid fa-print"></i> Print / Export Report
       </button>
-      <?php endif; ?>
     </div>
+    <?php endif; ?>
   </div>
 </div>
 

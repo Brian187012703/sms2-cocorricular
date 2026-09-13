@@ -1132,9 +1132,6 @@ foreach ($budget_requests as $req) {
       <div class="modal-body-pad" id="viewReqDetailsBody">
         <!-- Rendered dynamically -->
       </div>
-      <div class="modal-footer-pad">
-        <button type="button" onclick="closeModal('viewReqDetailsModal')" class="act-btn act-btn-view">Close</button>
-      </div>
     </div>
   </div>
 

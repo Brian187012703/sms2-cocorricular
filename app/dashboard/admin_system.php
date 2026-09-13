@@ -619,9 +619,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
       <p style="font-size:0.83rem; color:#64748b; margin-top:0;">Requests pending without movement for over 7 days:</p>
       <div id="stuckList"><p style="color:#94a3b8; text-align:center;">Loading stuck items...</p></div>
     </div>
-    <div class="modal-footer">
-      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569;" onclick="closeModal('overrideModal')">Close</button>
-    </div>
   </div>
 </div>
 <?php endif; ?>
