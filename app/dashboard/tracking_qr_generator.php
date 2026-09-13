@@ -53,11 +53,11 @@ if ($ev_res) {
   <style>
     .gen-container {
       display: grid;
-      grid-template-columns: minmax(320px, 1fr) minmax(320px, 1.2fr);
+      grid-template-columns: 1fr 1.2fr;
       gap: 24px;
       align-items: start;
     }
-    @media (max-width: 860px) {
+    @media (max-width: 992px) {
       .gen-container {
         grid-template-columns: 1fr;
       }

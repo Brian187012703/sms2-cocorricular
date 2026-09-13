@@ -52,11 +52,11 @@ if ($ev_res) {
   <style>
     .scanner-layout {
       display: grid;
-      grid-template-columns: minmax(320px, 1fr) minmax(320px, 1.1fr);
+      grid-template-columns: 1fr 1.1fr;
       gap: 24px;
       align-items: start;
     }
-    @media (max-width: 860px) {
+    @media (max-width: 992px) {
       .scanner-layout {
         grid-template-columns: 1fr;
       }

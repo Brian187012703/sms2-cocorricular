@@ -1175,6 +1175,12 @@ foreach ($organizations['independent']['orgs'] as $o) {
       .afm-btn-download {
         width: 100%;
       }
+
+      .org-search-box {
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+      }
     }
   </style>
 </head>

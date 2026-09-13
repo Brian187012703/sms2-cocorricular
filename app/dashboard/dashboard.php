@@ -223,6 +223,20 @@ if ($sess_role === 'club_adviser') {
     @media (max-width: 900px) {
       .dash-charts-grid { grid-template-columns: 1fr; }
     }
+    @media (max-width: 600px) {
+      .quick-actions-bar {
+        padding: 12px;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .quick-act-btn {
+        width: 100%;
+        justify-content: center;
+      }
+      .chart-card {
+        padding: 14px 12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -404,50 +418,52 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <span style="font-size:0.78rem; font-weight:700; color:#64748b;">Awaiting SSC Action</span>
           </div>
 
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Proposal Title</th>
-                <th>Organization</th>
-                <th>Current Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php if (empty($ssc_pending_clubs) && empty($ssc_pending_events) && empty($ssc_pending_budgets)): ?>
-                <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:24px;">All pending proposals have been reviewed and endorsed.</td></tr>
-              <?php else: ?>
-                <?php foreach ($ssc_pending_clubs as $cl): ?>
-                  <tr>
-                    <td><span class="badge-info"><i class="fa-solid fa-sitemap"></i> Charter</span></td>
-                    <td><strong>New Org Charter: <?= htmlspecialchars($cl['name']) ?></strong></td>
-                    <td><code><?= htmlspecialchars($cl['code']) ?></code></td>
-                    <td><span class="badge-warning">Pending SSC Charter Review</span></td>
-                    <td><a href="club_directory.php" class="card-btn btn-sm" style="background:#2563eb; color:#fff;">Review Charter</a></td>
-                  </tr>
-                <?php endforeach; ?>
-                <?php foreach ($ssc_pending_events as $ev): ?>
-                  <tr>
-                    <td><span class="badge-active" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-calendar-day"></i> Event</span></td>
-                    <td><strong><?= htmlspecialchars($ev['title']) ?></strong> &bull; <?= date('M d, Y', strtotime($ev['event_date'])) ?></td>
-                    <td><?= htmlspecialchars($ev['club_name'] ?? 'Institutional') ?></td>
-                    <td><span class="badge-warning">Pending SSC Endorsement</span></td>
-                    <td><a href="events.php" class="card-btn btn-sm" style="background:#16a34a; color:#fff;">Review &amp; Endorse</a></td>
-                  </tr>
-                <?php endforeach; ?>
-                <?php foreach ($ssc_pending_budgets as $br): ?>
-                  <tr>
-                    <td><span class="badge-info" style="background:#e0e7ff; color:#3730a3;"><i class="fa-solid fa-hand-holding-dollar"></i> Budget</span></td>
-                    <td><strong><?= htmlspecialchars($br['title']) ?> (₱<?= number_format((float)$br['amount'], 2) ?>)</strong></td>
-                    <td><?= htmlspecialchars($br['club_name']) ?></td>
-                    <td><span class="badge-active">Adviser Endorsed</span></td>
-                    <td><a href="budget.php" class="card-btn btn-sm" style="background:#4338ca; color:#fff;">Audit &amp; Forward</a></td>
-                  </tr>
-                <?php endforeach; ?>
-              <?php endif; ?>
-            </tbody>
-          </table>
+          <div class="resp-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Proposal Title</th>
+                  <th>Organization</th>
+                  <th>Current Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php if (empty($ssc_pending_clubs) && empty($ssc_pending_events) && empty($ssc_pending_budgets)): ?>
+                  <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:24px;">All pending proposals have been reviewed and endorsed.</td></tr>
+                <?php else: ?>
+                  <?php foreach ($ssc_pending_clubs as $cl): ?>
+                    <tr>
+                      <td><span class="badge-info"><i class="fa-solid fa-sitemap"></i> Charter</span></td>
+                      <td><strong>New Org Charter: <?= htmlspecialchars($cl['name']) ?></strong></td>
+                      <td><code><?= htmlspecialchars($cl['code']) ?></code></td>
+                      <td><span class="badge-warning">Pending SSC Charter Review</span></td>
+                      <td><a href="club_directory.php" class="card-btn btn-sm" style="background:#2563eb; color:#fff;">Review Charter</a></td>
+                    </tr>
+                  <?php endforeach; ?>
+                  <?php foreach ($ssc_pending_events as $ev): ?>
+                    <tr>
+                      <td><span class="badge-active" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-calendar-day"></i> Event</span></td>
+                      <td><strong><?= htmlspecialchars($ev['title']) ?></strong> &bull; <?= date('M d, Y', strtotime($ev['event_date'])) ?></td>
+                      <td><?= htmlspecialchars($ev['club_name'] ?? 'Institutional') ?></td>
+                      <td><span class="badge-warning">Pending SSC Endorsement</span></td>
+                      <td><a href="events.php" class="card-btn btn-sm" style="background:#16a34a; color:#fff;">Review &amp; Endorse</a></td>
+                    </tr>
+                  <?php endforeach; ?>
+                  <?php foreach ($ssc_pending_budgets as $br): ?>
+                    <tr>
+                      <td><span class="badge-info" style="background:#e0e7ff; color:#3730a3;"><i class="fa-solid fa-hand-holding-dollar"></i> Budget</span></td>
+                      <td><strong><?= htmlspecialchars($br['title']) ?> (₱<?= number_format((float)$br['amount'], 2) ?>)</strong></td>
+                      <td><?= htmlspecialchars($br['club_name']) ?></td>
+                      <td><span class="badge-active">Adviser Endorsed</span></td>
+                      <td><a href="budget.php" class="card-btn btn-sm" style="background:#4338ca; color:#fff;">Audit &amp; Forward</a></td>
+                    </tr>
+                  <?php endforeach; ?>
+                <?php endif; ?>
+              </tbody>
+            </table>
+          </div>
         </div>
 
       <!-- ══════════════════════════════════════════════════════════════
@@ -484,69 +500,73 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <span style="font-size:0.78rem; font-weight:700; color:#64748b;">Stage 3 Clearance</span>
           </div>
 
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Item Title</th>
-                <th>Scope / Host</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php if (empty($admin_pending_events) && empty($admin_pending_budgets)): ?>
-                <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:24px;">No items awaiting final Admin calendar clearance or disbursement.</td></tr>
-              <?php else: ?>
-                <?php foreach ($admin_pending_events as $ev): ?>
-                  <tr>
-                    <td><span class="badge-active" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-calendar-check"></i> Event</span></td>
-                    <td>
-                      <strong><?= htmlspecialchars($ev['title']) ?></strong>
-                      <?php if (($ev['event_type'] ?? '') === 'Institutional'): ?>
-                        <span class="badge-institutional">School-Wide</span>
-                      <?php endif; ?>
-                    </td>
-                    <td><?= htmlspecialchars($ev['club_name']) ?></td>
-                    <td><span class="badge-warning">Endorsed by SSC &bull; Pending Admin</span></td>
-                    <td><a href="events.php" class="card-btn btn-sm" style="background:#2563eb; color:#fff;"><i class="fa-solid fa-check"></i> Publish to Calendar</a></td>
-                  </tr>
-                <?php endforeach; ?>
-                <?php foreach ($admin_pending_budgets as $br): ?>
-                  <tr>
-                    <td><span class="badge-info" style="background:#e0e7ff; color:#3730a3;"><i class="fa-solid fa-hand-holding-dollar"></i> Budget</span></td>
-                    <td><strong><?= htmlspecialchars($br['title']) ?> (₱<?= number_format((float)$br['amount'], 2) ?>)</strong></td>
-                    <td><?= htmlspecialchars($br['club_name']) ?></td>
-                    <td><span class="badge-info">Awaiting Disbursement</span></td>
-                    <td><a href="budget.php" class="card-btn btn-sm" style="background:#16a34a; color:#fff;"><i class="fa-solid fa-money-bill-wave"></i> Disburse Funds</a></td>
-                  </tr>
-                <?php endforeach; ?>
-              <?php endif; ?>
-            </tbody>
-          </table>
+          <div class="resp-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Item Title</th>
+                  <th>Scope / Host</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php if (empty($admin_pending_events) && empty($admin_pending_budgets)): ?>
+                  <tr><td colspan="5" style="text-align:center; color:#94a3b8; padding:24px;">No items awaiting final Admin calendar clearance or disbursement.</td></tr>
+                <?php else: ?>
+                  <?php foreach ($admin_pending_events as $ev): ?>
+                    <tr>
+                      <td><span class="badge-active" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-calendar-check"></i> Event</span></td>
+                      <td>
+                        <strong><?= htmlspecialchars($ev['title']) ?></strong>
+                        <?php if (($ev['event_type'] ?? '') === 'Institutional'): ?>
+                          <span class="badge-institutional">School-Wide</span>
+                        <?php endif; ?>
+                      </td>
+                      <td><?= htmlspecialchars($ev['club_name']) ?></td>
+                      <td><span class="badge-warning">Endorsed by SSC &bull; Pending Admin</span></td>
+                      <td><a href="events.php" class="card-btn btn-sm" style="background:#2563eb; color:#fff;"><i class="fa-solid fa-check"></i> Publish to Calendar</a></td>
+                    </tr>
+                  <?php endforeach; ?>
+                  <?php foreach ($admin_pending_budgets as $br): ?>
+                    <tr>
+                      <td><span class="badge-info" style="background:#e0e7ff; color:#3730a3;"><i class="fa-solid fa-hand-holding-dollar"></i> Budget</span></td>
+                      <td><strong><?= htmlspecialchars($br['title']) ?> (₱<?= number_format((float)$br['amount'], 2) ?>)</strong></td>
+                      <td><?= htmlspecialchars($br['club_name']) ?></td>
+                      <td><span class="badge-info">Awaiting Disbursement</span></td>
+                      <td><a href="budget.php" class="card-btn btn-sm" style="background:#16a34a; color:#fff;"><i class="fa-solid fa-money-bill-wave"></i> Disburse Funds</a></td>
+                    </tr>
+                  <?php endforeach; ?>
+                <?php endif; ?>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Inter-System API Integration Status Terminal -->
         <div class="table-card" style="margin-bottom:20px;">
           <h3 style="margin:0 0 14px; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-server" style="color:#2563eb;"></i> Inter-System API Integration Gateway</h3>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Target SMS Subsystem</th>
-                <th>Integration Protocol</th>
-                <th>Direction</th>
-                <th>Sync Status</th>
-                <th>Latency / Health</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td>1</td><td><strong>Registrar SIS</strong></td><td>REST API / OAuth 2.0</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> 14ms &bull; 99.9% Uptime</span></td></tr>
-              <tr><td>2</td><td><strong>Enrollment Management</strong></td><td>Encrypted Webhook</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> 22ms &bull; Connected</span></td></tr>
-              <tr><td>3</td><td><strong>Payment Gateway System</strong></td><td>Direct SQL / REST</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Verified</span></td></tr>
-              <tr><td>4</td><td><strong>Class Scheduling System</strong></td><td>JSON Feed API</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Synced</span></td></tr>
-            </tbody>
-          </table>
+          <div class="resp-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Target SMS Subsystem</th>
+                  <th>Integration Protocol</th>
+                  <th>Direction</th>
+                  <th>Sync Status</th>
+                  <th>Latency / Health</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>1</td><td><strong>Registrar SIS</strong></td><td>REST API / OAuth 2.0</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> 14ms &bull; 99.9% Uptime</span></td></tr>
+                <tr><td>2</td><td><strong>Enrollment Management</strong></td><td>Encrypted Webhook</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> 22ms &bull; Connected</span></td></tr>
+                <tr><td>3</td><td><strong>Payment Gateway System</strong></td><td>Direct SQL / REST</td><td>Bi-directional</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Verified</span></td></tr>
+                <tr><td>4</td><td><strong>Class Scheduling System</strong></td><td>JSON Feed API</td><td>Inflow</td><td><span class="badge-active">Active Sync</span></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Synced</span></td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
       <!-- ══════════════════════════════════════════════════════════════
@@ -556,34 +576,36 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <!-- Adviser View -->
         <div class="table-card" style="margin-bottom:20px;">
           <h3><i class="fa-solid fa-inbox" style="color:#2563eb;"></i> Pending Endorsements Queue (Faculty Adviser Clearance)</h3>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Requisition Title</th>
-                <th>Organization</th>
-                <th>Estimated Cost</th>
-                <th>Submission Date</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php if (empty($pending_endorsements)): ?>
-                <tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:24px;">No pending requisitions require adviser clearance.</td></tr>
-              <?php else: ?>
-                <?php $idx = 1; foreach ($pending_endorsements as $req): ?>
-                  <tr>
-                    <td><?= $idx++ ?></td>
-                    <td><strong><?= htmlspecialchars($req['title']) ?></strong></td>
-                    <td><?= htmlspecialchars($req['club_name']) ?></td>
-                    <td>₱<?= number_format((float)$req['amount'], 2) ?></td>
-                    <td><?= date('M d, Y', strtotime($req['created_at'] ?? 'now')) ?></td>
-                    <td><a href="budget.php" class="card-btn btn-sm"><i class="fa-solid fa-eye"></i> Endorse Budget</a></td>
-                  </tr>
-                <?php endforeach; ?>
-              <?php endif; ?>
-            </tbody>
-          </table>
+          <div class="resp-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Requisition Title</th>
+                  <th>Organization</th>
+                  <th>Estimated Cost</th>
+                  <th>Submission Date</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php if (empty($pending_endorsements)): ?>
+                  <tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:24px;">No pending requisitions require adviser clearance.</td></tr>
+                <?php else: ?>
+                  <?php $idx = 1; foreach ($pending_endorsements as $req): ?>
+                    <tr>
+                      <td><?= $idx++ ?></td>
+                      <td><strong><?= htmlspecialchars($req['title']) ?></strong></td>
+                      <td><?= htmlspecialchars($req['club_name']) ?></td>
+                      <td>₱<?= number_format((float)$req['amount'], 2) ?></td>
+                      <td><?= date('M d, Y', strtotime($req['created_at'] ?? 'now')) ?></td>
+                      <td><a href="budget.php" class="card-btn btn-sm"><i class="fa-solid fa-eye"></i> Endorse Budget</a></td>
+                    </tr>
+                  <?php endforeach; ?>
+                <?php endif; ?>
+              </tbody>
+            </table>
+          </div>
         </div>
 
       <?php else: ?>

@@ -1,12 +1,22 @@
 /* ── Dashboard styles ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+html {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   background: #e8edf4;
   display: flex;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
   overflow-x: hidden;
+  position: relative;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -249,6 +259,9 @@ a.sidebar-item {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  overflow-x: hidden;
   margin-left: 210px;           /* same as sidebar width */
   transition: margin-left 0.25s ease;
 }
@@ -513,6 +526,16 @@ body:has(.sidebar.collapsed) .main {
   gap: 8px;
 }
 
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  overflow-x: hidden;
+}
+
 /* Unified dashboard container for seamless alignment */
 .content-body {
   padding: 0 24px 40px;
@@ -520,6 +543,10 @@ body:has(.sidebar.collapsed) .main {
   flex-direction: column;
   gap: 20px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 /* ── Info cards row ── */
@@ -645,7 +672,27 @@ body:has(.sidebar.collapsed) .main {
   border: 1px solid #e2e8f0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f8fafc;
+}
+
+.table-card::-webkit-scrollbar {
+  height: 6px;
+}
+.table-card::-webkit-scrollbar-track {
+  background: #f8fafc;
+  border-radius: 4px;
+}
+.table-card::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+.table-card::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .table-card h3 {
@@ -1294,18 +1341,47 @@ body:has(.sidebar.collapsed) .toast {
 /* ── Tablet (≤900px) — sidebar overlays, content full width ── */
 @media (max-width: 900px) {
 
-  /* Sidebar collapses off-screen */
-  .sidebar { width: 0; overflow: hidden; }
+  /* Sidebar off-canvas overlay */
+  .sidebar {
+    width: 240px;
+    max-width: 80vw;
+    transform: translateX(-100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: none;
+    z-index: 1000;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
 
   /* When hamburger opens it, slide in over content as overlay */
   .sidebar:not(.collapsed) {
-    width: 240px;
-    box-shadow: 4px 0 24px rgba(0,0,0,0.22);
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0,0,0,0.3);
+  }
+
+  .sidebar.collapsed {
+    transform: translateX(-100%);
+    box-shadow: none;
   }
 
   /* Main content fills full width; prevent body from overflowing */
-  .main { margin-left: 0 !important; overflow-x: hidden; }
-  body { overflow-x: hidden; }
+  .main {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+  }
+  body {
+    overflow-x: hidden !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+  html {
+    overflow-x: hidden !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
 
   /* Toast stretches full width */
   .toast { left: 12px !important; right: 12px; }
@@ -1517,11 +1593,18 @@ body:has(.sidebar.collapsed) .toast {
     margin-top: 4px;
   }
 
-  /* Ensure table cards allow smooth horizontal scrolling */
-  .table-card { overflow: visible; }
+  /* Ensure table cards allow smooth horizontal scrolling inside without overflowing the viewport */
+  .table-card {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
   .table-responsive,
   .resp-table-wrap {
     width: 100%;
+    max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     margin-bottom: 0;
@@ -1530,7 +1613,11 @@ body:has(.sidebar.collapsed) .toast {
     scrollbar-width: thin;
     scrollbar-color: #cbd5e1 #f8fafc;
   }
-  .data-table { min-width: 580px; }
+  .resp-table {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+  .data-table:not(.resp-table) { min-width: 580px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════

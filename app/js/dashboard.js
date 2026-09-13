@@ -26,6 +26,18 @@ if (window.innerWidth <= 900 && sidebar) {
     sidebar.classList.add('collapsed');
 }
 
+// Window resize handler to maintain clean responsive states
+window.addEventListener('resize', () => {
+    if (window.innerWidth <= 900) {
+        if (sidebar && !sidebar.classList.contains('collapsed')) {
+            sidebar.classList.add('collapsed');
+            if (sidebarOverlay) sidebarOverlay.classList.remove('active');
+        }
+    } else {
+        if (sidebarOverlay) sidebarOverlay.classList.remove('active');
+    }
+});
+
 hamburgerBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
     if (sidebar) {
