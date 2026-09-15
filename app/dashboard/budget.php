@@ -201,13 +201,13 @@ foreach ($budget_requests as $req) {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 16px;
-      margin-bottom: 24px;
+      margin-bottom: 0;
     }
     .kpi-box {
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 14px;
-      padding: 20px 22px;
+      padding: 20px 24px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -454,6 +454,14 @@ foreach ($budget_requests as $req) {
       letter-spacing: 0.05em;
       white-space: nowrap;
     }
+    .ledger-table th:first-child,
+    .ledger-table td:first-child {
+      padding-left: 24px;
+    }
+    .ledger-table th:last-child,
+    .ledger-table td:last-child {
+      padding-right: 24px;
+    }
     .ledger-table tbody tr {
       border-bottom: 1px solid #f1f5f9;
       transition: background 0.15s ease;
@@ -469,6 +477,18 @@ foreach ($budget_requests as $req) {
       vertical-align: middle;
       color: #334155;
       font-size: 0.85rem;
+    }
+
+    /* Uniform Ledger Pagination Layout */
+    .ledger-container .pagination-toolbar {
+      padding: 16px 24px 20px;
+      margin-top: 0;
+      border-top: 1px solid #e2e8f0;
+      background: #ffffff;
+    }
+    .ledger-container .pagination-controls {
+      width: 100%;
+      justify-content: space-between;
     }
 
     .empty-state-cell {
@@ -865,7 +885,7 @@ foreach ($budget_requests as $req) {
           </div>
 
           <!-- Responsive Table -->
-          <div class="ledger-table-wrap">
+          <div class="ledger-table-wrap resp-table-wrap">
             <table class="ledger-table" id="budgetLedgerTable">
               <thead>
                 <tr>

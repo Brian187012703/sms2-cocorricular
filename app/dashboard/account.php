@@ -56,6 +56,20 @@ $role_labels = [
 ];
 $role = $role_labels[$sess_role] ?? 'User';
 
+$adv_club = null;
+if ($sess_role === 'club_adviser') {
+    $stmt = $conn->prepare("SELECT c.id, c.name, c.code FROM clubs c JOIN club_memberships cm ON cm.club_id = c.id WHERE cm.user_id = ? AND cm.status = 'Active' AND c.deleted_at IS NULL LIMIT 1");
+    if ($stmt) {
+        $stmt->bind_param('i', $user_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res && $res->num_rows > 0) {
+            $adv_club = $res->fetch_assoc();
+        }
+        $stmt->close();
+    }
+}
+
 // Connection remains open for sidebar and qr_modal usage
 ?>
 <!DOCTYPE html>
@@ -152,9 +166,21 @@ require_once __DIR__ . '/../shared/sidebar.php';
           </div>
 
           <h3 class="profile-user-name" id="displayName"><?= $first_name . ' ' . $last_name ?></h3>
-          <span class="profile-user-role"><?= $role ?></span>
+          <span class="profile-user-role">
+            <?php if ($sess_role === 'club_adviser' && !empty($adv_club)): ?>
+              Adviser &bull; <?= htmlspecialchars($adv_club['code']) ?>
+            <?php else: ?>
+              <?= $role ?>
+            <?php endif; ?>
+          </span>
 
           <div class="profile-details-list">
+            <?php if ($sess_role === 'club_adviser' && !empty($adv_club)): ?>
+            <div class="profile-detail-item">
+              <i class="fa-solid fa-sitemap"></i>
+              <span>Advising: <strong><?= htmlspecialchars($adv_club['name']) ?></strong></span>
+            </div>
+            <?php endif; ?>
             <div class="profile-detail-item">
               <i class="fa-solid fa-envelope"></i>
               <span><?= $email ?></span>

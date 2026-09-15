@@ -47,6 +47,7 @@ if ($ev_res) {
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>" />
   <link rel="stylesheet" href="../css/page-loader.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <script src="../js/qrcode.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <meta name="loader-logo" content="../images/BCP_LOGO.png" />
   <script src="../js/page-loader.js"></script>

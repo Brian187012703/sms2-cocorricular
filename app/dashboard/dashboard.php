@@ -149,6 +149,7 @@ if ($sess_role === 'club_adviser') {
         if ($first_c) {
             $adv_cid = (int)$first_c['id'];
             $adviser_club_name = $first_c['code'];
+            $adv_club = $first_c;
         }
     }
     if (!empty($adv_cid)) {
@@ -339,6 +340,11 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <div style="margin-top:6px; font-size:0.78rem; color:#64748b; line-height:1.4;">
                 <?= htmlspecialchars($student_info['student_number'] ?? '2026-STU') ?> &bull; <?= htmlspecialchars($student_info['course']) ?><br/>
                 <?= htmlspecialchars($student_info['year_level']) ?> - Section <?= htmlspecialchars($student_info['section']) ?>
+              </div>
+            <?php elseif ($sess_role === 'club_adviser' && !empty($adv_club)): ?>
+              <div style="margin-top:6px; font-size:0.78rem; color:#64748b; line-height:1.4;">
+                Adviser &bull; <strong style="color:#1a3a8c;"><?= htmlspecialchars($adv_club['code']) ?></strong><br/>
+                <span style="color:#334155; font-weight:600;"><?= htmlspecialchars($adv_club['name']) ?></span>
               </div>
             <?php else: ?>
               <?= htmlspecialchars($role_title) ?>

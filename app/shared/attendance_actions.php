@@ -25,22 +25,28 @@ switch ($action) {
     case 'list_event': {
         if (!in_array($user_role, ['club_adviser','ssc','admin']))
             aRespond(false, 'Not authorized.');
-        $event_id = (int)($_GET['event_id'] ?? 0);
+        $event_id = (int)($_GET['event_id'] ?? $_POST['event_id'] ?? 0);
         if ($event_id <= 0) aRespond(false, 'Invalid event ID.');
 
         $stmt = $conn->prepare(
-            "SELECT al.id, al.check_in, al.method,
-                    u.first_name, u.last_name, u.email
+            "SELECT al.id, al.user_id, al.check_in, al.method,
+                    u.first_name, u.last_name, u.email,
+                    s.student_number
              FROM attendance_logs al
              JOIN users u ON u.id = al.user_id
+             LEFT JOIN students s ON s.id = (
+                 SELECT s2.id FROM students s2 
+                 WHERE s2.user_id = u.id OR (s2.first_name = u.first_name AND s2.last_name = u.last_name) 
+                 LIMIT 1
+             )
              WHERE al.event_id = ?
-             ORDER BY al.check_in ASC"
+             ORDER BY al.check_in DESC"
         );
         $stmt->bind_param('i', $event_id);
         $stmt->execute();
         $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
-        aRespond(true, 'OK', ['attendees' => $rows]);
+        aRespond(true, 'OK', ['attendees' => $rows, 'count' => count($rows)]);
     }
     // -- LOG via QR scan -------------------------------------------------------
     // Mode A: User (Student/Staff) scans Event Poster QR (BCP-EVENT-{id} or BCP-EVENT-LOG-{id}) -> Self Check-in
@@ -49,6 +55,13 @@ switch ($action) {
         $qr_data  = trim($_POST['qr_data']  ?? '');
         $event_id = (int)($_POST['event_id'] ?? 0);
         if (!$qr_data) aRespond(false, 'QR data is required.');
+
+        // Extract code if wrapped in URL
+        if (preg_match('/(BCP-EVENT(?:-LOG)?-\d+)/i', $qr_data, $url_m)) {
+            $qr_data = $url_m[1];
+        } elseif (preg_match('/(BCP-(?:STUDENT|STAFF|USER)-\d+)/i', $qr_data, $url_m)) {
+            $qr_data = $url_m[1];
+        }
 
         // ── MODE A: Scanned an EVENT QR Code (Self Check-in) ────────
         if (preg_match('/BCP-EVENT(?:-LOG)?-(\d+)/i', $qr_data, $m)) {
@@ -61,7 +74,7 @@ switch ($action) {
                 aRespond(false, "You are already checked in to \"{$ev['title']}\".", ['already_logged' => true]);
             }
 
-            $method = 'QR_SELF';
+            $method = 'QR';
             $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, method, logged_by) VALUES (?, ?, ?, ?)");
             $stmt->bind_param('iisi', $target_event_id, $user_id, $method, $user_id);
             if (!$stmt->execute()) aRespond(false, 'Failed to record attendance: ' . $stmt->error);
@@ -105,6 +118,53 @@ switch ($action) {
             }
             log_audit($conn, $user_id, 'attendance_qr', 'attendance_logs', $target_user_id, "Checked in user #$target_user_id for event #$event_id via QR");
             aRespond(true, "{$u['first_name']} {$u['last_name']} checked in successfully!", ['student_name' => $u['first_name'] . ' ' . $u['last_name']]);
+        }
+
+        // ── MODE C: Support Student Number (e.g. 2024-10001) or Username ────────
+        if (in_array($user_role, ['club_adviser','ssc','admin']) && $event_id > 0) {
+            // Check students table by student_number
+            $stu_stmt = $conn->prepare("SELECT u.id, u.first_name, u.last_name FROM students s JOIN users u ON (s.user_id = u.id OR (u.first_name = s.first_name AND u.last_name = s.last_name)) WHERE s.student_number = ? LIMIT 1");
+            if ($stu_stmt) {
+                $stu_stmt->bind_param('s', $qr_data);
+                $stu_stmt->execute();
+                $sres = $stu_stmt->get_result()->fetch_assoc();
+                $stu_stmt->close();
+                if ($sres) {
+                    $target_user_id = (int)$sres['id'];
+                    $dup = $conn->query("SELECT id FROM attendance_logs WHERE event_id = $event_id AND user_id = $target_user_id");
+                    if ($dup && $dup->num_rows > 0) {
+                        aRespond(false, "{$sres['first_name']} {$sres['last_name']} is already checked in.", ['already_logged' => true]);
+                    }
+                    $method = 'QR';
+                    $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, method, logged_by) VALUES (?, ?, ?, ?)");
+                    $stmt->bind_param('iisi', $event_id, $target_user_id, $method, $user_id);
+                    $stmt->execute();
+                    $stmt->close();
+                    aRespond(true, "{$sres['first_name']} {$sres['last_name']} checked in successfully!", ['student_name' => $sres['first_name'] . ' ' . $sres['last_name']]);
+                }
+            }
+
+            // Check users by username
+            $u_stmt = $conn->prepare("SELECT id, first_name, last_name FROM users WHERE username = ? LIMIT 1");
+            if ($u_stmt) {
+                $u_stmt->bind_param('s', $qr_data);
+                $u_stmt->execute();
+                $ures = $u_stmt->get_result()->fetch_assoc();
+                $u_stmt->close();
+                if ($ures) {
+                    $target_user_id = (int)$ures['id'];
+                    $dup = $conn->query("SELECT id FROM attendance_logs WHERE event_id = $event_id AND user_id = $target_user_id");
+                    if ($dup && $dup->num_rows > 0) {
+                        aRespond(false, "{$ures['first_name']} {$ures['last_name']} is already checked in.", ['already_logged' => true]);
+                    }
+                    $method = 'QR';
+                    $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, method, logged_by) VALUES (?, ?, ?, ?)");
+                    $stmt->bind_param('iisi', $event_id, $target_user_id, $method, $user_id);
+                    $stmt->execute();
+                    $stmt->close();
+                    aRespond(true, "{$ures['first_name']} {$ures['last_name']} checked in successfully!", ['student_name' => $ures['first_name'] . ' ' . $ures['last_name']]);
+                }
+            }
         }
 
         // Fallback for numeric IDs if staff scanner has an event selected

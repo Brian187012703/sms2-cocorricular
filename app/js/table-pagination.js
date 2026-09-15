@@ -39,7 +39,7 @@
 
     init() {
       // Ensure table is inside a responsive overflow wrapper
-      if (!this.table.parentElement.classList.contains('table-responsive') && !this.table.parentElement.classList.contains('resp-table-wrap')) {
+      if (!this.table.parentElement.classList.contains('table-responsive') && !this.table.parentElement.classList.contains('resp-table-wrap') && !this.table.parentElement.classList.contains('ledger-table-wrap')) {
         const respWrap = document.createElement('div');
         respWrap.className = 'table-responsive';
         this.table.parentNode.insertBefore(respWrap, this.table);
@@ -91,7 +91,7 @@
       this.toolbar.appendChild(this.controlsEl);
 
       // Insert toolbar after responsive container
-      const container = this.table.closest('.table-responsive') || this.table.closest('.resp-table-wrap') || this.table;
+      const container = this.table.closest('.table-responsive') || this.table.closest('.resp-table-wrap') || this.table.closest('.ledger-table-wrap') || this.table;
       container.parentNode.insertBefore(this.toolbar, container.nextSibling);
 
       // Bind search filter if provided
