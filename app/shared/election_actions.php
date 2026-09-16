@@ -5,12 +5,18 @@
 //  voting, and results calculation.
 // ============================================================
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
-
 
 if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized session. Please sign in.']);
     exit;
+}
+
+// CSRF check on mutating requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
 }
 
 $user_id   = (int)$_SESSION['user_id'];
@@ -251,42 +257,178 @@ if ($action === 'cast_vote') {
         $chk_m->close();
     }
 
-    // Check double voting in DB
-    $chk = $conn->prepare("SELECT id FROM election_votes WHERE election_id = ? AND user_id = ?");
+    $conn->begin_transaction();
+    try {
+        // Check double voting in DB with lock
+        $chk = $conn->prepare("SELECT id FROM election_votes WHERE election_id = ? AND user_id = ? FOR UPDATE");
+        $chk->bind_param('ii', $election_id, $user_id);
+        $chk->execute();
+        if ($chk->get_result()->fetch_assoc()) {
+            $chk->close();
+            $conn->rollback();
+            echo json_encode(['success' => false, 'message' => 'You have already cast your vote in this election.']);
+            exit;
+        }
+        $chk->close();
 
-    $chk->bind_param('ii', $election_id, $user_id);
-    $chk->execute();
-    if ($chk->get_result()->fetch_assoc()) {
-        echo json_encode(['success' => false, 'message' => 'You have already cast your vote in this election.']);
-        exit;
-    }
-    $chk->close();
+        $votes_json = is_string($votes_data) ? $votes_data : json_encode($votes_data);
 
-    $votes_json = is_string($votes_data) ? $votes_data : json_encode($votes_data);
-
-    // Save vote record
-    $stmt = $conn->prepare("INSERT INTO election_votes (election_id, user_id, votes_json) VALUES (?, ?, ?)");
-    $stmt->bind_param('iis', $election_id, $user_id, $votes_json);
-
-    if ($stmt->execute()) {
+        // Save vote record
+        $stmt = $conn->prepare("INSERT INTO election_votes (election_id, user_id, votes_json) VALUES (?, ?, ?)");
+        $stmt->bind_param('iis', $election_id, $user_id, $votes_json);
+        if (!$stmt->execute()) {
+            $err = $stmt->error;
+            $stmt->close();
+            throw new Exception("Error recording vote: " . $err);
+        }
         $stmt->close();
 
-        // Increment candidate vote counts
+        // Increment candidate vote counts safely with prepared statement
         $decoded = is_string($votes_data) ? json_decode($votes_data, true) : $votes_data;
         if (is_array($decoded)) {
+            $upd_stmt = $conn->prepare("UPDATE election_candidates SET votes_count = votes_count + 1 WHERE id = ? AND election_id = ?");
             foreach ($decoded as $pos => $cand_id) {
                 $c_id = (int)$cand_id;
                 if ($c_id > 0) {
-                    $conn->query("UPDATE election_candidates SET votes_count = votes_count + 1 WHERE id = {$c_id}");
+                    $upd_stmt->bind_param('ii', $c_id, $election_id);
+                    $upd_stmt->execute();
                 }
             }
+            $upd_stmt->close();
         }
 
+        $conn->commit();
         $_SESSION['votes_cast'][] = $election_id;
         echo json_encode(['success' => true, 'message' => 'Your ballot has been cast and verified!']);
-    } else {
-        echo json_encode(['success' => false, 'message' => 'Error recording vote: ' . $conn->error]);
+    } catch (Throwable $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
+    exit;
+}
+
+// ── 6. APPOINT ELECTION WINNER AS OFFICER ────────────────────────────
+if ($action === 'appoint_winner') {
+    if (!in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
+        echo json_encode(['success' => false, 'message' => 'Permission denied. Only Advisers and SSC Officers can appoint election winners.']);
+        exit;
+    }
+
+    $election_id  = (int)($_POST['election_id'] ?? 0);
+    $candidate_id = (int)($_POST['candidate_id'] ?? 0);
+
+    if ($election_id <= 0 || $candidate_id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid election or candidate ID.']);
+        exit;
+    }
+
+    // 1. Get election and candidate info
+    $stmt = $conn->prepare("
+        SELECT ec.id, ec.name, ec.position, e.club_id, e.title as election_title, c.name as club_name, c.code as club_code
+        FROM election_candidates ec
+        JOIN elections e ON e.id = ec.election_id
+        JOIN clubs c ON c.id = e.club_id
+        WHERE ec.id = ? AND ec.election_id = ?
+    ");
+    $stmt->bind_param('ii', $candidate_id, $election_id);
+    $stmt->execute();
+    $cand = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$cand) {
+        echo json_encode(['success' => false, 'message' => 'Candidate record not found for this election.']);
+        exit;
+    }
+
+    $club_id   = (int)$cand['club_id'];
+    $cand_name = trim($cand['name']);
+    $position  = trim($cand['position']);
+
+    // 2. Locate user in users table matching candidate name
+    $parts = preg_split('/\s+/', $cand_name, 2);
+    $first = $parts[0] ?? '';
+    $last  = $parts[1] ?? '';
+
+    $target_user_id = 0;
+    $u_stmt = $conn->prepare("
+        SELECT id FROM users
+        WHERE (TRIM(CONCAT(first_name, ' ', last_name)) = ?
+           OR (first_name = ? AND last_name = ?)
+           OR username = ?)
+        LIMIT 1
+    ");
+    $u_stmt->bind_param('ssss', $cand_name, $first, $last, $cand_name);
+    $u_stmt->execute();
+    $u_res = $u_stmt->get_result()->fetch_assoc();
+    $u_stmt->close();
+
+    if ($u_res) {
+        $target_user_id = (int)$u_res['id'];
+    } else {
+        // Fallback: search in students table
+        $s_stmt = $conn->prepare("
+            SELECT u.id FROM users u
+            JOIN students s ON (s.user_id = u.id OR (u.first_name = s.first_name AND u.last_name = s.last_name))
+            WHERE TRIM(CONCAT(s.first_name, ' ', s.last_name)) = ?
+               OR s.student_number = ?
+            LIMIT 1
+        ");
+        $s_stmt->bind_param('ss', $cand_name, $cand_name);
+        $s_stmt->execute();
+        $s_res = $s_stmt->get_result()->fetch_assoc();
+        $s_stmt->close();
+        if ($s_res) {
+            $target_user_id = (int)$s_res['id'];
+        }
+    }
+
+    if ($target_user_id <= 0) {
+        echo json_encode(['success' => false, 'message' => "Could not locate a user account for candidate '$cand_name'."]);
+        exit;
+    }
+
+    // 3. Update club_memberships role to 'Officer' (Do NOT change global users.role)
+    $chk_mem = $conn->prepare("SELECT id, role FROM club_memberships WHERE club_id = ? AND user_id = ?");
+    $chk_mem->bind_param('ii', $club_id, $target_user_id);
+    $chk_mem->execute();
+    $mem_row = $chk_mem->get_result()->fetch_assoc();
+    $chk_mem->close();
+
+    if ($mem_row) {
+        $upd_mem = $conn->prepare("UPDATE club_memberships SET role = 'Officer', status = 'Active' WHERE id = ?");
+        $upd_mem->bind_param('i', $mem_row['id']);
+        $upd_mem->execute();
+        $upd_mem->close();
+    } else {
+        $ins_mem = $conn->prepare("INSERT INTO club_memberships (club_id, user_id, role, status) VALUES (?, ?, 'Officer', 'Active')");
+        $ins_mem->bind_param('ii', $club_id, $target_user_id);
+        $ins_mem->execute();
+        $ins_mem->close();
+    }
+
+    // 4. Mark candidate as appointed in election_candidates
+    $conn->query("UPDATE election_candidates SET is_appointed = 1 WHERE id = $candidate_id");
+
+    // 5. Notify student of officer appointment
+    if (function_exists('push_notification')) {
+        push_notification(
+            $conn,
+            $target_user_id,
+            "Officer Proclamation: $position",
+            "Congratulations! You have been officially proclaimed and appointed as $position of " . ($cand['club_code'] ?? 'your organization') . ".",
+            'election'
+        );
+    }
+
+    // 6. Log audit
+    log_audit($conn, $user_id, 'appoint_officer', 'club_memberships', $target_user_id, "Appointed $cand_name as Officer ($position) for club $club_id");
+
+    echo json_encode([
+        'success'      => true,
+        'message'      => "$cand_name has been successfully appointed as an Organization Officer ($position)!",
+        'candidate_id' => $candidate_id,
+        'user_id'      => $target_user_id
+    ]);
     exit;
 }
 

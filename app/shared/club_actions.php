@@ -15,6 +15,11 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
+// CSRF check on mutating POST requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+}
+
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
 $action    = $_POST['action'] ?? $_GET['action'] ?? '';
@@ -42,10 +47,10 @@ switch ($action) {
         cRespond(true, 'OK', ['clubs' => $clubs]);
     }
 
-    // ── UPDATE CLUB STATUS (SSC / Admin only) ─────────────────
+    // ── UPDATE CLUB STATUS (Admin only) ──────────────────────
     case 'update_status': {
-        if (!in_array($user_role, ['ssc', 'admin'])) {
-            cRespond(false, 'Only SSC Officers and Administrators can modify charter status.');
+        if ($user_role !== 'admin') {
+            cRespond(false, 'Only System Administrators can modify charter status.');
         }
 
         $club_id = (int)($_POST['club_id'] ?? 0);
@@ -68,10 +73,10 @@ switch ($action) {
         cRespond(true, "Charter status for \"{$c['name']}\" updated to \"$status\"!");
     }
 
-    // ── UPDATE ADVISER ASSIGNMENT (SSC / Admin only) ──────────
+    // ── UPDATE ADVISER ASSIGNMENT (Admin only) ────────────────
     case 'update_adviser': {
-        if (!in_array($user_role, ['ssc', 'admin'])) {
-            cRespond(false, 'Not authorized.');
+        if ($user_role !== 'admin') {
+            cRespond(false, 'Only System Administrators can assign or change faculty advisers.');
         }
 
         $club_id      = (int)($_POST['club_id'] ?? 0);
@@ -92,10 +97,10 @@ switch ($action) {
         cRespond(true, "Faculty adviser assigned successfully!");
     }
 
-    // ── CHARTER NEW ORGANIZATION (SSC / Admin) ────────────────
+    // ── CHARTER NEW ORGANIZATION (Admin only) ─────────────────
     case 'create_club': {
-        if (!in_array($user_role, ['ssc', 'admin'])) {
-            cRespond(false, 'Only SSC and Admin can charter organizations.');
+        if ($user_role !== 'admin') {
+            cRespond(false, 'Only System Administrators can charter new organizations.');
         }
 
         $code         = strtoupper(trim($_POST['code'] ?? ''));
@@ -130,10 +135,10 @@ switch ($action) {
         cRespond(true, "Organization \"$name\" ($code) chartered successfully!", ['club_id' => $new_cid]);
     }
 
-    // ── SOFT DELETE ORGANIZATION (SSC / Admin) ───────────────
+    // ── SOFT DELETE ORGANIZATION (Admin only) ─────────────────
     case 'delete_club': {
-        if (!in_array($user_role, ['ssc', 'admin'])) {
-            cRespond(false, 'Only SSC and Admin can delete organizations.');
+        if ($user_role !== 'admin') {
+            cRespond(false, 'Only System Administrators can delete or deactivate organizations.');
         }
 
         $club_id = (int)($_POST['club_id'] ?? 0);

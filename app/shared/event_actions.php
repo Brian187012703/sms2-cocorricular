@@ -13,10 +13,16 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
 require_once __DIR__ . '/ph_holidays.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) { 
     echo json_encode(['success' => false, 'message' => 'Not authenticated.']); 
     exit; 
+}
+
+// CSRF check on mutating requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
 }
 
 $user_id   = (int)$_SESSION['user_id'];
@@ -339,7 +345,7 @@ switch ($action) {
                        s.student_number, s.course, s.year_level, s.phone, s.section
                 FROM event_registrations er
                 JOIN users u ON u.id = er.user_id
-                LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+                LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
                 WHERE er.event_id = ?
                 ORDER BY er.registered_at ASC";
         $stmt = $conn->prepare($sql);

@@ -42,12 +42,12 @@ $all_org_members = [];
 $res_members = $conn->query(
     "SELECT cm.id, cm.club_id, cm.role AS member_role, cm.status, cm.joined_at,
             c.name AS club_name, c.code AS club_code,
-            u.first_name, u.last_name, u.email,
-            s.course, s.year_level
+            u.id AS user_id, u.username, u.first_name, u.last_name, u.email,
+            s.student_number, s.course, s.year_level, s.section
      FROM club_memberships cm
      JOIN clubs c ON c.id = cm.club_id
      JOIN users u ON u.id = cm.user_id
-     LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+     LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
      WHERE cm.status = 'Active'
      ORDER BY c.name, cm.joined_at DESC"
 );
@@ -65,13 +65,75 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
   $bind_params = [];
   $bind_types = '';
 
+  $my_club_id = null;
+  $my_club_name = '';
+  $my_club_code = '';
+
   if ($sess_role === 'club_adviser') {
-    $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-    $cm->bind_param('i', $user_id);
-    $cm->execute();
-    $cm->bind_result($my_club_id);
-    $cm->fetch();
-    $cm->close();
+    // 1. Try club_memberships
+    $cm = $conn->prepare("SELECT cm.club_id, c.name, c.code FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id=? AND cm.status='Active' AND c.deleted_at IS NULL LIMIT 1");
+    if ($cm) {
+      $cm->bind_param('i', $user_id);
+      $cm->execute();
+      $cm->bind_result($cid, $cname, $ccode);
+      if ($cm->fetch()) {
+        $my_club_id = $cid;
+        $my_club_name = $cname;
+        $my_club_code = $ccode;
+      }
+      $cm->close();
+    }
+
+    // 2. Fallback: match by username prefix (e.g. cssec.adviser -> CSSEC)
+    if (empty($my_club_id)) {
+      $sess_uname = $_SESSION['username'] ?? '';
+      $prefix = strtoupper(explode('.', $sess_uname)[0] ?? '');
+      if (!empty($prefix)) {
+        $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE (code = ? OR REPLACE(code, '-', '') = ?) AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+        if ($c_stmt) {
+          $c_stmt->bind_param('ss', $prefix, $prefix);
+          $c_stmt->execute();
+          $c_stmt->bind_result($cid, $cname, $ccode);
+          if ($c_stmt->fetch()) {
+            $my_club_id = $cid;
+            $my_club_name = $cname;
+            $my_club_code = $ccode;
+          }
+          $c_stmt->close();
+        }
+      }
+    }
+
+    // 3. Fallback: match by adviser name
+    if (empty($my_club_id)) {
+      $sess_last_raw = $_SESSION['last_name'] ?? '';
+      if (!empty($sess_last_raw)) {
+        $adv_like = '%' . $sess_last_raw . '%';
+        $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE adviser_name LIKE ? AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+        if ($c_stmt) {
+          $c_stmt->bind_param('s', $adv_like);
+          $c_stmt->execute();
+          $c_stmt->bind_result($cid, $cname, $ccode);
+          if ($c_stmt->fetch()) {
+            $my_club_id = $cid;
+            $my_club_name = $cname;
+            $my_club_code = $ccode;
+          }
+          $c_stmt->close();
+        }
+      }
+    }
+
+    // 4. Fallback: first active club
+    if (empty($my_club_id)) {
+      $first_c = $conn->query("SELECT id, name, code FROM clubs WHERE status = 'Active' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc();
+      if ($first_c) {
+        $my_club_id = (int)$first_c['id'];
+        $my_club_name = $first_c['name'];
+        $my_club_code = $first_c['code'];
+      }
+    }
+
     if (!empty($my_club_id)) {
       $club_filter = 'AND cm.club_id = ?';
       $bind_params[] = (int) $my_club_id;
@@ -92,7 +154,7 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
           JOIN clubs c ON c.id = cm.club_id
           JOIN users u ON u.id = cm.user_id
           LEFT JOIN club_applications ca ON (ca.id = (SELECT MAX(id) FROM club_applications WHERE club_id = cm.club_id AND user_id = cm.user_id))
-          LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+          LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
           WHERE cm.status = 'Pending' $club_filter
           ORDER BY cm.joined_at ASC";
   $stmt = $conn->prepare($sql);
@@ -120,10 +182,12 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
 
   $sql = "SELECT cm.id, cm.role AS member_role, cm.status, cm.joined_at,
                    c.name AS club_name, c.code AS club_code,
-                   u.first_name, u.last_name, u.email
+                   u.id AS user_id, u.username, u.first_name, u.last_name, u.email,
+                   s.student_number, s.course, s.year_level, s.section
             FROM club_memberships cm
             JOIN clubs c ON c.id = cm.club_id
             JOIN users u ON u.id = cm.user_id
+            LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
             WHERE cm.status = 'Active'
               AND u.role NOT IN ('club_adviser', 'admin')
               AND LOWER(cm.role) != 'adviser'
@@ -160,6 +224,8 @@ $active_count = count($active_members);
   <?php
   $APP_ROOT = '../';
   $ACTIVE_NAV = 'roster';
+  $active_view = $_GET['view'] ?? 'queue';
+  $ACTIVE_SUB = $active_view;
   require_once __DIR__ . '/../shared/sidebar.php';
   ?>
 
@@ -196,8 +262,10 @@ $active_count = count($active_members);
           <i class="fa-solid fa-users"></i>
           <?php if ($sess_role === 'student'): ?>
             My Organization Memberships
+          <?php elseif ($active_view === 'queue'): ?>
+            Application Queue
           <?php else: ?>
-            Membership Roster Management
+            Member Roster
           <?php endif; ?>
         </h2>
       </div>
@@ -206,7 +274,7 @@ $active_count = count($active_members);
 
         <!-- Stats Row (Adviser, SSC, Admin) -->
         <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-        <div class="info-row">
+        <div class="info-row" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));">
             <div class="info-card">
               <div class="card-label"><i class="fa-solid fa-clock"></i> Pending Applications</div>
               <div class="card-amount"><?= $pending_count ?></div>
@@ -215,14 +283,12 @@ $active_count = count($active_members);
             <div class="info-card">
               <div class="card-label"><i class="fa-solid fa-users"></i> Active Members</div>
               <div class="card-amount"><?= $active_count ?></div>
-              <div class="card-detail">Across All Organizations</div>
-            </div>
-            <div class="info-card" style="display:flex; flex-direction:column; justify-content:space-between;">
-              <div class="card-label"><i class="fa-solid fa-file-export"></i> Export Roster</div>
-              <div style="margin-top:10px;">
-                <button class="card-btn" id="exportCsvBtn" style="width:100%; height:40px; justify-content:center; background:#2563eb; color:#fff; font-weight:700; border-radius:8px;">
-                  <i class="fa-solid fa-download"></i> Export
-                </button>
+              <div class="card-detail">
+                <?php if ($sess_role === 'club_adviser'): ?>
+                  <?= htmlspecialchars(!empty($my_club_code) ? $my_club_code : (!empty($my_club_name) ? $my_club_name : 'Organization')) ?> Members
+                <?php else: ?>
+                  Across All Organizations
+                <?php endif; ?>
               </div>
             </div>
         </div>
@@ -315,6 +381,7 @@ $active_count = count($active_members);
                     <th>Assigned Role</th>
                     <th>Joined Date</th>
                     <th>Status</th>
+                    <th>QR Badge</th>
                   </tr>
                 </thead>
                 <tbody id="studentOrgRosterBody">
@@ -327,7 +394,7 @@ $active_count = count($active_members);
 
         <!-- Pending Applicant Queue (Adviser, SSC, Admin) -->
         <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-          <div class="table-card" id="applicant-queue">
+          <div class="table-card" id="applicant-queue" style="<?= ($active_view === 'roster') ? 'display:none;' : '' ?>">
             <h3><i class="fa-solid fa-user-plus" style="color:#f59e0b;"></i>
               Pending Membership Applications
               <?php if ($pending_count > 0): ?>
@@ -378,8 +445,13 @@ $active_count = count($active_members);
           </div>
 
           <!-- Master Roster (active members) -->
-          <div class="table-card" id="master-roster">
-            <h3><i class="fa-solid fa-address-book" style="color:#2563eb;"></i> Active Organization Member Roster</h3>
+          <div class="table-card" id="master-roster" style="<?= ($active_view === 'queue') ? 'display:none;' : '' ?>">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+              <h3 style="margin:0;"><i class="fa-solid fa-address-book" style="color:#2563eb;"></i> Active Organization Member Roster</h3>
+              <button class="card-btn btn-sm" id="exportCsvBtn" style="background:#2563eb; color:#fff; font-weight:700; border-radius:8px; padding:7px 16px;">
+                <i class="fa-solid fa-download"></i> Export Roster (CSV)
+              </button>
+            </div>
             <?php if (empty($active_members)): ?>
               <p style="text-align:center; color:#94a3b8; padding:20px;">No active members found.</p>
             <?php else: ?>
@@ -392,9 +464,7 @@ $active_count = count($active_members);
                     <th>Assigned Role</th>
                     <th>Joined Date</th>
                     <th>Status</th>
-                    <?php if (in_array($sess_role, ['club_adviser', 'admin'])): ?>
-                      <th>Action</th>
-                    <?php endif; ?>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -406,13 +476,28 @@ $active_count = count($active_members);
                       <td><?= htmlspecialchars($mem['member_role']) ?></td>
                       <td><?= date('M d, Y', strtotime($mem['joined_at'])) ?></td>
                       <td><span class="badge-active">Active</span></td>
-                      <?php if (in_array($sess_role, ['club_adviser', 'admin'])): ?>
-                        <td>
-                          <button class="card-btn btn-danger" onclick="removeMember(<?= $mem['id'] ?>)">
-                            <i class="fa-solid fa-user-minus"></i> Remove
+                      <td>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                          <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff;" onclick="window.openStudentQrModal(<?= htmlspecialchars(json_encode([
+                            'user_id' => $mem['user_id'] ?? 0,
+                            'username' => $mem['username'] ?? '',
+                            'first_name' => $mem['first_name'],
+                            'last_name' => $mem['last_name'],
+                            'role' => 'student',
+                            'student_number' => $mem['student_number'] ?? '',
+                            'course' => $mem['course'] ?? '',
+                            'year_level' => $mem['year_level'] ?? '',
+                            'section' => $mem['section'] ?? ''
+                          ]), ENT_QUOTES) ?>)" title="View Unique Student QR Badge">
+                            <i class="fa-solid fa-qrcode"></i> QR
                           </button>
-                        </td>
-                      <?php endif; ?>
+                          <?php if (in_array($sess_role, ['club_adviser', 'admin'])): ?>
+                            <button class="card-btn btn-danger btn-sm" onclick="removeMember(<?= $mem['id'] ?>)">
+                              <i class="fa-solid fa-user-minus"></i> Remove
+                            </button>
+                          <?php endif; ?>
+                        </div>
+                      </td>
                     </tr>
                   <?php endforeach; ?>
                 </tbody>
@@ -482,6 +567,11 @@ $active_count = count($active_members);
               <td><span class="badge-info" style="font-size:0.75rem; font-weight:700;">${m.member_role}</span></td>
               <td style="font-size:0.82rem;">${dateStr}</td>
               <td><span class="badge-active">Active</span></td>
+              <td>
+                <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff;" onclick="window.openStudentQrModal(ALL_ORG_MEMBERS.find(x => x.id == ${m.id}))" title="View Unique Student QR Badge">
+                  <i class="fa-solid fa-qrcode"></i> QR
+                </button>
+              </td>
             </tr>
           `;
         });
@@ -502,6 +592,7 @@ $active_count = count($active_members);
         rosterCard.style.display = 'none';
       }
     }
+
 
     // -- Live AJAX actions -----------------------------------------
     function showAlert(msg, type) {

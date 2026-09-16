@@ -6,11 +6,36 @@
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
 require_once __DIR__ . '/../shared/security.php';
+require_once __DIR__ . '/../shared/notification_actions.php';
 require_auth();
 
-// Testing role switcher via ?switch_role=...
-if (isset($_GET['switch_role']) && in_array($_GET['switch_role'], ['student', 'club_adviser', 'ssc', 'admin'])) {
-    $_SESSION['role'] = $_GET['switch_role'];
+// Migration-safe fallback for existing sessions that predate real_role
+if (!isset($_SESSION['real_role'])) {
+    $stmt_rr = $conn->prepare("SELECT role FROM users WHERE id = ? LIMIT 1");
+    if ($stmt_rr) {
+        $stmt_rr->bind_param('i', $_SESSION['user_id']);
+        $stmt_rr->execute();
+        $res_rr = $stmt_rr->get_result();
+        if ($res_rr && $row_rr = $res_rr->fetch_assoc()) {
+            $_SESSION['real_role'] = $row_rr['role'];
+        }
+        $stmt_rr->close();
+    }
+    $_SESSION['real_role'] = $_SESSION['real_role'] ?? $_SESSION['role'] ?? 'student';
+}
+
+// Secure role impersonation switcher: STRICTLY gated to verified Administrators
+if (isset($_GET['switch_role'])) {
+    $target_role = $_GET['switch_role'];
+    $valid_roles = ['student', 'club_adviser', 'ssc', 'admin'];
+
+    if (($_SESSION['real_role'] ?? null) === 'admin' && in_array($target_role, $valid_roles, true)) {
+        $_SESSION['role'] = $target_role;
+        log_audit($conn, (int)$_SESSION['user_id'], 'admin_impersonation_switch', 'users', (int)$_SESSION['user_id'], "Admin switched session persona to {$target_role}");
+    } else {
+        // Unauthorized attempt: reject and log
+        log_audit($conn, (int)($_SESSION['user_id'] ?? 0), 'unauthorized_role_switch_attempt', 'users', (int)($_SESSION['user_id'] ?? 0), "Unauthorized switch_role attempt to {$target_role}");
+    }
 }
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? 'User');
@@ -130,6 +155,7 @@ if ($sess_role === 'admin') {
 $pending_endorsements   = [];
 $adviser_active_members = 0;
 $adviser_club_name      = '';
+$adviser_club_code      = '';
 if ($sess_role === 'club_adviser') {
     $stmt = $conn->prepare("SELECT c.id, c.name, c.code FROM clubs c JOIN club_memberships cm ON cm.club_id = c.id WHERE cm.user_id = ? AND cm.status = 'Active' AND c.deleted_at IS NULL LIMIT 1");
     if ($stmt) {
@@ -139,16 +165,38 @@ if ($sess_role === 'club_adviser') {
         if ($res && $res->num_rows > 0) {
             $adv_club = $res->fetch_assoc();
             $adv_cid = (int)$adv_club['id'];
-            $adviser_club_name = $adv_club['code'];
+            $adviser_club_name = !empty($adv_club['name']) ? $adv_club['name'] : $adv_club['code'];
+            $adviser_club_code = !empty($adv_club['code']) ? $adv_club['code'] : $adv_club['name'];
         }
         $stmt->close();
+    }
+    // Fallback: match by username prefix (e.g. cssec.adviser -> CSSEC)
+    if (empty($adv_cid)) {
+        $sess_uname = $_SESSION['username'] ?? '';
+        $prefix = strtoupper(explode('.', $sess_uname)[0] ?? '');
+        if (!empty($prefix)) {
+            $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE (code = ? OR REPLACE(code, '-', '') = ?) AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+            if ($c_stmt) {
+                $c_stmt->bind_param('ss', $prefix, $prefix);
+                $c_stmt->execute();
+                $c_res = $c_stmt->get_result();
+                if ($c_res && $c_res->num_rows > 0) {
+                    $adv_club = $c_res->fetch_assoc();
+                    $adv_cid = (int)$adv_club['id'];
+                    $adviser_club_name = !empty($adv_club['name']) ? $adv_club['name'] : $adv_club['code'];
+                    $adviser_club_code = !empty($adv_club['code']) ? $adv_club['code'] : $adv_club['name'];
+                }
+                $c_stmt->close();
+            }
+        }
     }
     // Fallback if testing persona switch or unassigned
     if (empty($adv_cid)) {
         $first_c = $conn->query("SELECT id, name, code FROM clubs WHERE status = 'Active' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1")->fetch_assoc();
         if ($first_c) {
             $adv_cid = (int)$first_c['id'];
-            $adviser_club_name = $first_c['code'];
+            $adviser_club_name = !empty($first_c['name']) ? $first_c['name'] : $first_c['code'];
+            $adviser_club_code = !empty($first_c['code']) ? $first_c['code'] : $first_c['name'];
             $adv_club = $first_c;
         }
     }
@@ -218,45 +266,12 @@ if ($sess_role === 'club_adviser') {
       height: 240px;
       width: 100%;
     }
-    .quick-actions-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 24px;
-      background: #ffffff;
-      padding: 14px 20px;
-      border-radius: 14px;
-      border: 1px solid #e2e8f0;
-    }
-    .quick-act-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 9px 16px;
-      border-radius: 8px;
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: #fff;
-      text-decoration: none;
-      transition: all 0.2s ease;
-    }
-    .quick-act-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
     .badge-institutional { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; padding: 2px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 800; }
     
     @media (max-width: 900px) {
       .dash-charts-grid { grid-template-columns: 1fr; }
     }
     @media (max-width: 600px) {
-      .quick-actions-bar {
-        padding: 12px;
-        flex-direction: column;
-        align-items: stretch;
-      }
-      .quick-act-btn {
-        width: 100%;
-        justify-content: center;
-      }
       .chart-card {
         padding: 14px 12px;
       }
@@ -312,7 +327,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <div class="content-body">
 
       <!-- Admin Testing Persona Switcher Bar -->
-      <?php if ($sess_role === 'admin'): ?>
+      <?php if (($_SESSION['real_role'] ?? $sess_role) === 'admin'): ?>
       <div class="role-switcher-bar" style="margin-bottom: 20px;">
         <div style="display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px;">
           <span style="font-size: 0.78rem; font-weight: 700; color: #64748b; margin-right: auto;"><i class="fa-solid fa-shield"></i> Role Switcher (Admin Sandbox):</span>
@@ -355,11 +370,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <?php if ($sess_role === 'ssc'): ?>
           <!-- SSC Executive Cards -->
           <div class="info-card">
-            <div class="card-label"><i class="fa-solid fa-sitemap"></i> Recognized Clubs</div>
-            <div class="card-amount"><?= $total_active_clubs ?></div>
-            <div class="card-detail">Accredited Student Orgs</div>
-          </div>
-          <div class="info-card">
             <div class="card-label"><i class="fa-solid fa-calendar-days"></i> Active Events</div>
             <div class="card-amount"><?= $active_campus_events ?></div>
             <div class="card-detail">Calendar Activities Active</div>
@@ -393,7 +403,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
           <div class="info-card">
             <div class="card-label"><i class="fa-solid fa-users"></i> Active Members</div>
             <div class="card-amount"><?= $adviser_active_members ?></div>
-            <div class="card-detail"><?= !empty($adviser_club_name) ? htmlspecialchars($adviser_club_name) . ' Enrolled Members' : 'Enrolled Organization Members' ?></div>
+            <div class="card-detail"><?= !empty($adviser_club_code) ? htmlspecialchars($adviser_club_code) . ' Members' : 'Organization Members' ?></div>
           </div>
           <div class="info-card">
             <div class="card-label"><i class="fa-solid fa-calendar-days"></i> Campus Events</div>
@@ -422,14 +432,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
       ══════════════════════════════════════════════════════════════ -->
       <?php if ($sess_role === 'ssc'): ?>
         
-        <!-- SSC Quick Actions Bar -->
-        <div class="quick-actions-bar">
-          <span style="font-size:0.8rem; font-weight:800; color:#1e3a8a; margin-right:6px;"><i class="fa-solid fa-bolt"></i> Council Actions:</span>
-          <a href="events.php" class="quick-act-btn" style="background:#16a34a;"><i class="fa-solid fa-school"></i> Create School-Wide Event</a>
-          <a href="announcements.php" class="quick-act-btn" style="background:#2563eb;"><i class="fa-solid fa-bullhorn"></i> Post Council Notice</a>
-          <a href="elections.php" class="quick-act-btn" style="background:#7c3aed;"><i class="fa-solid fa-check-to-slot"></i> General Elections</a>
-          <a href="reports.php" class="quick-act-btn" style="background:#0f172a;"><i class="fa-solid fa-brain"></i> AI Intelligence Reports</a>
-        </div>
 
         <!-- SSC Charts Row -->
         <div class="dash-charts-grid">

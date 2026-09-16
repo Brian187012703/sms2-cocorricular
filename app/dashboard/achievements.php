@@ -6,14 +6,8 @@
 require_once __DIR__ . '/../shared/db.php';
 session_start();
 
-if (empty($_SESSION['user_id'])) {
-    header('Location: ../auth/signin.php');
-    exit;
-}
-
-// Module disabled system-wide
-header('Location: dashboard.php');
-exit;
+require_once __DIR__ . '/../shared/security.php';
+require_auth();
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -93,7 +87,25 @@ if (in_array($sess_role, ['ssc', 'admin'])) {
 
 // -- Club list for student / adviser submit form (Joined Active Orgs Only) --
 $clubs = [];
-if (in_array($sess_role, ['student', 'club_adviser'])) {
+$adviser_club_id = null;
+if ($sess_role === 'club_adviser') {
+    $sess_user = $_SESSION['username'] ?? '';
+    $stmt_c = $conn->prepare(
+        "SELECT c.id, c.name, c.code
+         FROM clubs c
+         WHERE (c.id IN (SELECT club_id FROM club_memberships WHERE user_id = ? AND status = 'Active')
+            OR c.code = UPPER(SUBSTRING_INDEX(?, '.', 1)))
+           AND c.status = 'Active'
+         ORDER BY c.name"
+    );
+    $stmt_c->bind_param('is', $user_id, $sess_user);
+    $stmt_c->execute();
+    $clubs = $stmt_c->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt_c->close();
+    if (!empty($clubs)) {
+        $adviser_club_id = $clubs[0]['id'];
+    }
+} elseif ($sess_role === 'student') {
     $stmt_c = $conn->prepare(
         "SELECT c.id, c.name, c.code
          FROM clubs c
@@ -341,9 +353,13 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <?php if (empty($clubs)): ?>
               <option value="">-- No Active Joined Organizations (Join a club first) --</option>
             <?php else: ?>
-              <option value="">-- Select Your Organization --</option>
+              <?php if ($sess_role !== 'club_adviser'): ?>
+                <option value="">-- Select Your Organization --</option>
+              <?php endif; ?>
               <?php foreach ($clubs as $c): ?>
-              <option value="<?= $c['id'] ?>"><?= htmlspecialchars($c['name']) ?> (<?= htmlspecialchars($c['code']) ?>)</option>
+              <option value="<?= $c['id'] ?>" <?= ($sess_role === 'club_adviser' && $c['id'] == $adviser_club_id) ? 'selected' : '' ?>>
+                <?= htmlspecialchars($c['name']) ?> (<?= htmlspecialchars($c['code']) ?>)
+              </option>
               <?php endforeach; ?>
             <?php endif; ?>
           </select>
@@ -427,7 +443,9 @@ document.getElementById('submitAchBtn')?.addEventListener('click', function() {
         showAlert('Achievement submitted! Awaiting SSC verification.', 'success');
         // Clear fields
         ['achTitle','achCompetition','achDate','achNotes'].forEach(id => document.getElementById(id).value = '');
-        document.getElementById('achClub').value = '';
+        if ("<?= $sess_role ?>" !== 'club_adviser') {
+          document.getElementById('achClub').value = '';
+        }
       } else {
         showAlert(data.message || 'Submission failed.', 'error');
       }

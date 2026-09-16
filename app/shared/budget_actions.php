@@ -9,6 +9,7 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Not authenticated.']);
@@ -17,7 +18,19 @@ if (empty($_SESSION['user_id'])) {
 
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
-$action    = $_POST['action'] ?? $_GET['action'] ?? '';
+
+// Strictly deny student role
+if ($user_role === 'student' || !in_array($user_role, ['club_adviser', 'ssc', 'admin'])) {
+    echo json_encode(['success' => false, 'message' => 'Access restricted. Student access to financial requisitions has been terminated.']);
+    exit;
+}
+
+// CSRF validation on mutating POST requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+}
+
+$action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 function bdRespond(bool $ok, string $msg, array $extra = []): void {
     echo json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
@@ -32,11 +45,7 @@ switch ($action) {
         $params = [];
         $types  = '';
 
-        if ($user_role === 'student') {
-            $where  .= " AND br.requested_by = ?";
-            $params = [$user_id];
-            $types  = 'i';
-        } elseif ($user_role === 'club_adviser') {
+        if ($user_role === 'club_adviser') {
             $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
             $cm->bind_param('i', $user_id);
             $cm->execute();
@@ -47,6 +56,8 @@ switch ($action) {
                 $where  .= " AND br.club_id = ?";
                 $params = [(int)$my_club_id];
                 $types  = 'i';
+            } else {
+                $where .= " AND 1=0";
             }
         } elseif ($user_role === 'ssc') {
             $where .= " AND br.status IN ('Pending SSC','Pending Admin','Disbursed','Rejected')";
@@ -75,8 +86,8 @@ switch ($action) {
 
     // ── 2. CREATE Budget Request ─────────────────────────────
     case 'create': {
-        if (!in_array($user_role, ['student', 'club_adviser', 'admin'])) {
-            bdRespond(false, 'You do not have permission to submit budget requests.');
+        if (!in_array($user_role, ['club_adviser', 'admin'])) {
+            bdRespond(false, 'Only Faculty Club Advisers and Administrators can submit budget requests.');
         }
 
         $club_id     = (int)($_POST['club_id'] ?? 0);

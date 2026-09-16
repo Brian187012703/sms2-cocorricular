@@ -28,7 +28,7 @@ $student_info = null;
 if ($can_apply) {
   $stmt = $conn->prepare("SELECT s.student_number, s.birthday, s.course, s.year_level, s.section, s.phone, u.first_name, u.last_name, u.email 
                           FROM users u 
-                          LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name) 
+                          LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name)) 
                           WHERE u.id = ? LIMIT 1");
   if ($stmt) {
     $stmt->bind_param('i', $user_id);
@@ -1294,7 +1294,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
               <input type="text" id="orgSearchInput" placeholder="Search organization by name or acronym..." oninput="handleOrgSearch(this.value)" autocomplete="off" />
               <button type="button" class="org-search-clear" id="clearOrgSearchBtn" onclick="clearOrgSearch()" title="Clear search"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+            <?php if ($sess_role === 'admin'): ?>
               <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px; white-space:nowrap;" onclick="openCharterModal()">
                 <i class="fa-solid fa-plus-circle"></i> Charter New Organization
               </button>
@@ -2093,54 +2093,6 @@ foreach ($organizations['independent']['orgs'] as $o) {
       showToast('PDF downloaded successfully!', 'success');
     }
 
-    // -- STUDENT QR MODAL ------------------------------------------
-    <?php if ($sess_role === 'student'): ?>
-        (function () {
-          const qrBtn = document.getElementById('qrFabBtn');
-          const overlay = document.getElementById('qrModalOverlay');
-          const closeBtn = document.getElementById('closeQrModalBtn');
-          let reader = null;
-
-          function open() { overlay.classList.add('active'); }
-          function close() { overlay.classList.remove('active'); stop(); }
-
-          if (qrBtn) qrBtn.addEventListener('click', open);
-          closeBtn?.addEventListener('click', close);
-          overlay?.addEventListener('click', e => { if (e.target === overlay) close(); });
-          document.getElementById('startScanBtn')?.addEventListener('click', startScan);
-
-          async function startScan() {
-            const v = document.getElementById('qrVideo'), p = document.getElementById('cameraPlaceholder'),
-              sl = document.getElementById('qrScannerLine'), btn = document.getElementById('startScanBtn'),
-              res = document.getElementById('qrScanResult'), rt = document.getElementById('qrScanText');
-            if (typeof ZXing === 'undefined') { alert('Scanner not loaded.'); return; }
-            try {
-              reader = new ZXing.BrowserQRCodeReader();
-              btn.textContent = 'Scanning...'; btn.disabled = true;
-              v.style.display = 'block'; p.style.display = 'none'; sl.style.display = 'block';
-              const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-              v.srcObject = stream;
-              reader.decodeFromVideoElement(v, result => { if (result) { rt.textContent = result.getText(); res.classList.add('active'); } });
-            } catch (e) { alert('Camera access denied.'); btn.textContent = 'Start Camera Scanner'; btn.disabled = false; }
-          }
-
-          function stop() {
-            if (reader) { reader.reset(); reader = null; }
-            const v = document.getElementById('qrVideo');
-            if (v?.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
-            const p = document.getElementById('cameraPlaceholder'), sl = document.getElementById('qrScannerLine'), btn = document.getElementById('startScanBtn');
-            if (v) v.style.display = 'none'; if (p) p.style.display = 'flex'; if (sl) sl.style.display = 'none';
-            if (btn) { btn.textContent = 'Start Camera Scanner'; btn.disabled = false; }
-          }
-        })();
-
-      function switchQrTab(tab) {
-        document.querySelectorAll('.qr-tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.qr-tab-panel').forEach(p => p.classList.remove('active'));
-        document.getElementById(tab === 'myqr' ? 'tabMyQr' : 'tabScan').classList.add('active');
-        document.getElementById(tab === 'myqr' ? 'panelMyQr' : 'panelScan').classList.add('active');
-      }
-    <?php endif; ?>
 
     function openBroadcastModal(clubId, orgName) {
       const title = prompt(`Post Official Announcement for ${orgName}:\nTitle:`);
@@ -2192,7 +2144,8 @@ foreach ($organizations['independent']['orgs'] as $o) {
     }
   </script>
 
-  <!-- CHARTER ORGANIZATION MODAL (SSC / Admin) -->
+  <?php if ($sess_role === 'admin'): ?>
+  <!-- CHARTER ORGANIZATION MODAL (Admin Only) -->
   <div class="org-profile-overlay" id="charterModalOverlay">
     <div class="org-profile-modal" style="max-width:540px;">
       <div class="opm-hero" style="background:#1a3a8c; color:#fff; display:flex; justify-content:space-between; align-items:center;">
@@ -2202,6 +2155,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
         <button style="background:none; border:none; color:#fff; font-size:1.2rem; cursor:pointer;" onclick="closeCharterModal()"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleCharterOrg(event)">
+        <?= csrf_field() ?>
         <div class="opm-body" style="padding:22px 26px;">
           <div style="margin-bottom:14px;">
             <label style="font-size:0.75rem; font-weight:800; color:#475569; display:block; margin-bottom:5px;">Org Acronym / Code <span style="color:#ef4444;">*</span></label>
@@ -2236,6 +2190,7 @@ foreach ($organizations['independent']['orgs'] as $o) {
       </form>
     </div>
   </div>
+  <?php endif; ?>
 </body>
 
 </html>

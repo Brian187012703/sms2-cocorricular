@@ -4,12 +4,8 @@
 //  Co-Curricular System — On-Site Attendance Scanner Terminal
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
-session_start();
-
-if (empty($_SESSION['user_id'])) {
-  header('Location: ../auth/signin.php');
-  exit;
-}
+require_once __DIR__ . '/../shared/security.php';
+require_role(['club_adviser', 'ssc', 'admin'], 'tracking_history.php');
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name'] ?? '');
@@ -17,11 +13,6 @@ $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
 $sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)($_SESSION['user_id'] ?? 0);
-
-if ($sess_role === 'student') {
-  header('Location: tracking_history.php');
-  exit;
-}
 
 // Fetch active events for staff event selection
 $active_events = [];
@@ -721,6 +712,42 @@ $target_event_id = (int)($_GET['event_id'] ?? 0);
         .then(data => {
           const success = data.success;
           const isDup = data.already_logged;
+
+          // Audible synthesizer chime feedback
+          try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {
+              const ctx = new AudioContext();
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+              if (success) {
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.12);
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.18);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.18);
+              } else {
+                osc.frequency.setValueAtTime(380, ctx.currentTime);
+                gain.gain.setValueAtTime(0.25, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, ctx.currentTime + 0.22);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.22);
+              }
+            }
+          } catch(e) {}
+
+          // If scanned an event poster, auto-switch the terminal's active event
+          if (data.is_event_switch && data.event_id) {
+            const sel = document.getElementById('scannerEventSelect');
+            if (sel) {
+              sel.value = data.event_id;
+              handleEventSelectionChange();
+            }
+          }
+
           if (alertBox) {
             alertBox.style.background = success ? '#dcfce7' : (isDup ? '#fef9c3' : '#fef2f2');
             alertBox.style.color = success ? '#15803d' : (isDup ? '#92400e' : '#dc2626');

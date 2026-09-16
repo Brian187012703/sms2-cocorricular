@@ -33,9 +33,13 @@ switch ($action) {
 
         $stmt = $conn->prepare(
             'SELECT id, username, email, first_name, last_name, password_hash, role, profile_pic
-         FROM users WHERE username = ? LIMIT 1'
+         FROM users 
+         WHERE username = ? 
+            OR email = ? 
+            OR (? IN (\'admin\', \'ssc.admin\') AND username = \'scc.admin\')
+         LIMIT 1'
         );
-        $stmt->bind_param('s', $username);
+        $stmt->bind_param('sss', $username, $username, $username);
         $stmt->execute();
         $user = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -50,12 +54,17 @@ switch ($action) {
         $_SESSION['first_name'] = $user['first_name'];
         $_SESSION['last_name'] = $user['last_name'];
         $_SESSION['role'] = $user['role'];
+        $_SESSION['real_role'] = $user['role'];
         $_SESSION['profile_pic'] = $user['profile_pic'] ?? null;
 
         respond(true, 'Login successful.', [
             'role' => $user['role'],
             'profile_pic' => $user['profile_pic'] ?? null
         ]);
+    }
+
+    case 'register': {
+        respond(false, 'Public self-registration is disabled. All student and institutional accounts are pre-provisioned by the administration.');
     }
 
     case 'upload_avatar': {
@@ -240,6 +249,7 @@ switch ($action) {
     }
 
     case 'logout': {
+        unset($_SESSION['role'], $_SESSION['real_role']);
         session_destroy();
         respond(true, 'Logged out.');
     }

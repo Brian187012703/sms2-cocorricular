@@ -3,9 +3,6 @@
 //  NOTIFICATION_ACTIONS.PHP — shared notification helper
 //  Called internally by other action handlers + directly via AJAX
 // ============================================================
-if (!headers_sent()) {
-    header('Content-Type: application/json');
-}
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -36,6 +33,8 @@ function log_audit($conn, int $user_id, string $action, string $table = '', int 
 
 // ── Only run as AJAX if called directly ─────────────────────
 if (basename($_SERVER['SCRIPT_FILENAME']) !== 'notification_actions.php') return;
+
+header('Content-Type: application/json');
 
 if (empty($_SESSION['user_id'])) respond(false, 'Not authenticated.');
 

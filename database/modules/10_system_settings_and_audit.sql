@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS `audit_logs` (
 CREATE TABLE IF NOT EXISTS `ai_recommendation_logs` (
   `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` INT(10) UNSIGNED NOT NULL,
-  `request_type` ENUM('recommendation', 'report') NOT NULL,
+  `request_type` VARCHAR(50) NOT NULL DEFAULT 'recommendation',
   `prompt_summary` TEXT DEFAULT NULL,
   `ai_response` MEDIUMTEXT DEFAULT NULL,
   `model_used` VARCHAR(100) DEFAULT 'gemini-2.0-flash',
@@ -42,5 +42,5 @@ CREATE TABLE IF NOT EXISTS `ai_recommendation_logs` (
 
 -- Core Initial Settings Seed
 INSERT INTO `system_settings` (`setting_key`, `setting_value`) VALUES
-('gemini_api_key', 'AIzaSyBoA51zkRgMdUTU1ly2g9aUZUljEy4Ss9E')
+('gemini_api_key', '')
 ON DUPLICATE KEY UPDATE `updated_at`=CURRENT_TIMESTAMP;

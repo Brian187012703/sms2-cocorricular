@@ -27,6 +27,7 @@ $sql2 = "CREATE TABLE IF NOT EXISTS election_candidates (
     platform_tag TEXT NULL,
     achievements TEXT NULL,
     votes_count INT DEFAULT 0,
+    is_appointed TINYINT(1) DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
 
@@ -43,5 +44,9 @@ $conn->query($sql1);
 $conn->query($sql2);
 $conn->query($sql3);
 
-// DB schema ready – no default auto-seeding (clean state for new elections testing)
+// Migration: add is_appointed if missing
+$chk = $conn->query("SHOW COLUMNS FROM election_candidates LIKE 'is_appointed'");
+if ($chk && $chk->num_rows === 0) {
+    $conn->query("ALTER TABLE election_candidates ADD COLUMN is_appointed TINYINT(1) DEFAULT 0");
+}
 

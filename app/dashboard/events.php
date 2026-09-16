@@ -142,6 +142,16 @@ $status_badges = [
     border-color: #1e293b;
     box-shadow: 0 2px 8px rgba(30, 41, 59, 0.2);
   }
+  .event-act-btn-qr {
+    background: #059669;
+    color: #ffffff;
+    border-color: #059669;
+  }
+  .event-act-btn-qr:hover {
+    background: #047857;
+    border-color: #047857;
+    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25);
+  }
   .event-act-btn-reg {
     background: #2563eb;
     color: #ffffff;
@@ -725,7 +735,13 @@ $status_badges = [
   </style>
 </head>
 <body>
-<?php $APP_ROOT = '../'; $ACTIVE_NAV = 'events'; require_once __DIR__ . '/../shared/sidebar.php'; ?>
+<?php
+$events_view = $_GET['view'] ?? 'calendar';
+$APP_ROOT = '../';
+$ACTIVE_NAV = 'events';
+$ACTIVE_SUB = $events_view;
+require_once __DIR__ . '/../shared/sidebar.php';
+?>
 
 <div class="main">
   <div class="topbar">
@@ -749,7 +765,16 @@ $status_badges = [
 
   <div class="content">
     <div class="page-title-bar">
-      <h2 class="page-title"><i class="fa-solid fa-calendar-days"></i> Events &amp; Activity Center</h2>
+      <h2 class="page-title">
+        <i class="fa-solid fa-calendar-days"></i>
+        <?php if ($sess_role === 'student'): ?>
+          Events &amp; Activity Center
+        <?php elseif ($events_view === 'pipeline'): ?>
+          Campus Event Calendar &amp; Approval Pipeline
+        <?php else: ?>
+          Active Calendar
+        <?php endif; ?>
+      </h2>
     </div>
 
     <div class="content-body">
@@ -775,12 +800,10 @@ $status_badges = [
       </div><!-- /info-row -->
       <?php endif; ?>
 
-      <!-- AI Event Planner is accessible via the Floating Action Button and Modal -->
-
       <!-- ----------------------------------------------------------
            ACTIVE INTERACTIVE EVENT CALENDAR
       ---------------------------------------------------------- -->
-      <div class="calendar-section">
+      <div class="calendar-section" id="activeCalendarSection" <?= ($sess_role !== 'student' && $events_view === 'pipeline') ? 'style="display:none;"' : '' ?>>
         <!-- Header -->
         <div class="calendar-header">
           <div class="calendar-header-left">
@@ -819,7 +842,7 @@ $status_badges = [
       </div><!-- /calendar-section -->
 
       <!-- Events Table -->
-      <div class="table-card" id="eventsListCard">
+      <div class="table-card" id="eventsListCard" <?= ($sess_role !== 'student' && $events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
         <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; border-bottom:1px solid #f1f5f9; padding-bottom:12px;">
           <div>
             <?php if ($sess_role === 'student'): ?>
@@ -923,6 +946,9 @@ $status_badges = [
                   <button type="button" class="event-act-btn event-act-btn-details" onclick="viewEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="View Event Details">
                     <i class="fa-solid fa-eye"></i> Details
                   </button>
+                  <button type="button" class="event-act-btn event-act-btn-qr" onclick="if(window.openGlobalEventQr){ window.openGlobalEventQr(<?= (int)$ev['id'] ?>); } else { alert('QR viewer unavailable'); }" title="View Event QR Code & Official Attendance Poster">
+                    <i class="fa-solid fa-qrcode"></i> QR
+                  </button>
                   <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
                     <button type="button" class="event-act-btn event-act-btn-reg" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="View Event Registrations">
                       <i class="fa-solid fa-users-rectangle"></i> Registrations
@@ -970,8 +996,8 @@ $status_badges = [
      AI EVENT PLANNER FLOATING ACTION BUTTON & MODAL
 ──────────────────────────────────────────────────────────── -->
 <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-<!-- Floating Action Button (Always Accessible) -->
-<button type="button" class="ai-fab-btn" id="aiPlannerFabBtn" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner">
+<!-- Floating Action Button (Accessible on Approval Pipeline) -->
+<button type="button" class="ai-fab-btn" id="aiPlannerFabBtn" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner" <?= ($sess_role !== 'student' && $events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
   <div class="ai-fab-icon-wrap">
     <i class="fa-solid fa-wand-magic-sparkles"></i>
     <span class="ai-fab-pulse"></span>
@@ -1790,10 +1816,12 @@ function viewEvent(ev) {
         <div style="color:#991b1b; background:#fef2f2; border:1px solid #fca5a5; padding:12px 14px; border-radius:10px; font-size:0.85rem;">
           <strong>Rejection Note:</strong> ${ev.rejection_note}
         </div>` : ''}
-      ${regActionHtml ? `
-      <div style="margin-top:12px; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; align-items:center;">
+      <div style="margin-top:12px; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <button type="button" class="card-btn" style="background:#059669; color:#ffffff; font-weight:700; padding:8px 14px; border-radius:8px; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:8px; font-size:0.82rem;" onclick="closeModal('viewEventModal'); if(window.openGlobalEventQr){ window.openGlobalEventQr(${ev.id}); }">
+          <i class="fa-solid fa-qrcode"></i> Event QR Code &amp; Poster
+        </button>
         ${regActionHtml}
-      </div>` : ''}
+      </div>
     </div>`;
   openModal('viewEventModal');
 }

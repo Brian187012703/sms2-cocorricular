@@ -4,12 +4,8 @@
 //  Co-Curricular System — Event Attendance Rosters & Logs
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
-session_start();
-
-if (empty($_SESSION['user_id'])) {
-  header('Location: ../auth/signin.php');
-  exit;
-}
+require_once __DIR__ . '/../shared/security.php';
+require_role(['club_adviser', 'ssc', 'admin'], 'tracking_history.php');
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name'] ?? '');
@@ -17,11 +13,6 @@ $sess_role    = $_SESSION['role'] ?? 'student';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
 $sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)($_SESSION['user_id'] ?? 0);
-
-if ($sess_role === 'student') {
-  header('Location: tracking_history.php');
-  exit;
-}
 
 // Fetch all events for event selector
 $events = [];

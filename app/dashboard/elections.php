@@ -104,7 +104,7 @@ foreach ($raw_elections as $el) {
     }
 
     // Fetch Candidates
-    $c_stmt = $conn->prepare("SELECT id, candidate_code, name, position, party, year_level, program, gwa, platform_tag, achievements, votes_count FROM election_candidates WHERE election_id = ? ORDER BY position, name");
+    $c_stmt = $conn->prepare("SELECT id, candidate_code, name, position, party, year_level, program, gwa, platform_tag, achievements, votes_count, COALESCE(is_appointed, 0) AS is_appointed FROM election_candidates WHERE election_id = ? ORDER BY position, name");
     $c_stmt->bind_param('i', $eid);
     $c_stmt->execute();
     $cands_raw = $c_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -133,7 +133,8 @@ foreach ($raw_elections as $el) {
             'gwa'          => htmlspecialchars($cand['gwa']),
             'tag'          => htmlspecialchars($cand['platform_tag']),
             'achievements' => $ach_arr,
-            'votes_count'  => (int)$cand['votes_count']
+            'votes_count'  => (int)$cand['votes_count'],
+            'is_appointed' => (int)$cand['is_appointed']
         ];
     }
 
@@ -1105,13 +1106,15 @@ function showResultsModal(electionId) {
       const baseVoted = Math.max(parseInt(el.voted) || 1, totalPosVotes, 1);
       const pct = Math.min(100, Math.round((winnerCand.votes_count / baseVoted) * 100));
       winners.push({
+        cand_id: winnerCand.id,
         pos: pos,
         name: winnerCand.name,
         party: winnerCand.party || 'Independent',
         prog: winnerCand.prog || '',
         year: winnerCand.year || '',
         votes: winnerCand.votes_count,
-        pct: pct
+        pct: pct,
+        is_appointed: winnerCand.is_appointed || 0
       });
     }
   });
@@ -1122,6 +1125,22 @@ function showResultsModal(electionId) {
   if (winners.length > 0) {
     let winnersRows = '';
     winners.forEach((w, idx) => {
+      const isAppointed = w.is_appointed == 1;
+      let actionCell = '';
+      if (isAppointed) {
+        actionCell = `
+          <span style="background:#dcfce7; color:#166534; font-size:0.75rem; font-weight:800; padding:4px 10px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
+            <i class="fa-solid fa-circle-check"></i> Appointed Officer
+          </span>`;
+      } else if (sessRole !== 'student' && el.status === 'closed') {
+        actionCell = `
+          <button type="button" class="card-btn" id="btnAppoint_${w.cand_id}" style="background:#2563eb; color:#fff; font-size:0.75rem; font-weight:700; padding:5px 12px; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;" onclick="appointWinnerAsOfficer(${el.id}, ${w.cand_id}, '${w.name.replace(/'/g, "\\'")}', '${w.pos.replace(/'/g, "\\'")}')">
+            <i class="fa-solid fa-user-plus"></i> Appoint as Officer
+          </button>`;
+      } else {
+        actionCell = `<span style="color:#64748b; font-size:0.75rem; font-style:italic;">${el.status === 'closed' ? 'Awaiting Appointment' : 'Voting In Progress'}</span>`;
+      }
+
       winnersRows += `
         <tr style="background-color:#f0fdf4;">
           <td style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center; font-weight:700; color:#166534;">${idx + 1}</td>
@@ -1137,6 +1156,9 @@ function showResultsModal(electionId) {
             <span style="background:#dcfce7; color:#166534; font-size:0.72rem; font-weight:800; padding:3px 8px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
               <i class="fa-solid fa-trophy"></i> ELECTED
             </span>
+          </td>
+          <td style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center;" id="cellAppoint_${w.cand_id}">
+            ${actionCell}
           </td>
         </tr>
       `;
@@ -1158,6 +1180,7 @@ function showResultsModal(electionId) {
                 <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:right;">Votes</th>
                 <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:right;">Share</th>
                 <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center;">Status</th>
+                <th style="padding:10px 12px; border:1px solid #e2e8f0; text-align:center;">Officer Action</th>
               </tr>
             </thead>
             <tbody>
@@ -1725,6 +1748,54 @@ async function handleCastVote(e, electionId) {
     }
   } catch (err) {
     alert('Network error casting vote.');
+  }
+}
+
+async function appointWinnerAsOfficer(electionId, candidateId, candName, pos) {
+  if (!confirm(`Are you sure you want to officially appoint "${candName}" as an Officer (${pos}) in the organization roster?`)) return;
+
+  const btn = document.getElementById(`btnAppoint_${candidateId}`);
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Appointing...';
+  }
+
+  const fd = new FormData();
+  fd.append('action', 'appoint_winner');
+  fd.append('election_id', electionId);
+  fd.append('candidate_id', candidateId);
+
+  try {
+    const res = await fetch('../shared/election_actions.php', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.success) {
+      alert(data.message);
+      // Update candidate in local data
+      const el = electionsData.find(e => e.id == electionId);
+      if (el && el.candidates) {
+        const cand = el.candidates.find(c => c.id == candidateId);
+        if (cand) cand.is_appointed = 1;
+      }
+      const cell = document.getElementById(`cellAppoint_${candidateId}`);
+      if (cell) {
+        cell.innerHTML = `
+          <span style="background:#dcfce7; color:#166534; font-size:0.75rem; font-weight:800; padding:4px 10px; border-radius:12px; display:inline-flex; align-items:center; gap:4px;">
+            <i class="fa-solid fa-circle-check"></i> Appointed Officer
+          </span>`;
+      }
+    } else {
+      alert(data.message || 'Error appointing candidate.');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Appoint as Officer';
+      }
+    }
+  } catch (err) {
+    alert('Network error while processing appointment.');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Appoint as Officer';
+    }
   }
 }
 </script>

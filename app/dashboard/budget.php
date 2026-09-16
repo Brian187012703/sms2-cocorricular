@@ -6,7 +6,7 @@
 require_once __DIR__ . '/../shared/db.php';
 require_once __DIR__ . '/../shared/security.php';
 require_once __DIR__ . '/../shared/notification_actions.php';
-require_auth();
+require_role(['club_adviser', 'ssc', 'admin']);
 header('Content-Type: text/html; charset=UTF-8');
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
@@ -38,6 +38,8 @@ if ($sess_role === 'club_adviser') {
     $cm->close();
     if (!empty($my_club_id)) {
         $where .= " AND br.club_id = " . (int)$my_club_id;
+    } else {
+        $where .= " AND 1=0"; // Strict isolation
     }
 } elseif ($sess_role === 'ssc') {
     $where .= " AND br.status IN ('Pending SSC','Pending Admin','Disbursed','Rejected')";

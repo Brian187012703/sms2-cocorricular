@@ -4,7 +4,15 @@
 // ============================================================
 
 if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+    if (!headers_sent()) {
+        ini_set('session.cookie_httponly', '1');
+        ini_set('session.use_only_cookies', '1');
+        ini_set('session.cookie_samesite', 'Lax');
+        if (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') {
+            ini_set('session.cookie_secure', '1');
+        }
+    }
+    @session_start();
 }
 
 /**
@@ -29,6 +37,19 @@ function csrf_field(): string {
  */
 function verify_csrf(bool $halt = true): bool {
     $token = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    if (empty($token) && function_exists('getallheaders')) {
+        $headers = getallheaders();
+        $token = $headers['X-CSRF-Token'] ?? $headers['x-csrf-token'] ?? $headers['X-Csrf-Token'] ?? '';
+    }
+    if (empty($token)) {
+        $raw = @file_get_contents('php://input');
+        if (!empty($raw)) {
+            $json = json_decode($raw, true);
+            if (is_array($json) && !empty($json['csrf_token'])) {
+                $token = $json['csrf_token'];
+            }
+        }
+    }
     $valid = !empty($token) && !empty($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
     
     if (!$valid && $halt) {
@@ -53,6 +74,12 @@ function verify_csrf(bool $halt = true): bool {
  */
 function require_auth(string $redirect_to = '../auth/signin.php'): void {
     if (empty($_SESSION['user_id'])) {
+        if (!empty($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Unauthenticated session.']);
+            exit;
+        }
         header("Location: $redirect_to");
         exit;
     }
@@ -65,6 +92,12 @@ function require_role(array $allowed_roles, string $forbidden_redirect = '../das
     require_auth();
     $current_role = $_SESSION['role'] ?? 'student';
     if (!in_array($current_role, $allowed_roles, true)) {
+        if (!empty($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Unauthorized role access.']);
+            exit;
+        }
         header("Location: $forbidden_redirect?error=unauthorized");
         exit;
     }

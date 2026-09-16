@@ -1,0 +1,11 @@
+.git
+.github
+.gemini
+node_modules
+vendor
+tests
+scratch
+*.lock
+*.log
+*.tmp
+verify_governance.php

@@ -6,8 +6,8 @@
 //  contextually accurate event ideas and conflict-free schedules
 //  on EVERY SINGLE CLICK of "Regenerate Ideas".
 // ============================================================
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
+if (session_status() === PHP_SESSION_NONE && !headers_sent()) {
+    @session_start();
 }
 require_once __DIR__ . '/ai_config.php';
 require_once __DIR__ . '/ph_holidays.php';
@@ -939,38 +939,317 @@ function ai_plan_events_and_schedule(mysqli $conn, int $user_id, array $params =
 //  2. INTELLIGENT REPORT GENERATOR (Adviser / SSC / Admin)
 // ════════════════════════════════════════════════════════════
 function ai_generate_report(mysqli $conn, string $report_type, int $user_id): array {
-    $findings = [
-        ['finding' => 'Student participation in approved co-curricular activities has shown positive momentum across academic departments.', 'impact' => 'high', 'icon' => 'chart-line'],
-        ['finding' => 'Attendance verification via digital terminal ensures reliable student tracking.', 'impact' => 'medium', 'icon' => 'qrcode'],
-        ['finding' => 'Organization budget requisition pipelines are operating within standard fiscal thresholds.', 'impact' => 'medium', 'icon' => 'sack-dollar']
-    ];
+    // 1. Resolve user role & contextual club scoping
+    $user_row = null;
+    if ($user_id > 0) {
+        $u_stmt = $conn->prepare("SELECT id, first_name, last_name, role FROM users WHERE id = ? LIMIT 1");
+        if ($u_stmt) {
+            $u_stmt->bind_param('i', $user_id);
+            $u_stmt->execute();
+            $user_row = $u_stmt->get_result()->fetch_assoc();
+            $u_stmt->close();
+        }
+    }
+    $role = $user_row['role'] ?? 'admin';
+    $user_club_id = null;
+    $user_club_name = '';
 
-    $trends = [
-        'High student engagement during Friday afternoon and Saturday training sessions.',
-        'Steady growth in cross-organizational co-hosted event proposals.',
-        'Streamlined online proposal and review workflow reduces approval lead times.'
-    ];
+    if ($role === 'club_adviser' && $user_id > 0) {
+        $c_stmt = $conn->prepare("SELECT c.id, c.name, c.code FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id = ? AND cm.status = 'Active' LIMIT 1");
+        if ($c_stmt) {
+            $c_stmt->bind_param('i', $user_id);
+            $c_stmt->execute();
+            if ($cm = $c_stmt->get_result()->fetch_assoc()) {
+                $user_club_id = (int)$cm['id'];
+                $user_club_name = $cm['name'] . ' (' . $cm['code'] . ')';
+            }
+            $c_stmt->close();
+        }
+    }
 
-    $recommendations = [
-        ['title' => 'Encourage Inter-Club Collaborative Activities', 'description' => 'Promote joint student organization events to optimize campus venue and budget resources.', 'priority' => 'high'],
-        ['title' => 'Maintain Automated Conflict Blackouts', 'description' => 'Enforce calendar blackout windows during official exam weeks to protect student academic focus.', 'priority' => 'high'],
-        ['title' => 'Digital Attendance Log Compliance', 'description' => 'Utilize real-time QR scanner check-ins for all campus event participants.', 'priority' => 'medium']
-    ];
+    $scope_title = $user_club_name ? "Organization: $user_club_name" : "Campus-Wide Institutional Overview";
 
-    $risks = [
-        ['risk' => 'Scheduling collisions during midterm examination weeks.', 'severity' => 'warning', 'mitigation' => 'Enforce calendar blackout checks during event creation.']
-    ];
+    // 2. Query Real Database Aggregates
+    // A. Events Breakdown
+    $ev_where = $user_club_id ? "WHERE deleted_at IS NULL AND club_id = $user_club_id" : "WHERE deleted_at IS NULL";
+    $ev_q = $conn->query("SELECT 
+        COUNT(*) AS total_events,
+        COALESCE(SUM(CASE WHEN status IN ('Upcoming', 'Approved') THEN 1 ELSE 0 END), 0) AS active_events,
+        COALESCE(SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END), 0) AS completed_events,
+        COALESCE(SUM(CASE WHEN status LIKE 'Pending%' THEN 1 ELSE 0 END), 0) AS pending_events,
+        COALESCE(SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END), 0) AS rejected_events
+        FROM events $ev_where");
+    $ev = $ev_q ? $ev_q->fetch_assoc() : ['total_events' => 0, 'active_events' => 0, 'completed_events' => 0, 'pending_events' => 0, 'rejected_events' => 0];
+
+    // B. Membership Engagement
+    $mem_where = $user_club_id ? "WHERE club_id = $user_club_id" : "";
+    $mem_q = $conn->query("SELECT 
+        COUNT(*) AS total_mems,
+        COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END), 0) AS active_mems,
+        COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending_mems,
+        COALESCE(SUM(CASE WHEN status = 'Rejected' THEN 1 ELSE 0 END), 0) AS rejected_mems
+        FROM club_memberships $mem_where");
+    $mem = $mem_q ? $mem_q->fetch_assoc() : ['total_mems' => 0, 'active_mems' => 0, 'pending_mems' => 0, 'rejected_mems' => 0];
+
+    $club_q = $conn->query("SELECT COUNT(*) AS total_clubs, COALESCE(SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END), 0) AS active_clubs FROM clubs WHERE deleted_at IS NULL");
+    $clubs_stat = $club_q ? $club_q->fetch_assoc() : ['total_clubs' => 0, 'active_clubs' => 0];
+
+    // C. Attendance Logs
+    if ($user_club_id) {
+        $att_q = $conn->query("SELECT 
+            COUNT(al.id) AS total_checkins,
+            COUNT(DISTINCT al.user_id) AS unique_attendees,
+            COUNT(DISTINCT al.event_id) AS events_with_att,
+            COALESCE(SUM(CASE WHEN al.method IN ('QR', 'QR_SELF') THEN 1 ELSE 0 END), 0) AS qr_checkins
+            FROM attendance_logs al
+            JOIN events e ON e.id = al.event_id
+            WHERE e.club_id = $user_club_id");
+    } else {
+        $att_q = $conn->query("SELECT 
+            COUNT(al.id) AS total_checkins,
+            COUNT(DISTINCT al.user_id) AS unique_attendees,
+            COUNT(DISTINCT al.event_id) AS events_with_att,
+            COALESCE(SUM(CASE WHEN al.method IN ('QR', 'QR_SELF') THEN 1 ELSE 0 END), 0) AS qr_checkins
+            FROM attendance_logs al");
+    }
+    $att = $att_q ? $att_q->fetch_assoc() : ['total_checkins' => 0, 'unique_attendees' => 0, 'events_with_att' => 0, 'qr_checkins' => 0];
+
+    // D. Budget Requests
+    $bd_where = $user_club_id ? "WHERE deleted_at IS NULL AND club_id = $user_club_id" : "WHERE deleted_at IS NULL";
+    $bd_q = $conn->query("SELECT 
+        COUNT(*) AS total_reqs,
+        COALESCE(SUM(amount), 0) AS total_amount,
+        COALESCE(SUM(CASE WHEN status = 'Disbursed' THEN amount ELSE 0 END), 0) AS disbursed_amount,
+        COALESCE(SUM(CASE WHEN status LIKE 'Pending%' THEN amount ELSE 0 END), 0) AS pending_amount,
+        COALESCE(SUM(CASE WHEN status = 'Rejected' THEN amount ELSE 0 END), 0) AS rejected_amount,
+        COALESCE(SUM(CASE WHEN status LIKE 'Pending%' THEN 1 ELSE 0 END), 0) AS pending_reqs,
+        COALESCE(SUM(CASE WHEN status = 'Disbursed' THEN 1 ELSE 0 END), 0) AS disbursed_reqs
+        FROM budget_requests $bd_where");
+    $bd = $bd_q ? $bd_q->fetch_assoc() : ['total_reqs' => 0, 'total_amount' => 0, 'disbursed_amount' => 0, 'pending_amount' => 0, 'rejected_amount' => 0, 'pending_reqs' => 0, 'disbursed_reqs' => 0];
+
+    // 3. Dynamic Health Score Computation (Data-Backed)
+    $score = 75;
+    $total_ev = (int)$ev['total_events'];
+    $pending_ev = (int)$ev['pending_events'];
+    $active_ev = (int)$ev['active_events'];
+    $comp_ev = (int)$ev['completed_events'];
+    
+    if ($total_ev > 0) {
+        $approved_ratio = ($active_ev + $comp_ev) / $total_ev;
+        if ($approved_ratio >= 0.7) $score += 8;
+        elseif ($approved_ratio < 0.4) $score -= 10;
+        if ($pending_ev > 3) $score -= 6;
+    }
+
+    $total_chk = (int)$att['total_checkins'];
+    $qr_chk = (int)$att['qr_checkins'];
+    if ($total_chk > 20) $score += 7;
+    elseif ($total_chk === 0 && $total_ev > 0) $score -= 8;
+    if ($total_chk > 0 && ($qr_chk / $total_chk) >= 0.7) $score += 5;
+
+    $total_reqs = (int)$bd['total_reqs'];
+    $disbursed_amt = (float)$bd['disbursed_amount'];
+    $pending_amt = (float)$bd['pending_amount'];
+    if ($total_reqs > 0) {
+        if ($disbursed_amt > 0) $score += 5;
+        if ($pending_amt > 20000 && (int)$bd['pending_reqs'] > 2) $score -= 8;
+    }
+
+    $active_mems = (int)$mem['active_mems'];
+    $pending_mems = (int)$mem['pending_mems'];
+    if ($active_mems > 10) $score += 5;
+    if ($pending_mems > 15) $score -= 5;
+
+    $score = max(30, min(97, $score));
+    $health_label = ($score >= 85) ? 'Excellent' : (($score >= 70) ? 'Good' : (($score >= 50) ? 'Fair' : 'Needs Attention'));
+
+    // 4. Try Google Gemini AI Generation if API key is active
+    $apiKey = get_gemini_api_key($conn);
+    if (!empty($apiKey)) {
+        $prompt = "You are the Senior Institutional Analyst for Bestlink College of the Philippines (BCP) Co-Curricular Management System.\n"
+            . "Generate a comprehensive, analytical report based strictly on these empirical metrics:\n"
+            . "REPORT TYPE: $report_type\n"
+            . "SCOPE: $scope_title\n"
+            . "CURRENT SYSTEM METRICS:\n"
+            . "- Events: Total: {$ev['total_events']}, Active/Upcoming: {$ev['active_events']}, Completed: {$ev['completed_events']}, Pending Approval: {$ev['pending_events']}, Rejected: {$ev['rejected_events']}\n"
+            . "- Memberships: Total: {$mem['total_mems']}, Active: {$mem['active_mems']}, Pending Review: {$mem['pending_mems']}, Rejected: {$mem['rejected_mems']}\n"
+            . "- Organizations: Total: {$clubs_stat['total_clubs']}, Active Charters: {$clubs_stat['active_clubs']}\n"
+            . "- Attendance Analytics: Total Check-ins: {$att['total_checkins']}, Unique Attendees: {$att['unique_attendees']}, Events with Attendance: {$att['events_with_att']}, QR Check-ins: {$att['qr_checkins']}\n"
+            . "- Budget & Financials: Total Requests: {$bd['total_reqs']}, Total Amount Requested: PHP " . number_format($bd['total_amount'], 2) . ", Disbursed: PHP " . number_format($bd['disbursed_amount'], 2) . ", Pending Disbursement: PHP " . number_format($bd['pending_amount'], 2) . ", Rejected: PHP " . number_format($bd['rejected_amount'], 2) . "\n\n"
+            . "TASK: Synthesize these actual numbers into structured JSON without markdown fences. Respond ONLY in valid JSON with this exact structure:\n"
+            . "{\n"
+            . "  \"report_title\": \"...\",\n"
+            . "  \"executive_summary\": \"...\",\n"
+            . "  \"key_findings\": [{\"finding\": \"...\", \"impact\": \"high|medium|low\", \"icon\": \"fa-icon-name-without-fa-prefix\"}],\n"
+            . "  \"trends\": [\"trend 1\", \"trend 2\", \"trend 3\"],\n"
+            . "  \"recommendations\": [{\"title\": \"...\", \"description\": \"...\", \"priority\": \"high|medium|low\"}],\n"
+            . "  \"risk_flags\": [{\"risk\": \"...\", \"severity\": \"danger|warning|info\", \"mitigation\": \"...\"}],\n"
+            . "  \"overall_health_score\": $score,\n"
+            . "  \"overall_health_label\": \"$health_label\"\n"
+            . "}";
+
+        $res = gemini_generate($prompt, $conn);
+        if (!empty($res['success']) && !empty($res['text'])) {
+            $clean_json = preg_replace('/^```(?:json)?\s*/m', '', $res['text']);
+            $clean_json = preg_replace('/```\s*$/m', '', $clean_json);
+            $parsed = json_decode(trim($clean_json), true);
+            if ($parsed && !empty($parsed['executive_summary'])) {
+                if (empty($parsed['overall_health_score'])) $parsed['overall_health_score'] = $score;
+                if (empty($parsed['overall_health_label'])) $parsed['overall_health_label'] = $health_label;
+                log_ai_interaction($conn, $user_id, 'report_generation', "Gemini Report for $report_type", $res['text']);
+                return ['success' => true, 'parsed' => $parsed, 'engine' => $res['engine'] ?? 'Google Gemini'];
+            }
+        }
+    }
+
+    // 5. Data-Driven Procedural Fallback (Directly derived from real DB aggregates, non-static)
+    $findings = [];
+    $trends = [];
+    $recs = [];
+    $risks = [];
+
+    $qr_pct = ($total_chk > 0) ? round(($qr_chk / $total_chk) * 100) : 0;
+    $disbursed_fmt = number_format($disbursed_amt, 2);
+    $pending_fmt = number_format($pending_amt, 2);
+
+    // Dynamic Findings
+    if ($pending_ev > 0) {
+        $findings[] = [
+            'finding' => "Identified {$pending_ev} event proposal(s) currently awaiting administrative and SSC endorsement.",
+            'impact' => ($pending_ev > 3 ? 'high' : 'medium'),
+            'icon' => 'calendar-check'
+        ];
+    } else {
+        $findings[] = [
+            'finding' => "Event clearance workflow is optimal with 0 backlogged proposals awaiting review.",
+            'impact' => 'medium',
+            'icon' => 'check-circle'
+        ];
+    }
+
+    if ($total_chk > 0) {
+        $findings[] = [
+            'finding' => "Recorded {$total_chk} attendance verifications across {$att['events_with_att']} event(s), with {$qr_pct}% validated via QR digital terminal.",
+            'impact' => 'high',
+            'icon' => 'qrcode'
+        ];
+    } else {
+        $findings[] = [
+            'finding' => "No digital check-in records logged yet for current semester activities.",
+            'impact' => 'medium',
+            'icon' => 'triangle-exclamation'
+        ];
+    }
+
+    if ($total_reqs > 0) {
+        $findings[] = [
+            'finding' => "Financial pipeline reflects PHP {$disbursed_fmt} in disbursed grants, with PHP {$pending_fmt} pending second/third-tier review.",
+            'impact' => ($pending_amt > 15000 ? 'high' : 'medium'),
+            'icon' => 'sack-dollar'
+        ];
+    } else {
+        $findings[] = [
+            'finding' => "Zero pending budget requisitions on record for the selected scope.",
+            'impact' => 'low',
+            'icon' => 'coins'
+        ];
+    }
+
+    if ($active_mems > 0) {
+        $findings[] = [
+            'finding' => "Active roster comprises {$active_mems} verified student members, with {$pending_mems} application(s) in review queue.",
+            'impact' => 'medium',
+            'icon' => 'users'
+        ];
+    }
+
+    // Dynamic Trends
+    if ($qr_pct >= 60) {
+        $trends[] = "Digital attendance adoption is strong, with {$qr_pct}% of attendees verifying via real-time QR credentials.";
+    } else {
+        $trends[] = "Manual attendance entry represents " . (100 - $qr_pct) . "% of records, indicating an opportunity to promote QR scanner kiosks.";
+    }
+
+    if ($total_ev > 0) {
+        $trends[] = "Campus event calendar maintains {$active_ev} scheduled upcoming activities and {$comp_ev} successfully concluded events.";
+    } else {
+        $trends[] = "Student organization activity submissions are currently in early-semester ramp-up phase.";
+    }
+
+    if ($disbursed_amt > 0) {
+        $trends[] = "Requisition disbursement rate is active with cumulative allocation of PHP {$disbursed_fmt}.";
+    } else {
+        $trends[] = "Budget requisition flow is conservative with minimal capital outlay recorded to date.";
+    }
+
+    // Dynamic Recommendations
+    if ($pending_ev > 0) {
+        $recs[] = [
+            'title' => 'Expedite Pending Event Approvals',
+            'description' => "Prioritize the {$pending_ev} pending proposal(s) to avoid schedule compression and calendar conflicts.",
+            'priority' => ($pending_ev > 3 ? 'high' : 'medium')
+        ];
+    }
+    if ($pending_mems > 5) {
+        $recs[] = [
+            'title' => 'Accelerate Membership Queue Verification',
+            'description' => "Process the {$pending_mems} pending student applicant(s) through adviser endorsement.",
+            'priority' => 'high'
+        ];
+    }
+    if ($total_chk === 0 && $total_ev > 0) {
+        $recs[] = [
+            'title' => 'Enforce Digital QR Scanner Terminal Deployment',
+            'description' => 'Mandate QR credential verification at all approved event entrances to eliminate untracked participation.',
+            'priority' => 'high'
+        ];
+    } else {
+        $recs[] = [
+            'title' => 'Maintain Inter-Organization Synergies',
+            'description' => 'Sustain cross-departmental co-curricular initiatives and regular budget reconciliation audits.',
+            'priority' => 'medium'
+        ];
+    }
+
+    // Dynamic Risks
+    if ($pending_amt > 20000) {
+        $risks[] = [
+            'risk' => "High pending fiscal commitments (PHP {$pending_fmt}) awaiting final administrative clearance.",
+            'severity' => 'danger',
+            'mitigation' => 'Review pending disbursements with finance officers to prevent event staging delays.'
+        ];
+    } elseif ($pending_ev > 5) {
+        $risks[] = [
+            'risk' => "Proposal review bottleneck with {$pending_ev} events awaiting clearance.",
+            'severity' => 'warning',
+            'mitigation' => 'Schedule joint SSC-Adviser clearance session to resolve pending queue.'
+        ];
+    } else {
+        $risks[] = [
+            'risk' => 'Minor calendar density during upcoming midterm examination periods.',
+            'severity' => 'info',
+            'mitigation' => 'Enforce system blackout dates during academic evaluation cycles.'
+        ];
+    }
+
+    $report_type_title = ucwords(str_replace('_', ' ', $report_type));
+    $summary = "Empirical operational assessment for Bestlink College of the Philippines ($scope_title). "
+        . "System records verify {$total_ev} total event(s), {$active_mems} active member(s), "
+        . "{$total_chk} attendance check-in(s), and PHP {$disbursed_fmt} in disbursed student activity financing. "
+        . "Calculated organizational health score stands at {$score}/100 ({$health_label}).";
 
     $report = [
-        'report_title' => ucwords(str_replace('_', ' ', $report_type)) . ' Report',
-        'executive_summary' => "Empirical assessment of co-curricular operations at Bestlink College of the Philippines. Overall organization vitality and student engagement metrics indicate steady progress across campus student leadership initiatives.",
+        'report_title' => "$report_type_title Report — $scope_title",
+        'executive_summary' => $summary,
         'key_findings' => $findings,
         'trends' => $trends,
-        'recommendations' => $recommendations,
+        'recommendations' => $recs,
         'risk_flags' => $risks,
-        'overall_health_score' => 90,
-        'overall_health_label' => 'Excellent'
+        'overall_health_score' => $score,
+        'overall_health_label' => $health_label
     ];
 
-    return ['success' => true, 'parsed' => $report];
+    log_ai_interaction($conn, $user_id, 'report_generation', "Data-Driven Analysis for $report_type", json_encode($report));
+
+    return ['success' => true, 'parsed' => $report, 'engine' => 'Data-Driven Analytic Engine'];
 }

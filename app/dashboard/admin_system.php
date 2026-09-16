@@ -16,6 +16,38 @@ $sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)$_SESSION['user_id'];
 $is_admin     = ($sess_role === 'admin');
 
+// Server-side active tab determination with strict role gating
+$requested_tab = $_GET['tab'] ?? ($is_admin ? 'usersTab' : 'auditTab');
+$allowed_tabs  = ['usersTab', 'matrixTab', 'auditTab', 'opsTab'];
+
+if (!$is_admin) {
+    // SSC role is strictly restricted to the System Activity Audit Trail
+    $active_tab = 'auditTab';
+} else {
+    $active_tab = in_array($requested_tab, $allowed_tabs, true) ? $requested_tab : 'usersTab';
+}
+
+// Fetch system settings if admin
+$sys_settings = [];
+if ($is_admin) {
+    $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
+        setting_key VARCHAR(100) NOT NULL PRIMARY KEY,
+        setting_value TEXT DEFAULT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $res_s = $conn->query("SELECT setting_key, setting_value FROM system_settings");
+    if ($res_s) {
+        while ($r = $res_s->fetch_assoc()) {
+            $sys_settings[$r['setting_key']] = $r['setting_value'];
+        }
+    }
+}
+$academic_year        = $sys_settings['academic_year'] ?? '2025-2026';
+$active_semester      = $sys_settings['active_semester'] ?? '1st Semester';
+$org_categories       = $sys_settings['org_categories'] ?? "Academic\nTalent & Cultural\nIndependent\nSports";
+$notification_tpl     = $sys_settings['notification_templates'] ?? "Event Approval Notice\nBudget Disbursement Notice\nCouncil Endorsement Notice";
+
 // -- Live Statistics ------------------------------------------
 $user_count     = (int)$conn->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
 $student_count  = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='student'")->fetch_row()[0];
@@ -27,14 +59,23 @@ $club_count     = (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Ac
 $pending_apps   = (int)$conn->query("SELECT COUNT(*) FROM club_memberships WHERE status='Pending'")->fetch_row()[0];
 $stuck_budgets  = (int)$conn->query("SELECT COUNT(*) FROM budget_requests WHERE status NOT IN ('Disbursed','Rejected') AND deleted_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)")->fetch_row()[0];
 
+$stuck_events   = 0;
+if ($is_admin) {
+    $r_se = $conn->query("SELECT COUNT(*) FROM events WHERE status NOT IN ('Approved','Completed','Cancelled','Rejected') AND deleted_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    if ($r_se) $stuck_events = (int)$r_se->fetch_row()[0];
+}
+
 // -- Fetch all users with profile data -------------------------
-$all_users = $conn->query(
-    "SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.role, u.created_at,
-            s.student_number, s.course, s.year_level, s.section, s.status AS student_status
-     FROM users u
-     LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
-     ORDER BY u.role, u.last_name, u.first_name"
-)->fetch_all(MYSQLI_ASSOC);
+$all_users = [];
+if ($is_admin) {
+    $all_users = $conn->query(
+        "SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.role, u.created_at,
+                s.student_number, s.course, s.year_level, s.section, s.status AS student_status
+         FROM users u
+         LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
+         ORDER BY u.role, u.last_name, u.first_name"
+    )->fetch_all(MYSQLI_ASSOC);
+}
 
 // -- Recent audit logs -----------------------------------------
 $audit_logs = $conn->query(
@@ -202,24 +243,31 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
       <!-- Tab Navigation -->
       <div class="admin-tab-nav">
-        <button class="admin-tab-btn active" onclick="switchAdminTab('usersTab', this)">
-          <i class="fa-solid fa-users"></i> User Accounts &amp; RBAC
-        </button>
-        <button class="admin-tab-btn" onclick="switchAdminTab('matrixTab', this)">
-          <i class="fa-solid fa-table-cells"></i> Permission Matrix
-        </button>
-        <button class="admin-tab-btn" onclick="switchAdminTab('auditTab', this)">
-          <i class="fa-solid fa-list-check"></i> System Audit Trail
-        </button>
-        <button class="admin-tab-btn" onclick="switchAdminTab('opsTab', this)">
-          <i class="fa-solid fa-server"></i> System Health &amp; Operations
-        </button>
+        <?php if ($is_admin): ?>
+          <button class="admin-tab-btn <?= $active_tab==='usersTab'?'active':'' ?>" onclick="switchAdminTab('usersTab', this)">
+            <i class="fa-solid fa-users"></i> User Accounts &amp; RBAC
+          </button>
+          <button class="admin-tab-btn <?= $active_tab==='matrixTab'?'active':'' ?>" onclick="switchAdminTab('matrixTab', this)">
+            <i class="fa-solid fa-table-cells"></i> Permission Matrix
+          </button>
+          <button class="admin-tab-btn <?= $active_tab==='auditTab'?'active':'' ?>" onclick="switchAdminTab('auditTab', this)">
+            <i class="fa-solid fa-list-check"></i> System Audit Trail
+          </button>
+          <button class="admin-tab-btn <?= $active_tab==='opsTab'?'active':'' ?>" onclick="switchAdminTab('opsTab', this)">
+            <i class="fa-solid fa-server"></i> System Health &amp; Settings
+          </button>
+        <?php else: ?>
+          <button class="admin-tab-btn active" onclick="switchAdminTab('auditTab', this)">
+            <i class="fa-solid fa-list-check"></i> System Audit Logs (Read-Only)
+          </button>
+        <?php endif; ?>
       </div>
 
       <!-- ══════════════════════════════════════════════════════════════
-           TAB 1: User Accounts & RBAC
+           TAB 1: User Accounts & RBAC (Admin Only)
       ══════════════════════════════════════════════════════════════ -->
-      <div class="admin-tab-content active" id="usersTab">
+      <?php if ($is_admin): ?>
+      <div class="admin-tab-content <?= $active_tab==='usersTab'?'active':'' ?>" id="usersTab">
         <div class="table-card">
           <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #f1f5f9;">
             <div>
@@ -239,6 +287,9 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openCreateUserModal()">
                 <i class="fa-solid fa-user-plus"></i> Add New User
               </button>
+              <a href="../shared/admin_actions.php?action=export_users_csv" class="card-btn" style="background:#2563eb; color:#fff; font-weight:700; text-decoration:none;">
+                <i class="fa-solid fa-file-csv"></i> Export Users (CSV)
+              </a>
               <?php endif; ?>
             </div>
           </div>
@@ -277,6 +328,19 @@ require_once __DIR__ . '/../shared/sidebar.php';
                 <?php if ($is_admin): ?>
                 <td>
                   <div style="display:flex; gap:6px;">
+                    <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff;" onclick="window.openStudentQrModal(<?= htmlspecialchars(json_encode([
+                      'user_id' => $u['id'],
+                      'username' => $u['username'],
+                      'first_name' => $u['first_name'],
+                      'last_name' => $u['last_name'],
+                      'role' => $u['role'],
+                      'student_number' => $u['student_number'] ?? '',
+                      'course' => $u['course'] ?? '',
+                      'year_level' => $u['year_level'] ?? '',
+                      'section' => $u['section'] ?? ''
+                    ]), ENT_QUOTES) ?>)" title="View &amp; Print Unique QR Badge">
+                      <i class="fa-solid fa-qrcode"></i>
+                    </button>
                     <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="openEditUserModal(<?= htmlspecialchars(json_encode($u), ENT_QUOTES) ?>)" title="Edit User">
                       <i class="fa-solid fa-pen-to-square"></i>
                     </button>
@@ -297,11 +361,13 @@ require_once __DIR__ . '/../shared/sidebar.php';
           </table>
         </div>
       </div>
+      <?php endif; /* end is_admin usersTab */ ?>
 
+      <?php if ($is_admin): ?>
       <!-- ══════════════════════════════════════════════════════════════
-           TAB 2: Role & Permission Matrix
+           TAB 2: Role & Permission Matrix (Admin Only)
       ══════════════════════════════════════════════════════════════ -->
-      <div class="admin-tab-content" id="matrixTab">
+      <div class="admin-tab-content <?= $active_tab==='matrixTab'?'active':'' ?>" id="matrixTab">
         <div class="table-card">
           <div style="margin-bottom:18px;">
             <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-table-cells" style="color:#2563eb;"></i> Role-Based Access Control (RBAC) Permissions Matrix</h3>
@@ -322,7 +388,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <tr>
                 <td><strong>Browse Organization Directory</strong></td>
                 <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Yes (Apply Now)</span></td>
-                <td><span class="perm-cond">Restricted to Handled Org</span></td>
+                <td><span class="perm-no">&times; Hidden &amp; Restricted</span></td>
                 <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Full Directory</span></td>
                 <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Full Directory &amp; Charters</span></td>
               </tr>
@@ -335,8 +401,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
               </tr>
               <tr>
                 <td><strong>Budget &amp; Finance Pipeline</strong></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-plus"></i> Submit Requisition</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Stage 1: Endorse to SSC</span></td>
+                <td><span class="perm-no">&times; Access Restricted</span></td>
+                <td><span class="perm-yes"><i class="fa-solid fa-plus"></i> Stage 1: Endorse to SSC</span></td>
                 <td><span class="perm-yes"><i class="fa-solid fa-check-double"></i> Stage 2: Audit &amp; Forward to Admin</span></td>
                 <td><span class="perm-yes"><i class="fa-solid fa-hand-holding-dollar"></i> Stage 3: Disburse Funds &amp; Override</span></td>
               </tr>
@@ -365,26 +431,32 @@ require_once __DIR__ . '/../shared/sidebar.php';
                 <td><strong>User Account Administration</strong></td>
                 <td><span class="perm-no">&times; Profile only</span></td>
                 <td><span class="perm-no">&times; Profile only</span></td>
-                <td><span class="perm-cond">Audited View-Only Directory</span></td>
+                <td><span class="perm-no">&times; Restricted</span></td>
                 <td><span class="perm-yes"><i class="fa-solid fa-users-gear"></i> Full Account CRUD &amp; Role Changes</span></td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
+      <?php endif; /* end is_admin matrixTab */ ?>
 
       <!-- ══════════════════════════════════════════════════════════════
-           TAB 3: System Audit Trail
+           TAB 3: System Audit Trail (Admin & SSC)
       ══════════════════════════════════════════════════════════════ -->
-      <div class="admin-tab-content" id="auditTab">
+      <div class="admin-tab-content <?= $active_tab==='auditTab'?'active':'' ?>" id="auditTab">
         <div class="table-card">
           <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #f1f5f9;">
             <div>
-              <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-lock" style="color:#2563eb;"></i> System Activity Audit Trail</h3>
+              <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-lock" style="color:#2563eb;"></i> System Activity Audit Trail <?= $is_admin ? '(Full Access)' : '(Read-Only)' ?></h3>
               <p style="margin:2px 0 0; font-size:0.78rem; color:#64748b;">Real-time tamper-evident records of administrative and security events</p>
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
               <input type="text" id="auditSearchInput" placeholder="Filter actions, details, users..." style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; min-width:240px;" oninput="filterAuditTable()"/>
+              <?php if ($is_admin): ?>
+              <a href="../shared/admin_actions.php?action=export_audit_csv" class="card-btn" style="background:#0f172a; color:#fff; font-weight:700; text-decoration:none;">
+                <i class="fa-solid fa-file-csv"></i> Export Audit Logs (CSV)
+              </a>
+              <?php endif; ?>
             </div>
           </div>
 
@@ -421,10 +493,11 @@ require_once __DIR__ . '/../shared/sidebar.php';
       </div>
 
       <!-- ══════════════════════════════════════════════════════════════
-           TAB 4: Operations & System Health
+           TAB 4: System Health & Settings (Admin Only)
       ══════════════════════════════════════════════════════════════ -->
-      <div class="admin-tab-content" id="opsTab">
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <?php if ($is_admin): ?>
+      <div class="admin-tab-content <?= $active_tab==='opsTab'?'active':'' ?>" id="opsTab">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
           
           <!-- Diagnostics Card -->
           <div class="table-card">
@@ -434,31 +507,95 @@ require_once __DIR__ . '/../shared/sidebar.php';
                 <tr><td><strong>PHP Version</strong></td><td><code><?= PHP_VERSION ?></code></td></tr>
                 <tr><td><strong>MySQL Server</strong></td><td><code><?= $conn->server_info ?></code></td></tr>
                 <tr><td><strong>Storage Permissions</strong></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Writable (`uploads/`)</span></td></tr>
-                <tr><td><strong>System Timezone</strong></td><td><code><?= date_default_timezone_get() ?> (<?= date('Y-m-d H:i:s') ?>)</code></td></tr>
-                <tr><td><strong>Active Sessions</strong></td><td><span class="badge-active">Operational</span></td></tr>
+                <tr><td><strong>Server Timezone</strong></td><td><code><?= date_default_timezone_get() ?> (<?= date('Y-m-d H:i:s') ?>)</code></td></tr>
+                <tr><td><strong>Registered Users</strong></td><td><strong><?= $user_count ?></strong> accounts</td></tr>
+                <tr><td><strong>Active Organizations</strong></td><td><strong><?= $club_count ?></strong> chartered orgs</td></tr>
+                <tr><td><strong>System Audit Records</strong></td><td><strong><?= (int)$conn->query("SELECT COUNT(*) FROM audit_logs")->fetch_row()[0] ?></strong> logs logged</td></tr>
+                <tr><td><strong>System Health Status</strong></td><td><span class="badge-active" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-circle-check"></i> All Systems Operational</span></td></tr>
               </tbody>
             </table>
           </div>
 
-          <!-- Stuck Budget Overrides -->
+          <!-- Institutional Settings Form -->
           <div class="table-card">
-            <h3 style="margin:0 0 14px; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-screwdriver-wrench" style="color:#f59e0b;"></i> Workflow Override Operations</h3>
-            <p style="font-size:0.83rem; color:#64748b; line-height:1.5;">
-              Emergency tools for System Administrators to resolve bottlenecked requisitions or perform quick role adjustments.
-            </p>
-            <?php if ($is_admin): ?>
-            <div style="display:flex; flex-direction:column; gap:10px; margin-top:16px;">
-              <button type="button" class="card-btn" id="openOverrideBtn" style="background:#2563eb; color:#fff; font-weight:700; padding:10px 16px; justify-content:center;">
-                <i class="fa-solid fa-bolt"></i> Inspect &amp; Force-Approve Stuck Budgets (<?= $stuck_budgets ?>)
-              </button>
-            </div>
-            <?php else: ?>
-            <p style="font-size:0.8rem; color:#94a3b8; font-style:italic;">Workflow override executions require System Administrator clearance.</p>
-            <?php endif; ?>
+            <h3 style="margin:0 0 14px; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-sliders" style="color:#2563eb;"></i> Institutional Configuration Store</h3>
+            <p style="font-size:0.8rem; color:#64748b; margin-top:-6px; margin-bottom:14px;">Global parameters stored in <code>system_settings</code> database table.</p>
+            <form id="sysSettingsForm" onsubmit="handleSaveSettings(event)">
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group-admin">
+                  <label>Current Academic Year</label>
+                  <input type="text" name="academic_year" value="<?= htmlspecialchars($academic_year) ?>" required/>
+                </div>
+                <div class="form-group-admin">
+                  <label>Active Semester</label>
+                  <select name="active_semester">
+                    <option value="1st Semester" <?= $active_semester==='1st Semester'?'selected':'' ?>>1st Semester</option>
+                    <option value="2nd Semester" <?= $active_semester==='2nd Semester'?'selected':'' ?>>2nd Semester</option>
+                    <option value="Summer Term" <?= $active_semester==='Summer Term'?'selected':'' ?>>Summer Term</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group-admin">
+                <label>Recognized Org Categories (one per line)</label>
+                <textarea name="org_categories" rows="2" style="font-family:monospace; font-size:0.8rem;"><?= htmlspecialchars($org_categories) ?></textarea>
+              </div>
+              <div class="form-group-admin">
+                <label>Automated Notification Templates</label>
+                <textarea name="notification_templates" rows="2" style="font-family:monospace; font-size:0.8rem;"><?= htmlspecialchars($notification_tpl) ?></textarea>
+              </div>
+              <div class="form-group-admin">
+                <label>Gemini AI Engine API Key</label>
+                <input type="password" name="gemini_api_key" value="<?= htmlspecialchars($sys_settings['gemini_api_key'] ?? '') ?>" placeholder="AIzaSy..."/>
+              </div>
+              <div style="text-align:right; margin-top:10px;">
+                <button type="submit" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;">
+                  <i class="fa-solid fa-floppy-disk"></i> Save System Settings
+                </button>
+              </div>
+            </form>
           </div>
 
         </div>
+
+        <!-- Stuck Requests Monitor -->
+        <div class="table-card">
+          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid #f1f5f9;">
+            <div>
+              <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-hourglass-half" style="color:#d97706;"></i> Stuck-Request Monitor &amp; Force-Advance Operations</h3>
+              <p style="margin:2px 0 0; font-size:0.78rem; color:#64748b;">Monitors requisitions and event proposals idle for over 7 days with emergency administrative override actions</p>
+            </div>
+            <button type="button" class="card-btn" style="background:#2563eb; color:#fff; font-weight:700;" onclick="loadStuckItemsLive()">
+              <i class="fa-solid fa-rotate"></i> Refresh Stuck Queue
+            </button>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+            <!-- Stuck Budgets Panel -->
+            <div>
+              <div style="font-size:0.82rem; font-weight:800; color:#475569; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;">
+                <span><i class="fa-solid fa-hand-holding-dollar" style="color:#2563eb;"></i> Stuck Budgets (> 7 Days):</span>
+                <span class="badge-warning" style="font-size:0.75rem;"><?= $stuck_budgets ?> idle</span>
+              </div>
+              <div id="stuckBudgetsContainer" style="max-height:260px; overflow-y:auto; border:1px solid #f1f5f9; border-radius:10px; padding:8px;">
+                <p style="text-align:center; color:#94a3b8; padding:20px; font-size:0.82rem;">Loading stuck budgets...</p>
+              </div>
+            </div>
+
+            <!-- Stuck Events Panel -->
+            <div>
+              <div style="font-size:0.82rem; font-weight:800; color:#475569; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;">
+                <span><i class="fa-solid fa-calendar-xmark" style="color:#d97706;"></i> Stuck Event Proposals (> 7 Days):</span>
+                <span class="badge-warning" style="font-size:0.75rem;"><?= $stuck_events ?> idle</span>
+              </div>
+              <div id="stuckEventsContainer" style="max-height:260px; overflow-y:auto; border:1px solid #f1f5f9; border-radius:10px; padding:8px;">
+                <p style="text-align:center; color:#94a3b8; padding:20px; font-size:0.82rem;">Loading stuck events...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
+      <?php endif; /* end is_admin opsTab */ ?>
 
     </div>
   </div>
@@ -798,12 +935,105 @@ function forceApproveBudget(id) {
       if (res.success) {
         showAlert('Budget request force-advanced successfully!', 'success');
         closeModal('overrideModal');
+        if (typeof loadStuckItemsLive === 'function') loadStuckItemsLive();
         setTimeout(() => location.reload(), 1200);
       } else {
         showAlert(res.message, 'error');
       }
     })
     .catch(() => showAlert('Network error.', 'error'));
+}
+
+function handleSaveSettings(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  fd.append('action', 'save_system_settings');
+
+  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        showAlert(res.message, 'success');
+      } else {
+        showAlert(res.message, 'error');
+      }
+    })
+    .catch(() => showAlert('Failed to save settings.', 'error'));
+}
+
+function loadStuckItemsLive() {
+  fetch('../shared/admin_actions.php?action=list_stuck')
+    .then(r => r.json())
+    .then(data => {
+      const bEl = document.getElementById('stuckBudgetsContainer');
+      const eEl = document.getElementById('stuckEventsContainer');
+      if (!data.success) return;
+
+      const budgets = data.stuck_budgets || data.stuck || [];
+      const events  = data.stuck_events || [];
+
+      if (bEl) {
+        if (!budgets.length) {
+          bEl.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:16px; font-size:0.8rem;"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> No stuck budget requisitions.</p>';
+        } else {
+          bEl.innerHTML = budgets.map(b => `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:0.82rem;">
+              <div>
+                <strong>${b.title}</strong>
+                <div style="font-size:0.72rem; color:#64748b;">${b.club_name} &bull; ₱${parseFloat(b.amount).toLocaleString('en-PH', {minimumFractionDigits:2})}</div>
+              </div>
+              <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="forceApproveBudget(${b.id})">
+                <i class="fa-solid fa-bolt"></i> Force Approve
+              </button>
+            </div>
+          `).join('');
+        }
+      }
+
+      if (eEl) {
+        if (!events.length) {
+          eEl.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:16px; font-size:0.8rem;"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> No stuck event proposals.</p>';
+        } else {
+          eEl.innerHTML = events.map(ev => `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:0.82rem;">
+              <div>
+                <strong>${ev.title}</strong>
+                <div style="font-size:0.72rem; color:#64748b;">${ev.club_name || 'Campus'} &bull; ${ev.event_date}</div>
+              </div>
+              <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff;" onclick="forceApproveEvent(${ev.id})">
+                <i class="fa-solid fa-check-double"></i> Force Clear
+              </button>
+            </div>
+          `).join('');
+        }
+      }
+    })
+    .catch(() => {});
+}
+
+function forceApproveEvent(id) {
+  if (!confirm('Force-approve and publish this event to the campus calendar?')) return;
+  const fd = new FormData();
+  fd.append('action', 'override_event');
+  fd.append('event_id', id);
+
+  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        showAlert(res.message, 'success');
+        if (typeof loadStuckItemsLive === 'function') loadStuckItemsLive();
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        showAlert(res.message, 'error');
+      }
+    })
+    .catch(() => showAlert('Network error.', 'error'));
+}
+
+// Initial stuck items load if present
+if (document.getElementById('stuckBudgetsContainer')) {
+  loadStuckItemsLive();
 }
 </script>
 </body>

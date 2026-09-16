@@ -89,7 +89,7 @@ if (empty($announcements)) {
       'category' => 'Requirement / Submission',
       'priority' => 'Urgent',
       'content' => 'All officer committees and project heads are required to submit their midterm activity accomplishment reports and liquidation documents by August 15, 2026. Non-compliance will delay budget releases.',
-      'target_group' => 'Organization Officers',
+      'target_group' => 'Organization Officers (Elected Officers)',
       'created_at' => date('Y-m-d H:i:s', strtotime('-1 day')),
       'club_name' => $adviser_club['name'] ?? 'Unassigned Club',
       'club_code' => $adviser_club['code'] ?? 'N/A',
@@ -104,7 +104,7 @@ if (empty($announcements)) {
       'category' => 'Event',
       'priority' => 'Important',
       'content' => 'Registration for the 24-Hour Hackathon is officially open! Form teams of 3 to 4 members. Pre-event orientation meeting scheduled on Friday at 3:00 PM in Lab 304.',
-      'target_group' => 'All Members',
+      'target_group' => 'Public (All students of the school)',
       'created_at' => date('Y-m-d H:i:s', strtotime('-3 days')),
       'club_name' => $adviser_club['name'] ?? 'Unassigned Club',
       'club_code' => $adviser_club['code'] ?? 'N/A',
@@ -115,11 +115,11 @@ if (empty($announcements)) {
       'id' => 3,
       'club_id' => $club_id,
       'author_id' => $user_id,
-      'title' => 'Executive Board & Faculty Adviser Monthly Assembly',
+      'title' => 'General Assembly & Membership Orientation 2026',
       'category' => 'Meeting',
       'priority' => 'Normal',
       'content' => 'Monthly alignment meeting with club officers regarding mid-year outreach projects and upcoming inter-school competitions. Attendance is mandatory for all executive officers.',
-      'target_group' => 'Executive Board',
+      'target_group' => 'All Members (Only joined members of the organization)',
       'created_at' => date('Y-m-d H:i:s', strtotime('-5 days')),
       'club_name' => $adviser_club['name'] ?? 'Unassigned Club',
       'club_code' => $adviser_club['code'] ?? 'N/A',
@@ -400,14 +400,15 @@ $req_cnt = count(array_filter($announcements, fn($a) => $a['category'] === 'Requ
                   <span class="ann-category-pill <?= $cat_class ?>">
                     <i class="fa-solid fa-tag"></i> <?= htmlspecialchars($cat) ?>
                   </span>
-                  <span class="prio-badge <?= $prio_class ?>"><?= htmlspecialchars($prio) ?></span>
-                  <span style="font-size:0.78rem; color:#64748b;">
-                    <i class="fa-solid fa-users"></i> Target:
-                    <strong><?= htmlspecialchars($ann['target_group'] ?? 'All Members') ?></strong>
+                  <?php if ($prio !== 'Normal'): ?>
+                    <span class="prio-badge <?= $prio_class ?>"><?= htmlspecialchars($prio) ?></span>
+                  <?php endif; ?>
+                  <span style="font-size:0.75rem; color:#475569; background:#f1f5f9; padding:3px 10px; border-radius:12px; font-weight:600; border:1px solid #e2e8f0;">
+                    <i class="fa-solid fa-users" style="color:#64748b; margin-right:4px;"></i><?= htmlspecialchars($ann['target_group'] ?? 'All Members') ?>
                   </span>
                 </div>
                 <span style="font-size:0.78rem; color:#94a3b8;">
-                  <i class="fa-solid fa-clock"></i> <?= date('M j, Y \a\t g:i A', strtotime($ann['created_at'])) ?>
+                  <i class="fa-regular fa-clock"></i> <?= date('M j, Y \a\t g:i A', strtotime($ann['created_at'])) ?>
                 </span>
               </div>
 
@@ -485,14 +486,12 @@ $req_cnt = count(array_filter($announcements, fn($a) => $a['category'] === 'Requ
         </div>
 
         <div style="margin-bottom:14px;">
-          <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:4px;">Target
-            Audience</label>
+          <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:4px;">Target Audience *</label>
           <select name="target_group"
             style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:0.85rem;">
-            <option value="All Members">All Members</option>
-            <option value="Organization Officers">Organization Officers &amp; Executive Board</option>
-            <option value="Event Participants">Event Participants</option>
-            <option value="Graduating Students">Graduating Students</option>
+            <option value="Public (All students of the school)">Public (All students of the school)</option>
+            <option value="Organization Officers (Elected Officers)">Organization Officers (Elected Officers)</option>
+            <option value="All Members (Only joined members of the organization)">All Members (Only joined members of the organization)</option>
           </select>
         </div>
 

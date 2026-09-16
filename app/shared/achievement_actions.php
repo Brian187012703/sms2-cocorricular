@@ -7,11 +7,14 @@ header('Content-Type: application/json');
 session_start();
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) { echo json_encode(['success'=>false,'message'=>'Not authenticated.']); exit; }
 
-echo json_encode(['success' => false, 'message' => 'The Awards & Achievements module has been retired.']);
-exit;
+// CSRF check on mutating requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+}
 
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
@@ -35,13 +38,15 @@ switch ($action) {
             $types  = 'i';
         } elseif ($user_role === 'club_adviser') {
             // Adviser sees their club
-            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-            $cm->bind_param('i', $user_id);
+            $sess_user = $_SESSION['username'] ?? '';
+            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1))) AND status='Active' LIMIT 1");
+            $cm->bind_param('is', $user_id, $sess_user);
             $cm->execute();
             $cm->bind_result($club_id);
             $cm->fetch();
             $cm->close();
             if (!empty($club_id)) { $where = "WHERE a.club_id = ?"; $params = [(int)$club_id]; $types = 'i'; }
+            else { $where = "WHERE 1=0"; }
         }
 
         $sql = "SELECT a.id, a.title, a.competition, a.award_date, a.status, a.notes, a.proof_file, a.created_at,
@@ -85,11 +90,12 @@ switch ($action) {
 
         if (!$title || !$competition || !$award_date) achRespond(false, 'Title, competition, and award date are required.');
 
-        // Get club_id — prefer posted value, fall back to membership
+        // Get club_id — prefer posted value, fall back to membership or adviser club
         $club_id = (int)($_POST['club_id'] ?? 0);
         if (!$club_id) {
-            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-            $cm->bind_param('i', $user_id);
+            $sess_user = $_SESSION['username'] ?? '';
+            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1))) AND status='Active' LIMIT 1");
+            $cm->bind_param('is', $user_id, $sess_user);
             $cm->execute();
             $cm->bind_result($club_id);
             $cm->fetch();

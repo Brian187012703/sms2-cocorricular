@@ -6,10 +6,8 @@
 //        SSC/Admin see all rooms
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
-session_start();
-// Inter-Club Messenger has been disabled system-wide per system specification.
-header('Location: dashboard.php');
-exit;
+require_once __DIR__ . '/../shared/security.php';
+require_auth();
 
 $sess_first = htmlspecialchars($_SESSION['first_name'] ?? 'User');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
@@ -368,43 +366,7 @@ $mock_messages = [
       });
     }
 
-    <?php if ($sess_role === 'student'): ?>
-        (function () {
-          const qrBtn = document.getElementById('qrFabBtn'), overlay = document.getElementById('qrModalOverlay'), closeBtn = document.getElementById('closeQrModalBtn');
-          let reader = null;
-          function open() { overlay.classList.add('active'); }
-          function close() { overlay.classList.remove('active'); stop(); }
-          if (qrBtn) qrBtn.addEventListener('click', open);
-          closeBtn?.addEventListener('click', close);
-          overlay?.addEventListener('click', e => { if (e.target === overlay) close(); });
-          document.getElementById('startScanBtn')?.addEventListener('click', startScan);
-          async function startScan() {
-            const v = document.getElementById('qrVideo'), p = document.getElementById('cameraPlaceholder'), sl = document.getElementById('qrScannerLine'), btn = document.getElementById('startScanBtn'), res = document.getElementById('qrScanResult'), rt = document.getElementById('qrScanText');
-            if (typeof ZXing === 'undefined') { alert('Scanner not loaded.'); return; }
-            try {
-              reader = new ZXing.BrowserQRCodeReader(); btn.textContent = 'Scanning...'; btn.disabled = true;
-              v.style.display = 'block'; p.style.display = 'none'; sl.style.display = 'block';
-              const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-              v.srcObject = stream;
-              reader.decodeFromVideoElement(v, (result) => { if (result) { rt.textContent = result.getText(); res.classList.add('active'); } });
-            } catch (e) { alert('Camera access denied.'); btn.textContent = 'Start Camera Scanner'; btn.disabled = false; }
-          }
-          function stop() {
-            if (reader) { reader.reset(); reader = null; }
-            const v = document.getElementById('qrVideo');
-            if (v?.srcObject) { v.srcObject.getTracks().forEach(t => t.stop()); v.srcObject = null; }
-            const p = document.getElementById('cameraPlaceholder'), sl = document.getElementById('qrScannerLine'), btn = document.getElementById('startScanBtn');
-            if (v) v.style.display = 'none'; if (p) p.style.display = 'flex'; if (sl) sl.style.display = 'none';
-            if (btn) { btn.textContent = 'Start Camera Scanner'; btn.disabled = false; }
-          }
-        })();
-      function switchQrTab(tab) {
-        document.querySelectorAll('.qr-tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.qr-tab-panel').forEach(p => p.classList.remove('active'));
-        document.getElementById(tab === 'myqr' ? 'tabMyQr' : 'tabScan').classList.add('active');
-        document.getElementById(tab === 'myqr' ? 'panelMyQr' : 'panelScan').classList.add('active');
-      }
-    <?php endif; ?>
+
   </script>
 </body>
 

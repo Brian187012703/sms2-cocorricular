@@ -10,6 +10,7 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Not authenticated.']);
@@ -22,6 +23,11 @@ $user_role = $_SESSION['role'] ?? 'student';
 if (!in_array($user_role, ['admin', 'ssc'])) {
     echo json_encode(['success' => false, 'message' => 'Access denied.']);
     exit;
+}
+
+// CSRF check on mutating requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
 }
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
@@ -60,7 +66,7 @@ switch ($action) {
         $sql = "SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.role, u.created_at,
                        s.student_number, s.course, s.year_level, s.section, s.status AS student_status
                 FROM users u
-                LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+                LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
                 $where_sql
                 ORDER BY u.role, u.last_name, u.first_name";
 
@@ -71,6 +77,16 @@ switch ($action) {
         $stmt->execute();
         $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         $stmt->close();
+
+        // Server-side field filtering for SSC (data-layer RBAC)
+        if ($user_role === 'ssc') {
+            foreach ($rows as &$r) {
+                if ($r['role'] === 'admin') {
+                    $r['email'] = '[Protected Administrator]';
+                }
+            }
+            unset($r);
+        }
 
         adRespond(true, 'OK', ['users' => $rows]);
     }
@@ -239,9 +255,9 @@ switch ($action) {
         adRespond(true, 'OK', ['logs' => $rows]);
     }
 
-    // ── LIST stuck budget requests ────────────────────────────
+    // ── LIST stuck budget requests & events ───────────────────
     case 'list_stuck': {
-        $rows = $conn->query(
+        $stuck_budgets = $conn->query(
             "SELECT br.id, br.title, br.amount, br.status, br.created_at,
                     c.name AS club_name, u.first_name, u.last_name
              FROM budget_requests br
@@ -251,7 +267,24 @@ switch ($action) {
              AND br.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
              ORDER BY br.created_at ASC"
         )->fetch_all(MYSQLI_ASSOC);
-        adRespond(true, 'OK', ['stuck' => $rows]);
+
+        $stuck_events = $conn->query(
+            "SELECT e.id, e.title, e.event_date, e.status, e.created_at,
+                    c.name AS club_name, u.first_name, u.last_name
+             FROM events e
+             LEFT JOIN clubs c ON c.id = e.club_id
+             LEFT JOIN users u ON u.id = e.created_by
+             WHERE e.status NOT IN ('Approved','Completed','Cancelled','Rejected')
+             AND e.deleted_at IS NULL
+             AND e.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+             ORDER BY e.created_at ASC"
+        )->fetch_all(MYSQLI_ASSOC);
+
+        adRespond(true, 'OK', [
+            'stuck'         => $stuck_budgets,
+            'stuck_budgets' => $stuck_budgets,
+            'stuck_events'  => $stuck_events
+        ]);
     }
 
     // ── FORCE APPROVE stuck budget (Admin only) ───────────────
@@ -260,7 +293,7 @@ switch ($action) {
         $id = (int)($_POST['budget_id'] ?? $_POST['id'] ?? 0);
         if ($id <= 0) adRespond(false, 'Invalid request ID.');
 
-        $stmt = $conn->prepare("UPDATE budget_requests SET status='Pending Admin', notes='Force-forwarded to Admin by System Admin (workflow override).' WHERE id=?");
+        $stmt = $conn->prepare("UPDATE budget_requests SET status='Pending Admin', notes=CONCAT(COALESCE(notes,''), ' [Force-advanced to Admin by System Admin override]') WHERE id=?");
         $stmt->bind_param('i', $id);
         $stmt->execute();
         $stmt->close();
@@ -272,6 +305,116 @@ switch ($action) {
         }
         log_audit($conn, $user_id, 'admin_budget_override', 'budget_requests', $id, "Force-approved budget #$id");
         adRespond(true, 'Budget force-approved and ready for final disbursement.');
+    }
+
+    // ── FORCE APPROVE stuck event (Admin only) ────────────────
+    case 'override_event': {
+        if ($user_role !== 'admin') adRespond(false, 'Only Admins can force-approve events.');
+        $id = (int)($_POST['event_id'] ?? $_POST['id'] ?? 0);
+        if ($id <= 0) adRespond(false, 'Invalid event ID.');
+
+        $stmt = $conn->prepare("UPDATE events SET status='Approved', notes=CONCAT(COALESCE(notes,''), ' [Force-cleared by System Admin override]') WHERE id=?");
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $stmt->close();
+
+        $ev = $conn->query("SELECT created_by, title FROM events WHERE id=$id")->fetch_assoc();
+        if ($ev && !empty($ev['created_by'])) {
+            push_notification($conn, (int)$ev['created_by'], 'Event Override',
+                "Your event proposal \"{$ev['title']}\" was force-cleared and published by System Administrator.", 'info');
+        }
+        log_audit($conn, $user_id, 'admin_event_override', 'events', $id, "Force-approved event #$id");
+        adRespond(true, 'Event proposal force-approved and published to campus calendar.');
+    }
+
+    // ── SAVE SYSTEM SETTINGS (Admin only) ─────────────────────
+    case 'save_system_settings': {
+        if ($user_role !== 'admin') adRespond(false, 'Only System Administrators can update institutional settings.');
+
+        // Ensure table exists
+        $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
+            setting_key VARCHAR(100) NOT NULL PRIMARY KEY,
+            setting_value TEXT DEFAULT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $allowed_keys = [
+            'academic_year',
+            'active_semester',
+            'org_categories',
+            'notification_templates',
+            'gemini_api_key'
+        ];
+
+        $stmt = $conn->prepare("INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)");
+
+        $saved_count = 0;
+        foreach ($allowed_keys as $key) {
+            if (isset($_POST[$key])) {
+                $val = trim($_POST[$key]);
+                $stmt->bind_param('ss', $key, $val);
+                $stmt->execute();
+                $saved_count++;
+            }
+        }
+        $stmt->close();
+
+        log_audit($conn, $user_id, 'admin_save_settings', 'system_settings', 0, "Updated {$saved_count} institutional system settings");
+        adRespond(true, 'Institutional system settings updated successfully.');
+    }
+
+    // ── EXPORT USERS CSV (Admin only) ─────────────────────────
+    case 'export_users_csv': {
+        if ($user_role !== 'admin') {
+            adRespond(false, 'Export is restricted to System Administrators.');
+        }
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="bcp_users_export_' . date('Ymd_His') . '.csv"');
+
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['ID', 'Username', 'Role', 'First Name', 'Last Name', 'Email', 'Student Number', 'Course', 'Year Level', 'Section', 'Created At']);
+
+        $res = $conn->query("
+            SELECT u.id, u.username, u.role, u.first_name, u.last_name, u.email,
+                   s.student_number, s.course, s.year_level, s.section, u.created_at
+            FROM users u
+            LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
+            ORDER BY u.id ASC
+        ");
+        while ($row = $res->fetch_assoc()) {
+            fputcsv($out, $row);
+        }
+        fclose($out);
+        log_audit($conn, $user_id, 'admin_export_users_csv', 'users', 0, 'Exported all users to CSV');
+        exit;
+    }
+
+    // ── EXPORT AUDIT LOGS CSV (Admin only) ────────────────────
+    case 'export_audit_csv': {
+        if ($user_role !== 'admin') {
+            adRespond(false, 'Export is restricted to System Administrators.');
+        }
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="bcp_audit_logs_' . date('Ymd_His') . '.csv"');
+
+        $out = fopen('php://output', 'w');
+        fputcsv($out, ['Log ID', 'Timestamp', 'User ID', 'Actor Name', 'Role', 'Action', 'Target Table', 'Target ID', 'Detail', 'IP Address']);
+
+        $res = $conn->query("
+            SELECT al.id, al.created_at, al.user_id, CONCAT(u.first_name, ' ', u.last_name) AS actor_name,
+                   u.role, al.action, al.target_table, al.target_id, al.detail, al.ip_address
+            FROM audit_logs al
+            JOIN users u ON u.id = al.user_id
+            ORDER BY al.id DESC
+        ");
+        while ($row = $res->fetch_assoc()) {
+            fputcsv($out, $row);
+        }
+        fclose($out);
+        log_audit($conn, $user_id, 'admin_export_audit_csv', 'audit_logs', 0, 'Exported system audit logs to CSV');
+        exit;
     }
 
     // ── SYSTEM HEALTH & DIAGNOSTICS ───────────────────────────

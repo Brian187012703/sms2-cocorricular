@@ -22,10 +22,18 @@ if (!defined('AI_TEMPERATURE')) {
  * Retrieve the active Gemini API key from session, database, or default config
  */
 function get_gemini_api_key(?mysqli $conn = null): string {
+    // 1. Check environment variable
+    $envKey = getenv('GEMINI_API_KEY') ?: ($_ENV['GEMINI_API_KEY'] ?? '');
+    if (!empty($envKey)) {
+        return trim($envKey);
+    }
+
+    // 2. Check session cache
     if (!empty($_SESSION['gemini_api_key'])) {
         return trim($_SESSION['gemini_api_key']);
     }
 
+    // 3. Check database system_settings
     if ($conn) {
         $check = $conn->query("SHOW TABLES LIKE 'system_settings'");
         if ($check && $check->num_rows > 0) {

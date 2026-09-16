@@ -9,10 +9,21 @@ if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Not authenticated.']);
     exit;
 }
-
+require_once __DIR__ . '/security.php';
+require_role(['admin', 'ssc']);
 require_once __DIR__ . '/db.php';
 
+$user_role = $_SESSION['role'] ?? 'student';
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
+
+// Mutating actions require admin role and CSRF verification
+if (in_array($action, ['add', 'edit', 'delete', 'bulk_delete', 'bulk_status'])) {
+    if ($user_role !== 'admin') {
+        echo json_encode(['success' => false, 'message' => 'Only System Administrators can modify student records.']);
+        exit;
+    }
+    verify_csrf();
+}
 
 switch ($action) {
 

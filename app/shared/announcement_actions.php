@@ -8,10 +8,16 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) {
     echo json_encode(['success' => false, 'message' => 'Not authenticated.']);
     exit;
+}
+
+// CSRF check on mutating requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
 }
 
 $user_id   = (int)$_SESSION['user_id'];
@@ -89,11 +95,12 @@ switch ($action) {
         $category     = trim($_POST['category'] ?? 'General');
         $priority     = trim($_POST['priority'] ?? 'Normal');
         $content      = trim($_POST['content'] ?? '');
-        $target_group = trim($_POST['target_group'] ?? 'All Members');
+        $target_group = trim($_POST['target_group'] ?? 'All Members (Only joined members of the organization)');
 
         if (!$club_id) {
-            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-            $cm->bind_param('i', $user_id);
+            $sess_user = $_SESSION['username'] ?? '';
+            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1))) AND status='Active' LIMIT 1");
+            $cm->bind_param('is', $user_id, $sess_user);
             $cm->execute();
             $cm->bind_result($club_id);
             $cm->fetch();
@@ -109,6 +116,15 @@ switch ($action) {
 
         $allowed_prio = ['Normal', 'Important', 'Urgent'];
         if (!in_array($priority, $allowed_prio)) $priority = 'Normal';
+
+        $allowed_targets = [
+            'Public (All students of the school)',
+            'Organization Officers (Elected Officers)',
+            'All Members (Only joined members of the organization)'
+        ];
+        if (!in_array($target_group, $allowed_targets)) {
+            $target_group = 'All Members (Only joined members of the organization)';
+        }
 
         $stmt = $conn->prepare("
             INSERT INTO org_announcements (club_id, author_id, title, category, priority, content, target_group)

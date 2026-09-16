@@ -49,7 +49,7 @@ if (!empty($_SESSION['user_id'])) {
           <div class="form-group">
             <label>
               <i class="fa-solid fa-user"></i>
-              Username
+              Username or Email
             </label>
             <input type="text" id="username" autocomplete="username" />
           </div>
@@ -72,7 +72,6 @@ if (!empty($_SESSION['user_id'])) {
             <i class="fa-solid fa-arrow-right"></i>
           </button>
         </form>
-
       </div>
     </div>
   </div>

@@ -249,6 +249,12 @@ a.sidebar-item {
   color: #fff;
 }
 
+.dropdown-item.active {
+  background: rgba(37,99,235,0.35);
+  color: #fff;
+  font-weight: 700;
+}
+
 /* ════════════════════════════
    MAIN WRAPPER
    - margin-left matches sidebar width so content isn't hidden behind it
@@ -1991,7 +1997,8 @@ a.sidebar-item {
 /* QR code frame — premium & perfectly aligned */
 .qr-code-frame {
   position: relative !important;
-  display: inline-flex !important;
+  display: flex !important;
+  flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
   background: #fff !important;
@@ -2004,8 +2011,12 @@ a.sidebar-item {
     inset 0 1px 3px rgba(255,255,255,0.8) !important;
   overflow: hidden !important;
   box-sizing: border-box !important;
-  width: auto !important;
-  height: auto !important;
+  width: 228px !important;
+  height: 228px !important;
+  min-width: 228px !important;
+  min-height: 228px !important;
+  max-width: 228px !important;
+  max-height: 228px !important;
 }
 
 /* Corner tick marks */
@@ -2035,11 +2046,35 @@ a.sidebar-item {
   border-radius: 0 0 4px 0 !important;
 }
 
-.qr-code-frame img {
+.qr-canvas-box {
   width: 200px !important;
   height: 200px !important;
-  max-width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: auto !important;
+  overflow: hidden !important;
+  position: relative !important;
+}
+
+/* Strictly suppress canvas so only the single, crisp <img> is visible */
+.qr-canvas-box canvas {
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+  position: absolute !important;
+  pointer-events: none !important;
+}
+
+.qr-code-frame img,
+.qr-canvas-box img {
+  width: 190px !important;
+  height: 190px !important;
+  max-width: 190px !important;
+  max-height: 190px !important;
   display: block !important;
+  margin: 0 auto !important;
   border-radius: 8px !important;
   object-fit: contain !important;
   background: #ffffff !important;
@@ -4535,8 +4570,8 @@ a.sidebar-item {
 
 @media (max-width: 600px) {
   .qr-modal-card { width: 95vw; max-width: 100%; }
-  .qr-code-frame { width: auto !important; height: auto !important; padding: 12px !important; }
-  .qr-code-frame img { width: 160px !important; height: 160px !important; }
+  .qr-code-frame { width: 184px !important; height: 184px !important; min-width: 184px !important; min-height: 184px !important; max-width: 184px !important; max-height: 184px !important; padding: 12px !important; }
+  .qr-code-frame img, .qr-canvas-box img { width: 160px !important; height: 160px !important; max-width: 160px !important; max-height: 160px !important; }
   .qr-scan-line { left: 12px !important; right: 12px !important; }
   .qr-camera-wrap { width: 100% !important; max-width: 260px !important; height: 200px !important; }
 
@@ -4588,8 +4623,8 @@ a.sidebar-item {
   .qr-modal-tabs { gap: 6px; padding: 8px 12px; }
   .qr-tab-btn { font-size: 0.75rem; padding: 7px 10px; }
   .qr-modal-body { padding: 12px 14px 18px; }
-  .qr-code-frame { width: auto !important; height: auto !important; padding: 12px !important; }
-  .qr-code-frame img { width: 160px !important; height: 160px !important; }
+  .qr-code-frame { width: 184px !important; height: 184px !important; min-width: 184px !important; min-height: 184px !important; max-width: 184px !important; max-height: 184px !important; padding: 12px !important; }
+  .qr-code-frame img, .qr-canvas-box img { width: 160px !important; height: 160px !important; max-width: 160px !important; max-height: 160px !important; }
   .qr-scan-line { left: 12px !important; right: 12px !important; }
   .qr-camera-wrap { width: 100% !important; max-width: 260px !important; height: 200px !important; }
 }

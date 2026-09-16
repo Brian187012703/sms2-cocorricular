@@ -12,6 +12,10 @@ require_once $configFile;
 $messages = [];
 $errors   = [];
 
+$lockFile = __DIR__ . '/install.lock';
+$is_locked = file_exists($lockFile);
+$is_admin = !empty($_SESSION['user_id']) && (($_SESSION['role'] ?? '') === 'admin' || ($_SESSION['real_role'] ?? '') === 'admin');
+
 // Helper to run raw SQL safely
 function executeSQLScript(mysqli $conn, string $sqlFilePath, array &$errors): bool {
     if (!file_exists($sqlFilePath)) {
@@ -45,9 +49,18 @@ function executeSQLScript(mysqli $conn, string $sqlFilePath, array &$errors): bo
 }
 
 // ------------------------------------------------------------
-// POST ACTION DISPATCHER
+// POST ACTION DISPATCHER (GATED)
 // ------------------------------------------------------------
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    if ($is_locked && !$is_admin) {
+        http_response_code(403);
+        if (!empty($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
+            header('Content-Type: application/json');
+            die(json_encode(['success' => false, 'message' => 'Installer is locked. System Administrator authentication is required.']));
+        }
+        die('<div style="padding:40px;font-family:sans-serif;color:#991b1b;background:#fef2f2;border-radius:12px;max-width:600px;margin:50px auto;border:1px solid #f87171;"><h2>🔒 Setup Locked</h2><p>This system has finalized installation and is locked for security. Only authenticated System Administrators may modify database configurations or execute migrations.</p><p><a href="../auth/signin.php" style="color:#2563eb;font-weight:bold;">Sign In to System</a></p></div>');
+    }
+
     $action = $_POST['action'] ?? '';
 
     // Action 1: Save & Test Database Connection Credentials
@@ -315,9 +328,13 @@ $serverPort = $_SERVER['SERVER_PORT'] ?? 80;
 $portSuffix = ($serverPort != 80 && $serverPort != 443) ? ":{$serverPort}" : "";
 $proto = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
 
-$localUrl = "{$proto}://localhost{$portSuffix}/sms/";
-$lanUrl   = "{$proto}://{$lanIp}{$portSuffix}/sms/";
-$setupLanUrl = "{$proto}://{$lanIp}{$portSuffix}/sms/app/shared/setup.php";
+$scriptWebDir = dirname(dirname(dirname($_SERVER['SCRIPT_NAME'] ?? '/')));
+$webBase = '/' . trim(str_replace('\\', '/', $scriptWebDir), '/');
+$webBase = ($webBase === '/' || $webBase === '') ? '/' : "{$webBase}/";
+
+$localUrl = "{$proto}://localhost{$portSuffix}{$webBase}";
+$lanUrl   = "{$proto}://{$lanIp}{$portSuffix}{$webBase}";
+$setupLanUrl = "{$proto}://{$lanIp}{$portSuffix}{$webBase}app/shared/setup.php";
 
 $totalExpected = count($expected_tables);
 $installedCount = count(array_intersect(array_keys($expected_tables), $existing_tables));
@@ -1093,32 +1110,6 @@ $allInstalled = ($installedCount === $totalExpected);
 
 
 </div>
-
-<!-- Generate QR Code via JS -->
-<script>
-  function copyText(text) {
-    navigator.clipboard.writeText(text).then(() => {
-      alert('Network URL copied to clipboard: ' + text);
-    }).catch(() => {
-      prompt('Copy this URL:', text);
-    });
-  }
-
-  // Generate QR code for mobile connection
-  document.addEventListener('DOMContentLoaded', function() {
-    var qrContainer = document.getElementById('qrcode');
-    if (qrContainer && typeof QRCode !== 'undefined') {
-      new QRCode(qrContainer, {
-        text: '<?= $lanUrl ?>',
-        width: 140,
-        height: 140,
-        colorDark: '#1e3a8a',
-        colorLight: '#ffffff',
-        correctLevel: QRCode.CorrectLevel.M
-      });
-    }
-  });
-</script>
 
 </body>
 </html>

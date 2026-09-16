@@ -8,8 +8,14 @@ if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
+require_once __DIR__ . '/security.php';
 
 if (empty($_SESSION['user_id'])) { echo json_encode(['success'=>false,'message'=>'Not authenticated.']); exit; }
+
+// CSRF check on mutating requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf();
+}
 
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
@@ -356,7 +362,7 @@ switch ($action) {
                 JOIN users u ON u.id = cm.user_id
                 JOIN clubs c ON c.id = cm.club_id
                 LEFT JOIN club_applications ca ON (ca.id = (SELECT MAX(id) FROM club_applications WHERE club_id = cm.club_id AND user_id = cm.user_id))
-                LEFT JOIN students s ON (s.first_name = u.first_name AND s.last_name = u.last_name)
+                LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
                 WHERE cm.status = 'Active'
                   AND u.role NOT IN ('club_adviser', 'admin')
                   AND LOWER(cm.role) != 'adviser'
