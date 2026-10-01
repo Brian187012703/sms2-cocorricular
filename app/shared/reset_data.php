@@ -3,6 +3,17 @@
 //  RESET_DATA.PHP — Clear Demo Data & Seed Real Test Accounts
 // ============================================================
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/security.php';
+
+// Security Guard: Only allow CLI execution or authenticated System Administrator
+$is_cli = (php_sapi_name() === 'cli' || empty($_SERVER['REMOTE_ADDR']));
+if (!$is_cli) {
+    if (session_status() === PHP_SESSION_NONE) { session_start(); }
+    if (empty($_SESSION['user_id']) || (($_SESSION['real_role'] ?? $_SESSION['role'] ?? '') !== 'admin')) {
+        http_response_code(403);
+        die("<h3>403 Forbidden</h3><p>Access denied. Database re-seeding is restricted to System Administrators.</p>");
+    }
+}
 
 // Disable foreign key checks for clean truncation
 $conn->query("SET FOREIGN_KEY_CHECKS = 0;");
@@ -20,6 +31,7 @@ $tables_to_truncate = [
     'election_votes',
     'org_announcements',
     'club_memberships',
+    'club_applications',
 ];
 
 $truncated = [];
@@ -37,11 +49,16 @@ foreach ($tables_to_truncate as $table) {
 $conn->query("DELETE FROM users");
 $conn->query("ALTER TABLE users AUTO_INCREMENT = 1");
 
-// Password hashes
-$std_hash  = password_hash('Bcp@Test2026!',    PASSWORD_DEFAULT);
-$adv_hash  = password_hash('Bcp@Adviser2026!', PASSWORD_DEFAULT);
-$ssc_hash  = password_hash('Bcp@SSC2026!',     PASSWORD_DEFAULT);
-$adm_hash  = password_hash('Bcp@Admin2026!',   PASSWORD_DEFAULT);
+// Configurable passwords via environment variables with default fallback
+$admin_plain = getenv('ADMIN_DEFAULT_PASSWORD') ?: ($_ENV['ADMIN_DEFAULT_PASSWORD'] ?? 'Bcp@Admin2026!');
+$ssc_plain   = getenv('SSC_DEFAULT_PASSWORD')   ?: ($_ENV['SSC_DEFAULT_PASSWORD']   ?? 'Bcp@SSC2026!');
+$std_plain   = getenv('STUDENT_DEFAULT_PASSWORD')?: ($_ENV['STUDENT_DEFAULT_PASSWORD'] ?? 'Bcp@Test2026!');
+$adv_plain   = getenv('ADVISER_DEFAULT_PASSWORD')?: ($_ENV['ADVISER_DEFAULT_PASSWORD'] ?? 'Bcp@Adviser2026!');
+
+$std_hash  = password_hash($std_plain,   PASSWORD_DEFAULT);
+$adv_hash  = password_hash($adv_plain,   PASSWORD_DEFAULT);
+$ssc_hash  = password_hash($ssc_plain,   PASSWORD_DEFAULT);
+$adm_hash  = password_hash($admin_plain, PASSWORD_DEFAULT);
 
 $ins = $conn->prepare("INSERT INTO users (username, email, first_name, last_name, password_hash, role) VALUES (?, ?, ?, ?, ?, ?)");
 
@@ -243,24 +260,29 @@ if ($check_tbl && $check_tbl->num_rows > 0) {
 // Enable foreign key checks
 $conn->query("SET FOREIGN_KEY_CHECKS = 1;");
 
+// Provision & clean sync all 42 organization databases
+require_once __DIR__ . '/org_db_manager.php';
+provision_all_org_databases($conn);
+
+
 if (php_sapi_name() === 'cli') {
     echo "SUCCESS: System reset complete.\n";
     echo "  - 16 student accounts (one per Bestlink program)\n";
-    echo "    Password: Bcp@Test2026!\n";
+    echo "    Password: {$std_plain}\n";
     echo "  - 40 adviser accounts (one per registered org)\n";
-    echo "    Password: Bcp@Adviser2026!\n";
-    echo "  - SSC Officer: ssc.officer / Bcp@SSC2026!\n";
-    echo "  - Admin: scc.admin / Bcp@Admin2026!\n";
+    echo "    Password: {$adv_plain}\n";
+    echo "  - SSC Officer: ssc.officer / {$ssc_plain}\n";
+    echo "  - Admin: scc.admin / {$admin_plain}\n";
     echo "  - All transactional tables cleared.\n";
 } else {
     header('Content-Type: application/json');
     echo json_encode([
         'success'  => true,
         'message'  => 'System reset complete. Real program-based accounts seeded.',
-        'students' => '16 accounts (one per Bestlink program) — Password: Bcp@Test2026!',
-        'advisers' => '40 accounts (one per registered org) — Password: Bcp@Adviser2026!',
-        'ssc'      => 'ssc.officer — Password: Bcp@SSC2026!',
-        'admin'    => 'scc.admin — Password: Bcp@Admin2026!',
+        'students' => "16 accounts (one per Bestlink program) — Password: {$std_plain}",
+        'advisers' => "40 accounts (one per registered org) — Password: {$adv_plain}",
+        'ssc'      => "ssc.officer — Password: {$ssc_plain}",
+        'admin'    => "scc.admin — Password: {$admin_plain}",
         'cleared_tables' => $truncated,
     ]);
 }

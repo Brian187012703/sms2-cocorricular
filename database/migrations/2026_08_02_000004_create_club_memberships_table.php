@@ -10,13 +10,18 @@ return new class extends Migration
     {
         if (!Schema::hasTable('club_memberships')) {
             Schema::create('club_memberships', function (Blueprint $table) {
-                $table->id();
-                $table->foreignId('club_id')->constrained('clubs')->cascadeOnDelete();
-                $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
+                $table->increments('id');
+                $table->unsignedInteger('club_id')->index();
+                $table->unsignedInteger('user_id')->index();
                 $table->string('role', 50)->default('Member');
-                $table->enum('status', ['Active', 'Pending', 'Rejected'])->default('Pending');
-                $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->enum('status', ['Active', 'Pending', 'Rejected', 'Returned'])->default('Pending');
                 $table->timestamp('joined_at')->useCurrent();
+                $table->unsignedInteger('approved_by')->nullable();
+                $table->string('letter_intent', 255)->nullable();
+                $table->string('letter_endorsement', 255)->nullable();
+                $table->string('adviser_review', 50)->default('Pending Adviser');
+                $table->string('ssc_review', 50)->default('Pending SSC');
+                $table->text('review_notes')->nullable();
 
                 $table->unique(['club_id', 'user_id']);
             });

@@ -3,12 +3,9 @@
 //  ACCOUNT.PHP  (dashboard/)
 //  Account Settings & Profile Management — Fully Integrated Layout
 // ============================================================
-session_start();
 require_once __DIR__ . '/../shared/db.php';
-if (empty($_SESSION['user_id'])) {
-    header('Location: ../auth/signin.php');
-    exit;
-}
+require_once __DIR__ . '/../shared/security.php';
+require_auth();
 $first_name     = htmlspecialchars($_SESSION['first_name'] ?? '');
 $last_name      = htmlspecialchars($_SESSION['last_name']  ?? '');
 $email          = htmlspecialchars($_SESSION['email']      ?? '');
@@ -99,9 +96,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
     </button>
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
-      <div class="search-wrap">
-        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
-        <i class="fa-solid fa-magnifying-glass"></i>
+      <div class="search-wrap" id="topbarSearchWrap">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" placeholder="Search modules, events, clubs..." autocomplete="off" />
+        <button type="button" class="search-clear-btn" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="View Personal Attendance QR Code" type="button">
         <i class="fa-solid fa-qrcode"></i>
@@ -513,7 +511,12 @@ async function handleAvatarUpload(file) {
 // Remove Avatar
 btnRemoveAvatar?.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!confirm('Are you sure you want to remove your profile picture?')) return;
+    const confirmed = await window.showConfirmModal(
+        'Remove Profile Picture?',
+        'Do you want to remove your profile picture?',
+        { type: 'warning', confirmText: 'Yes, Remove Picture' }
+    );
+    if (!confirmed) return;
 
     avatarLoading?.classList.add('active');
     const fd = new FormData();
@@ -586,13 +589,24 @@ document.getElementById('btnSavePassword')?.addEventListener('click', async () =
 });
 
 document.getElementById('btnSignOut')?.addEventListener('click', async () => {
+    const confirmed = await window.showConfirmModal(
+        'Sign Out?',
+        'Do you want to sign out of your account session?',
+        { type: 'info', confirmText: 'Yes, Sign Out' }
+    );
+    if (!confirmed) return;
     const fd = new FormData(); fd.set('action', 'logout');
     await postAction(fd).catch(() => {});
     window.location.href = SIGNIN;
 });
 
 document.getElementById('btnDeleteAccount')?.addEventListener('click', async () => {
-    if (!confirm('Permanently delete your account? This cannot be undone.')) return;
+    const confirmed = await window.showConfirmModal(
+        'Permanently Delete Account?',
+        'Do you want to permanently delete your account? This action cannot be undone and will revoke all access.',
+        { type: 'error', danger: true, confirmText: 'Yes, Delete Account' }
+    );
+    if (!confirmed) return;
     const fd = new FormData(); fd.set('action', 'delete_account');
     try {
         const data = await postAction(fd);

@@ -5,14 +5,53 @@
 // ============================================================
 header('Content-Type: application/json');
 require_once __DIR__ . '/db.php';
-session_start();
+require_once __DIR__ . '/security.php';
+
 
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
-function respond(bool $ok, string $msg, array $extra = []): void
-{
-    echo json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
-    exit;
+if (!function_exists('respond')) {
+    function respond(bool $ok, string $msg, array $extra = []): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        echo json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
+        exit;
+    }
+}
+
+if (!function_exists('respond_fast')) {
+    /**
+     * Immediately flush JSON response to HTTP client and close connection,
+     * allowing heavy background tasks (such as SMTP email delivery) to continue
+     * without delaying the user interface or credentials verification.
+     */
+    function respond_fast(bool $ok, string $msg, array $extra = []): void
+    {
+        ignore_user_abort(true);
+        set_time_limit(120);
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        header('Content-Type: application/json');
+        $payload = json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
+        header('Content-Length: ' . strlen($payload));
+        header('Connection: close');
+
+        echo $payload;
+
+        if (ob_get_level() > 0) {
+            ob_end_flush();
+        }
+        flush();
+
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        }
+    }
 }
 
 function requireSession(): void
@@ -31,24 +70,105 @@ switch ($action) {
         if (!$username || !$password)
             respond(false, 'Username and password are required.');
 
+        // Normalize username aliases (e.g. scc.admin alias) for clean index hit
+        $lookupUser = ($username === 'admin' || $username === 'ssc.admin') ? 'scc.admin' : $username;
+
         $stmt = $conn->prepare(
-            'SELECT id, username, email, first_name, last_name, password_hash, role, profile_pic
+            'SELECT id, username, email, first_name, last_name, password_hash, role, status, profile_pic
          FROM users 
          WHERE username = ? 
             OR email = ? 
-            OR (? IN (\'admin\', \'ssc.admin\') AND username = \'scc.admin\')
          LIMIT 1'
         );
-        $stmt->bind_param('sss', $username, $username, $username);
+        $stmt->bind_param('ss', $lookupUser, $username);
         $stmt->execute();
         $user = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        if (!$user || !password_verify($password, $user['password_hash']))
+        if (!$user || !password_verify($password, $user['password_hash'])) {
+            require_once __DIR__ . '/notification_actions.php';
+            log_audit($conn, $user ? (int)$user['id'] : null, 'AUTH_LOGIN_FAILED', 'users', $user ? (int)$user['id'] : 0, "Failed authentication attempt for username: " . htmlspecialchars($username), 'warning', $username);
             respond(false, 'Invalid username or password.');
+        }
 
+        if (isset($user['status']) && strcasecmp($user['status'], 'Active') !== 0) {
+            respond(false, 'Your account has been deactivated. Please contact an institutional administrator.');
+        }
+
+        // Multi-Factor Authentication Check
+        // Enabled for administrative & student leadership roles: 'ssc' and 'admin'
+        $mfa_enabled = false;
+        if (in_array($user['role'], ['ssc', 'admin'], true)) {
+            try {
+                $mfa_setting_res = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'mfa_enabled' LIMIT 1");
+                if ($mfa_setting_res && $mfa_row = $mfa_setting_res->fetch_assoc()) {
+                    $mfa_enabled = ($mfa_row['setting_value'] !== '0' && strtolower($mfa_row['setting_value']) !== 'false');
+                }
+            } catch (Throwable $e) {}
+        }
+
+        if ($mfa_enabled) {
+            require_once __DIR__ . '/mail_helper.php';
+            $fullName = trim($user['first_name'] . ' ' . $user['last_name']);
+            $mfaResult = issue_mfa_code(
+                $conn,
+                (int)$user['id'],
+                $user['email'],
+                $fullName ?: $user['username'],
+                'login'
+            );
+
+            if (!$mfaResult['success']) {
+                respond(false, $mfaResult['message'] ?? 'Failed to issue verification code. Please try again.');
+            }
+
+            // Set pending MFA challenge session (user_id is NOT yet authenticated)
+            $_SESSION = [];
+            $_SESSION['mfa_pending']     = true;
+            $_SESSION['mfa_user_id']     = (int)$user['id'];
+            $_SESSION['mfa_username']    = $user['username'];
+            $_SESSION['mfa_email']       = $user['email'];
+            $_SESSION['mfa_name']        = $fullName;
+            $_SESSION['mfa_role']        = $user['role'];
+            $_SESSION['mfa_profile_pic'] = $user['profile_pic'] ?? null;
+            $_SESSION['mfa_created_at']  = time();
+
+            require_once __DIR__ . '/notification_actions.php';
+            log_audit(
+                $conn,
+                (int)$user['id'],
+                'AUTH_MFA_CHALLENGE_ISSUED',
+                'mfa_codes',
+                $mfaResult['code_id'] ?? 0,
+                "Issued 6-digit email MFA challenge for user {$user['username']} to {$mfaResult['email_masked']}",
+                'info',
+                $user['username']
+            );
+
+            // Instantly complete HTTP credentials check for user (<0.1s response)
+            respond_fast(true, 'A 6-digit verification code has been dispatched to your email address.', [
+                'mfa_required'    => true,
+                'email_masked'    => $mfaResult['email_masked'],
+                'expires_in'      => $mfaResult['expires_in'] ?? 600,
+                'resend_cooldown' => $mfaResult['resend_cooldown'] ?? 60
+            ]);
+
+            // Dispatch email in background without blocking credentials verification
+            dispatch_mfa_email(
+                $conn,
+                (int)$mfaResult['code_id'],
+                $user['email'],
+                $fullName ?: $user['username'],
+                $mfaResult['code'],
+                (int)(($mfaResult['expires_in'] ?? 60) / 60)
+            );
+            exit;
+        }
+
+        // Direct authentication fallback (if MFA disabled in system_settings)
         session_regenerate_id(true);
-        $_SESSION['user_id'] = $user['id'];
+        $_SESSION = [];
+        $_SESSION['user_id'] = (int)$user['id'];
         $_SESSION['username'] = $user['username'];
         $_SESSION['email'] = $user['email'];
         $_SESSION['first_name'] = $user['first_name'];
@@ -56,11 +176,141 @@ switch ($action) {
         $_SESSION['role'] = $user['role'];
         $_SESSION['real_role'] = $user['role'];
         $_SESSION['profile_pic'] = $user['profile_pic'] ?? null;
+        $_SESSION['last_activity'] = time();
+        $conn->query("UPDATE users SET last_login = NOW() WHERE id = " . (int)$user['id']);
+        load_user_permissions($conn, $user['role']);
 
         respond(true, 'Login successful.', [
             'role' => $user['role'],
             'profile_pic' => $user['profile_pic'] ?? null
         ]);
+    }
+
+    case 'verify_mfa': {
+        if (empty($_SESSION['mfa_pending']) || empty($_SESSION['mfa_user_id'])) {
+            respond(false, 'Your verification session has expired. Please sign in again.');
+        }
+
+        $userId = (int)$_SESSION['mfa_user_id'];
+        $code = trim($_POST['code'] ?? '');
+
+        if (!$code) {
+            respond(false, 'Please enter the 6-digit verification code.');
+        }
+
+        require_once __DIR__ . '/mail_helper.php';
+        $verifyRes = verify_mfa_code($conn, $userId, $code, 'login');
+
+        if (!$verifyRes['success']) {
+            respond(false, $verifyRes['message'], [
+                'remaining' => $verifyRes['remaining'] ?? null,
+                'expired'   => $verifyRes['expired'] ?? false,
+                'locked'    => $verifyRes['locked'] ?? false
+            ]);
+        }
+
+        // Verification succeeded! Fetch complete user record
+        $stmt = $conn->prepare("SELECT id, username, email, first_name, last_name, role, profile_pic FROM users WHERE id = ? LIMIT 1");
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$user) {
+            respond(false, 'User account could not be found.');
+        }
+
+        // Cleanly elevate from pending MFA to authenticated user session
+        session_regenerate_id(true);
+        $_SESSION = [];
+        $_SESSION['user_id'] = (int)$user['id'];
+        $_SESSION['username'] = $user['username'];
+        $_SESSION['email'] = $user['email'];
+        $_SESSION['first_name'] = $user['first_name'];
+        $_SESSION['last_name'] = $user['last_name'];
+        $_SESSION['role'] = $user['role'];
+        $_SESSION['real_role'] = $user['role'];
+        $_SESSION['profile_pic'] = $user['profile_pic'] ?? null;
+        $_SESSION['last_activity'] = time();
+        $_SESSION['mfa_verified'] = true;
+
+        $conn->query("UPDATE users SET last_login = NOW() WHERE id = " . (int)$user['id']);
+        load_user_permissions($conn, $user['role']);
+
+        require_once __DIR__ . '/notification_actions.php';
+        log_audit(
+            $conn,
+            (int)$user['id'],
+            'AUTH_LOGIN_SUCCESS',
+            'users',
+            (int)$user['id'],
+            "Successful authorization with email MFA verification for: " . htmlspecialchars($user['username']),
+            'info',
+            $user['username']
+        );
+
+        respond(true, 'Authentication verified successfully!', [
+            'role'        => $user['role'],
+            'profile_pic' => $user['profile_pic'] ?? null
+        ]);
+    }
+
+    case 'resend_mfa': {
+        if (empty($_SESSION['mfa_pending']) || empty($_SESSION['mfa_user_id'])) {
+            respond(false, 'Verification session expired. Please sign in again.');
+        }
+
+        $userId = (int)$_SESSION['mfa_user_id'];
+        $userEmail = $_SESSION['mfa_email'] ?? '';
+        $userName = $_SESSION['mfa_name'] ?? ($_SESSION['mfa_username'] ?? 'User');
+
+        require_once __DIR__ . '/mail_helper.php';
+        $resendRes = issue_mfa_code($conn, $userId, $userEmail, $userName, 'login');
+
+        if (!$resendRes['success']) {
+            respond(false, $resendRes['message'], [
+                'cooldown' => $resendRes['cooldown'] ?? false,
+                'wait'     => $resendRes['wait'] ?? 0
+            ]);
+        }
+
+        // Instantly notify client and reset countdown
+        respond_fast(true, 'A new verification code has been dispatched to your email.', [
+            'email_masked'    => $resendRes['email_masked'],
+            'expires_in'      => $resendRes['expires_in'] ?? 600,
+            'resend_cooldown' => $resendRes['resend_cooldown'] ?? 60
+        ]);
+
+        // Background delivery of code via SMTP
+        dispatch_mfa_email(
+            $conn,
+            (int)$resendRes['code_id'],
+            $userEmail,
+            $userName,
+            $resendRes['code'],
+            (int)(($resendRes['expires_in'] ?? 60) / 60)
+        );
+        exit;
+    }
+
+    case 'cancel_mfa': {
+        $_SESSION = [];
+        respond(true, 'Sign in cancelled.');
+    }
+
+    case 'get_mfa_status': {
+        if (!empty($_SESSION['mfa_pending']) && !empty($_SESSION['mfa_user_id'])) {
+            require_once __DIR__ . '/mail_helper.php';
+            $userId = (int)$_SESSION['mfa_user_id'];
+            $chk = $conn->query("SELECT expires_at, TIMESTAMPDIFF(SECOND, NOW(), expires_at) as remaining_seconds FROM mfa_codes WHERE user_id = $userId AND purpose = 'login' AND is_used = 0 ORDER BY id DESC LIMIT 1");
+            $r = $chk ? $chk->fetch_assoc() : null;
+            respond(true, 'Pending MFA session', [
+                'pending'           => true,
+                'email_masked'      => mask_email($_SESSION['mfa_email'] ?? ''),
+                'remaining_seconds' => max(0, (int)($r['remaining_seconds'] ?? 0))
+            ]);
+        }
+        respond(true, 'No pending MFA challenge', ['pending' => false]);
     }
 
     case 'register': {
@@ -138,13 +388,43 @@ switch ($action) {
             }
         }
 
-        // Update database
+        // 1. Record in dedicated profile_photos table in database
+        $conn->query("UPDATE profile_photos SET is_current = 0 WHERE user_id = $userId");
+        $relPath = 'uploads/avatars/' . $filename;
+        $fileSize = (int)$file['size'];
+        $photoStmt = $conn->prepare("INSERT INTO profile_photos (user_id, file_name, file_path, file_size, mime_type, is_current) VALUES (?, ?, ?, ?, ?, 1)");
+        if ($photoStmt) {
+            $photoStmt->bind_param('issis', $userId, $filename, $relPath, $fileSize, $mime);
+            $photoStmt->execute();
+            $photoStmt->close();
+        }
+
+        // 2. Update master users table
         $stmt = $conn->prepare('UPDATE users SET profile_pic = ? WHERE id = ?');
         $stmt->bind_param('si', $filename, $userId);
         if ($stmt->execute()) {
             $stmt->close();
             $_SESSION['profile_pic'] = $filename;
-            respond(true, 'Profile picture updated successfully!', [
+
+            // 3. Sync to dedicated organization databases where user is a member
+            require_once __DIR__ . '/org_db_manager.php';
+            $club_res = $conn->query("SELECT c.code FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id = $userId");
+            if ($club_res) {
+                while ($crow = $club_res->fetch_assoc()) {
+                    $org_c = get_org_db_connection($crow['code']);
+                    if ($org_c) {
+                        $upd_mem = $org_c->prepare("UPDATE org_members SET profile_pic = ? WHERE user_id = ?");
+                        if ($upd_mem) {
+                            $upd_mem->bind_param('si', $filename, $userId);
+                            $upd_mem->execute();
+                            $upd_mem->close();
+                        }
+                        $org_c->close();
+                    }
+                }
+            }
+
+            respond(true, 'Profile picture updated and stored in database successfully!', [
                 'profile_pic' => $filename,
                 'avatar_url'  => '../uploads/avatars/' . $filename
             ]);
@@ -170,15 +450,40 @@ switch ($action) {
             }
         }
 
+        // Update profile_photos table
+        $conn->query("UPDATE profile_photos SET is_current = 0 WHERE user_id = $userId");
+
         $stmt = $conn->prepare('UPDATE users SET profile_pic = NULL WHERE id = ?');
         $stmt->bind_param('i', $userId);
         if ($stmt->execute()) {
             $stmt->close();
             $_SESSION['profile_pic'] = null;
+
+            // Sync with dedicated organization databases
+            require_once __DIR__ . '/org_db_manager.php';
+            $club_res = $conn->query("SELECT c.code FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id = $userId");
+            if ($club_res) {
+                while ($crow = $club_res->fetch_assoc()) {
+                    $org_c = get_org_db_connection($crow['code']);
+                    if ($org_c) {
+                        $org_c->query("UPDATE org_members SET profile_pic = NULL WHERE user_id = $userId");
+                        $org_c->close();
+                    }
+                }
+            }
+
             respond(true, 'Profile picture removed successfully.');
         }
         $stmt->close();
         respond(false, 'Failed to remove profile picture.');
+    }
+
+    case 'get_avatar_history': {
+        requireSession();
+        $userId = (int)$_SESSION['user_id'];
+        $res = $conn->query("SELECT id, file_name, file_path, file_size, mime_type, is_current, uploaded_at FROM profile_photos WHERE user_id = $userId ORDER BY uploaded_at DESC");
+        $photos = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+        respond(true, 'Avatar history fetched successfully.', ['photos' => $photos]);
     }
 
     case 'update_profile': {
@@ -248,9 +553,27 @@ switch ($action) {
         respond(false, 'Failed to update password.');
     }
 
+    case 'keepalive':
+    case 'heartbeat': {
+        requireSession();
+        $_SESSION['last_activity'] = time();
+        respond(true, 'Session extended successfully.', [
+            'timeout' => defined('SESSION_TIMEOUT') ? SESSION_TIMEOUT : 300,
+            'time'    => time()
+        ]);
+    }
+
     case 'logout': {
         unset($_SESSION['role'], $_SESSION['real_role']);
-        session_destroy();
+        $_SESSION = [];
+        if (ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', time() - 42000,
+                $params['path'], $params['domain'],
+                $params['secure'], $params['httponly']
+            );
+        }
+        @session_destroy();
         respond(true, 'Logged out.');
     }
 

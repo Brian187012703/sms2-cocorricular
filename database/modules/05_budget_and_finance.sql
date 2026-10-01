@@ -9,10 +9,16 @@ CREATE TABLE IF NOT EXISTS `budget_requests` (
   `club_id` INT(10) UNSIGNED NOT NULL,
   `title` VARCHAR(200) NOT NULL,
   `description` TEXT DEFAULT NULL,
+  `line_items` JSON DEFAULT NULL,
   `amount` DECIMAL(10,2) NOT NULL,
-  `status` ENUM('Pending Adviser', 'Pending SSC', 'Pending Admin', 'Disbursed', 'Rejected') NOT NULL DEFAULT 'Pending Adviser',
+  `recommended_amount` DECIMAL(10,2) DEFAULT NULL,
+  `final_approved_amount` DECIMAL(10,2) DEFAULT NULL,
+  `status` ENUM('Pending Adviser', 'Pending SSC', 'Pending Admin', 'Approved', 'Disbursed', 'Rejected', 'Returned') NOT NULL DEFAULT 'Pending Adviser',
   `requested_by` INT(10) UNSIGNED NOT NULL,
   `notes` TEXT DEFAULT NULL,
+  `disbursed_at` TIMESTAMP NULL DEFAULT NULL,
+  `disbursement_reference` VARCHAR(100) DEFAULT NULL,
+  `disbursed_by` INT(10) UNSIGNED DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted_at` TIMESTAMP NULL DEFAULT NULL,
@@ -23,9 +29,3 @@ CREATE TABLE IF NOT EXISTS `budget_requests` (
   CONSTRAINT `fk_br_club` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_br_requester` FOREIGN KEY (`requested_by`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Sample Seed Budget Requests
-INSERT INTO `budget_requests` (`id`, `club_id`, `title`, `description`, `amount`, `status`, `requested_by`, `notes`) VALUES
-(1, 1, 'Tech Symposium Equipment & Honorarium', 'Funding for keynote speaker honorarium, certificates, and event badges.', 15000.00, 'Pending SSC', 3, 'Endorsed by Club Adviser.'),
-(2, 2, 'Hackathon Refreshments & Prizes', 'Food catering for 100 participants and trophy prizes for winners.', 25000.00, 'Pending SSC', 3, 'Pending initial SSC review.')
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);

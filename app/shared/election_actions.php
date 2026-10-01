@@ -32,9 +32,22 @@ function getAdviserClubId($conn, $user_id) {
     if ($res && $row = $res->fetch_assoc()) {
         return (int)$row['club_id'];
     }
-    // Fallback to first active club
-    $r = $conn->query("SELECT id FROM clubs WHERE status='Active' LIMIT 1");
-    return ($r && $row = $r->fetch_assoc()) ? (int)$row['id'] : 1;
+    // Match by username prefix (e.g. cssec.adviser -> CSSEC)
+    $sess_uname = $_SESSION['username'] ?? '';
+    $prefix = strtoupper(explode('.', $sess_uname)[0] ?? '');
+    if (!empty($prefix)) {
+        $c_stmt = $conn->prepare("SELECT id FROM clubs WHERE (code = ? OR REPLACE(code, '-', '') = ? OR REPLACE(code, '.', '') = ?) AND status = 'Active' LIMIT 1");
+        if ($c_stmt) {
+            $c_stmt->bind_param('sss', $prefix, $prefix, $prefix);
+            $c_stmt->execute();
+            $c_res = $c_stmt->get_result();
+            if ($c_res && $row = $c_res->fetch_assoc()) {
+                return (int)$row['id'];
+            }
+            $c_stmt->close();
+        }
+    }
+    return 0;
 }
 
 header('Content-Type: application/json');
@@ -61,9 +74,13 @@ if ($action === 'create_election') {
 
     if ($sess_role === 'club_adviser') {
         $club_id = getAdviserClubId($conn, $user_id);
+        if ($club_id <= 0) {
+            echo json_encode(['success' => false, 'message' => 'No active organization found assigned to your adviser account.']);
+            exit;
+        }
     } elseif ($club_id <= 0) {
-        $r = $conn->query("SELECT id FROM clubs WHERE status='Active' LIMIT 1");
-        $club_id = ($r && $row = $r->fetch_assoc()) ? (int)$row['id'] : 1;
+        echo json_encode(['success' => false, 'message' => 'Please select a valid organization for this election.']);
+        exit;
     }
 
     // Convert positions string to array
@@ -245,10 +262,30 @@ if ($action === 'cast_vote') {
         exit;
     }
 
-    // Check student org membership
-    if ($sess_role === 'student') {
-        $chk_m = $conn->prepare("SELECT cm.id FROM club_memberships cm JOIN elections e ON e.club_id = cm.club_id WHERE e.id = ? AND cm.user_id = ? AND cm.status = 'Active'");
-        $chk_m->bind_param('ii', $election_id, $user_id);
+    // Verify election existence and lifecycle state
+    $el_stmt = $conn->prepare("SELECT id, status, closes_at, club_id FROM elections WHERE id = ? LIMIT 1");
+    $el_stmt->bind_param('i', $election_id);
+    $el_stmt->execute();
+    $election = $el_stmt->get_result()->fetch_assoc();
+    $el_stmt->close();
+
+    if (!$election) {
+        echo json_encode(['success' => false, 'message' => 'Election not found.']);
+        exit;
+    }
+    if (strtolower($election['status']) !== 'open') {
+        echo json_encode(['success' => false, 'message' => 'This election is currently closed or unverified for balloting.']);
+        exit;
+    }
+    if (!empty($election['closes_at']) && strtotime($election['closes_at']) < time()) {
+        echo json_encode(['success' => false, 'message' => 'This election has concluded and is no longer accepting ballots.']);
+        exit;
+    }
+
+    // Check student org membership if scoped to a club
+    if ($sess_role === 'student' && !empty($election['club_id'])) {
+        $chk_m = $conn->prepare("SELECT id FROM club_memberships WHERE club_id = ? AND user_id = ? AND status = 'Active'");
+        $chk_m->bind_param('ii', $election['club_id'], $user_id);
         $chk_m->execute();
         if (!$chk_m->get_result()->fetch_assoc()) {
             echo json_encode(['success' => false, 'message' => 'You must be an approved member of this organization to vote in its election.']);
@@ -259,47 +296,82 @@ if ($action === 'cast_vote') {
 
     $conn->begin_transaction();
     try {
-        // Check double voting in DB with lock
-        $chk = $conn->prepare("SELECT id FROM election_votes WHERE election_id = ? AND user_id = ? FOR UPDATE");
-        $chk->bind_param('ii', $election_id, $user_id);
-        $chk->execute();
-        if ($chk->get_result()->fetch_assoc()) {
-            $chk->close();
+        // Enforce single ballot per voter via election_voters table
+        $chk_voter = $conn->prepare("SELECT id FROM election_voters WHERE election_id = ? AND user_id = ? FOR UPDATE");
+        $chk_voter->bind_param('ii', $election_id, $user_id);
+        $chk_voter->execute();
+        if ($chk_voter->get_result()->fetch_assoc()) {
+            $chk_voter->close();
             $conn->rollback();
             echo json_encode(['success' => false, 'message' => 'You have already cast your vote in this election.']);
             exit;
         }
-        $chk->close();
+        $chk_voter->close();
 
-        $votes_json = is_string($votes_data) ? $votes_data : json_encode($votes_data);
+        // 1. Record voter participation (separated from ballot content for secret balloting)
+        $ins_voter = $conn->prepare("INSERT INTO election_voters (election_id, user_id, eligibility_status, voted_at) VALUES (?, ?, 'Voted', NOW())");
+        $ins_voter->bind_param('ii', $election_id, $user_id);
+        $ins_voter->execute();
+        $ins_voter->close();
 
-        // Save vote record
-        $stmt = $conn->prepare("INSERT INTO election_votes (election_id, user_id, votes_json) VALUES (?, ?, ?)");
-        $stmt->bind_param('iis', $election_id, $user_id, $votes_json);
+        // 2. Validate all submitted candidates belong to this election
+        $decoded = is_string($votes_data) ? json_decode($votes_data, true) : $votes_data;
+        if (!is_array($decoded) || empty($decoded)) {
+            $conn->rollback();
+            echo json_encode(['success' => false, 'message' => 'Invalid ballot payload submitted.']);
+            exit;
+        }
+
+        // Verify each chosen candidate ID belongs to this election
+        $cand_check = $conn->prepare("SELECT id, position FROM election_candidates WHERE id = ? AND election_id = ? LIMIT 1");
+        $valid_choices = [];
+        foreach ($decoded as $pos => $cand_id) {
+            $c_id = (int)$cand_id;
+            if ($c_id <= 0) continue;
+            $cand_check->bind_param('ii', $c_id, $election_id);
+            $cand_check->execute();
+            $cand_res = $cand_check->get_result()->fetch_assoc();
+            if (!$cand_res) {
+                $cand_check->close();
+                $conn->rollback();
+                echo json_encode(['success' => false, 'message' => "Candidate ID #$c_id does not belong to this election."]);
+                exit;
+            }
+            $valid_choices[$pos] = $c_id;
+        }
+        $cand_check->close();
+
+        if (empty($valid_choices)) {
+            $conn->rollback();
+            echo json_encode(['success' => false, 'message' => 'No valid candidates were selected on your ballot.']);
+            exit;
+        }
+
+        // 3. Record secret ballot decoupled with secure ballot_token
+        $ballot_token = bin2hex(random_bytes(16));
+        $votes_json   = json_encode($valid_choices);
+
+        $stmt = $conn->prepare("INSERT INTO election_votes (election_id, ballot_token, ballot_data, cast_at, user_id, votes_json) VALUES (?, ?, ?, NOW(), NULL, ?)");
+        $stmt->bind_param('isss', $election_id, $ballot_token, $votes_json, $votes_json);
         if (!$stmt->execute()) {
             $err = $stmt->error;
             $stmt->close();
-            throw new Exception("Error recording vote: " . $err);
+            throw new Exception("Error recording ballot: " . $err);
         }
         $stmt->close();
 
-        // Increment candidate vote counts safely with prepared statement
-        $decoded = is_string($votes_data) ? json_decode($votes_data, true) : $votes_data;
-        if (is_array($decoded)) {
-            $upd_stmt = $conn->prepare("UPDATE election_candidates SET votes_count = votes_count + 1 WHERE id = ? AND election_id = ?");
-            foreach ($decoded as $pos => $cand_id) {
-                $c_id = (int)$cand_id;
-                if ($c_id > 0) {
-                    $upd_stmt->bind_param('ii', $c_id, $election_id);
-                    $upd_stmt->execute();
-                }
-            }
-            $upd_stmt->close();
+        // 4. Increment candidate vote counts safely
+        $upd_stmt = $conn->prepare("UPDATE election_candidates SET votes_count = votes_count + 1 WHERE id = ? AND election_id = ?");
+        foreach ($valid_choices as $pos => $c_id) {
+            $upd_stmt->bind_param('ii', $c_id, $election_id);
+            $upd_stmt->execute();
         }
+        $upd_stmt->close();
 
+        log_audit($conn, $user_id, 'election_vote', 'election_votes', $election_id, "Cast verified ballot in election #$election_id (Token: $ballot_token)");
         $conn->commit();
         $_SESSION['votes_cast'][] = $election_id;
-        echo json_encode(['success' => true, 'message' => 'Your ballot has been cast and verified!']);
+        echo json_encode(['success' => true, 'message' => 'Your secret ballot has been cast and verified!', 'ballot_token' => $ballot_token]);
     } catch (Throwable $e) {
         $conn->rollback();
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -324,7 +396,7 @@ if ($action === 'appoint_winner') {
 
     // 1. Get election and candidate info
     $stmt = $conn->prepare("
-        SELECT ec.id, ec.name, ec.position, e.club_id, e.title as election_title, c.name as club_name, c.code as club_code
+        SELECT ec.id, ec.user_id, ec.name, ec.position, e.club_id, e.title as election_title, c.name as club_name, c.code as club_code
         FROM election_candidates ec
         JOIN elections e ON e.id = ec.election_id
         JOIN clubs c ON c.id = e.club_id
@@ -344,26 +416,28 @@ if ($action === 'appoint_winner') {
     $cand_name = trim($cand['name']);
     $position  = trim($cand['position']);
 
-    // 2. Locate user in users table matching candidate name
-    $parts = preg_split('/\s+/', $cand_name, 2);
-    $first = $parts[0] ?? '';
-    $last  = $parts[1] ?? '';
+    // 2. Prefer stable foreign-key user_id if present
+    $target_user_id = !empty($cand['user_id']) ? (int)$cand['user_id'] : 0;
+    if ($target_user_id <= 0) {
+        $parts = preg_split('/\s+/', $cand_name, 2);
+        $first = $parts[0] ?? '';
+        $last  = $parts[1] ?? '';
 
-    $target_user_id = 0;
-    $u_stmt = $conn->prepare("
-        SELECT id FROM users
-        WHERE (TRIM(CONCAT(first_name, ' ', last_name)) = ?
-           OR (first_name = ? AND last_name = ?)
-           OR username = ?)
-        LIMIT 1
-    ");
-    $u_stmt->bind_param('ssss', $cand_name, $first, $last, $cand_name);
-    $u_stmt->execute();
-    $u_res = $u_stmt->get_result()->fetch_assoc();
-    $u_stmt->close();
+        $u_stmt = $conn->prepare("
+            SELECT id FROM users
+            WHERE (TRIM(CONCAT(first_name, ' ', last_name)) = ?
+               OR (first_name = ? AND last_name = ?)
+               OR username = ?)
+            LIMIT 1
+        ");
+        $u_stmt->bind_param('ssss', $cand_name, $first, $last, $cand_name);
+        $u_stmt->execute();
+        $u_res = $u_stmt->get_result()->fetch_assoc();
+        $u_stmt->close();
 
-    if ($u_res) {
-        $target_user_id = (int)$u_res['id'];
+        if ($u_res) {
+            $target_user_id = (int)$u_res['id'];
+        }
     } else {
         // Fallback: search in students table
         $s_stmt = $conn->prepare("
@@ -432,4 +506,150 @@ if ($action === 'appoint_winner') {
     exit;
 }
 
+// ── 7. VERIFY ELECTION (SSC, Admin) ──────────────────────────────────
+if ($action === 'verify_election') {
+    if (!in_array($sess_role, ['ssc', 'admin'])) {
+        echo json_encode(['success' => false, 'message' => 'Permission denied. Only SSC Officers and Administrators can verify elections.']);
+        exit;
+    }
+
+    $election_id = (int)($_POST['election_id'] ?? 0);
+    $notes       = trim($_POST['audit_notes'] ?? 'Official election audit clearance verified by Supreme Student Council.');
+
+    if ($election_id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid election ID.']);
+        exit;
+    }
+
+    $stmt = $conn->prepare("UPDATE elections SET status = 'verified', verified_at = NOW(), verified_by = ?, audit_notes = ? WHERE id = ?");
+    $stmt->bind_param('isi', $user_id, $notes, $election_id);
+
+    if ($stmt->execute()) {
+        $stmt->close();
+        if (function_exists('log_audit')) {
+            log_audit($conn, $user_id, 'verify_election', 'elections', $election_id, "SSC verified and certified election ID: $election_id");
+        }
+        echo json_encode(['success' => true, 'message' => 'Election has been officially verified and certified!']);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Database error verifying election: ' . $conn->error]);
+    }
+    exit;
+}
+
+// ── 8. CONFIGURE ELECTION (Admin & SSC) ─────────────────────────────
+if ($action === 'configure_election') {
+    if (!in_array($sess_role, ['ssc', 'admin'])) {
+        echo json_encode(['success' => false, 'message' => 'Permission denied. Only Administrators and SSC Officers can configure election records.']);
+        exit;
+    }
+
+    $election_id     = (int)($_POST['election_id'] ?? 0);
+    $title           = trim($_POST['title'] ?? '');
+    $description     = trim($_POST['description'] ?? '');
+    $election_type   = trim($_POST['election_type'] ?? 'Student Governance');
+    $closing_date    = trim($_POST['closing_date'] ?? '');
+    $closing_time    = trim($_POST['closing_time'] ?? '23:59');
+    $eligible_voters = (int)($_POST['eligible_voters'] ?? 0);
+    $positions_raw   = trim($_POST['positions'] ?? '');
+
+    if ($election_id <= 0 || empty($title)) {
+        echo json_encode(['success' => false, 'message' => 'Valid election ID and title are required.']);
+        exit;
+    }
+
+    $closes_formatted = null;
+    if (!empty($closing_date)) {
+        if (empty($closing_time)) $closing_time = '23:59';
+        $closes_formatted = date('Y-m-d H:i:s', strtotime($closing_date . ' ' . $closing_time));
+    }
+
+    $pos_arr  = array_values(array_filter(array_map('trim', explode(',', $positions_raw))));
+    $pos_json = !empty($pos_arr) ? json_encode($pos_arr) : null;
+
+    $stmt = $conn->prepare("UPDATE elections SET title = ?, description = ?, election_type = ?, closes_at = COALESCE(?, closes_at), eligible_voters = ?, positions = COALESCE(?, positions) WHERE id = ?");
+    $stmt->bind_param('ssssisi', $title, $description, $election_type, $closes_formatted, $eligible_voters, $pos_json, $election_id);
+
+    if ($stmt->execute()) {
+        $stmt->close();
+        if (function_exists('log_audit')) {
+            log_audit($conn, $user_id, 'election_configure', 'elections', $election_id, "Configured election #$election_id ($title)");
+        }
+        echo json_encode(['success' => true, 'message' => 'Election record configured and updated successfully!']);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Database error configuring election: ' . $conn->error]);
+    }
+    exit;
+}
+
+// ── 9. SECURITY: LOCK / CLOSE / UNLOCK ELECTION (Admin & SSC) ─────────
+if ($action === 'toggle_lock') {
+    if (!in_array($sess_role, ['ssc', 'admin'])) {
+        echo json_encode(['success' => false, 'message' => 'Permission denied. Only Administrators and SSC Officers can manage election security states.']);
+        exit;
+    }
+
+    $election_id = (int)($_POST['election_id'] ?? 0);
+    if ($election_id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'Invalid election ID.']);
+        exit;
+    }
+
+    $chk = $conn->prepare("SELECT status, title FROM elections WHERE id = ?");
+    $chk->bind_param('i', $election_id);
+    $chk->execute();
+    $el = $chk->get_result()->fetch_assoc();
+    $chk->close();
+
+    if (!$el) {
+        echo json_encode(['success' => false, 'message' => 'Election record not found.']);
+        exit;
+    }
+
+    $cur_status = strtolower($el['status']);
+    $new_status = ($cur_status === 'closed' || $cur_status === 'locked') ? 'open' : 'closed';
+    $status_msg = ($new_status === 'closed') ? 'locked and closed to prevent further votes' : 'reopened for active voting';
+
+    $upd = $conn->prepare("UPDATE elections SET status = ? WHERE id = ?");
+    $upd->bind_param('si', $new_status, $election_id);
+    if ($upd->execute()) {
+        $upd->close();
+        if (function_exists('log_audit')) {
+            log_audit($conn, $user_id, 'election_security_lock', 'elections', $election_id, "Administrator updated security status of '{$el['title']}' to: $new_status");
+        }
+        echo json_encode(['success' => true, 'message' => "Election has been {$status_msg}.", 'new_status' => $new_status]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Database error updating security state: ' . $conn->error]);
+    }
+    exit;
+}
+
+// ── 10. AUDIT: INSPECT ELECTION ACTIVITY & ACCESS LOGS (Admin only) ──
+if ($action === 'get_election_audit') {
+    if ($sess_role !== 'admin') {
+        echo json_encode(['success' => false, 'message' => 'Permission denied. Audit trail inspection is strictly restricted to System Administrators.']);
+        exit;
+    }
+
+    $election_id = (int)($_REQUEST['election_id'] ?? 0);
+    $where = "WHERE (al.target_table IN ('elections', 'election_votes', 'election_candidates') OR al.action LIKE '%election%')";
+    if ($election_id > 0) {
+        $where .= " AND (al.target_id = $election_id OR al.detail LIKE '%#$election_id%')";
+    }
+
+    $sql = "
+        SELECT al.id, al.user_id, al.action, al.target_table, al.target_id, al.detail, al.ip_address, al.created_at,
+               u.first_name, u.last_name, u.email, u.role
+        FROM audit_logs al
+        LEFT JOIN users u ON u.id = al.user_id
+        $where
+        ORDER BY al.created_at DESC
+        LIMIT 100
+    ";
+
+    $logs = $conn->query($sql)->fetch_all(MYSQLI_ASSOC);
+    echo json_encode(['success' => true, 'logs' => $logs]);
+    exit;
+}
+
 echo json_encode(['success' => false, 'message' => 'Invalid action.']);
+

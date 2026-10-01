@@ -7,28 +7,36 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/security.php';
 
 
-function respond(bool $ok, string $msg, array $extra = []): void {
-    echo json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
-    exit;
+if (!function_exists('respond')) {
+    function respond(bool $ok, string $msg, array $extra = []): void {
+        echo json_encode(array_merge(['success' => $ok, 'message' => $msg], $extra));
+        exit;
+    }
 }
 
 // ── Internal helper: push a notification ────────────────────
-function push_notification($conn, int $user_id, string $title, string $message, string $type = 'info'): void {
-    $stmt = $conn->prepare("INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)");
-    $stmt->bind_param('isss', $user_id, $title, $message, $type);
-    $stmt->execute();
-    $stmt->close();
+function push_notification($conn, int $user_id, string $title, string $message, string $type = 'info', ?string $reference_type = null, ?int $reference_id = null, ?string $link = null, string $priority = 'Normal'): void {
+    $stmt = $conn->prepare("INSERT INTO notifications (user_id, title, message, type, priority, reference_type, reference_id, link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    if ($stmt) {
+        $stmt->bind_param('isssssis', $user_id, $title, $message, $type, $priority, $reference_type, $reference_id, $link);
+        $stmt->execute();
+        $stmt->close();
+    }
 }
 
 // ── Internal helper: log audit entry ────────────────────────
-function log_audit($conn, int $user_id, string $action, string $table = '', int $target_id = 0, string $detail = ''): void {
-    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    $stmt = $conn->prepare("INSERT INTO audit_logs (user_id, action, target_table, target_id, detail, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param('ississ', $user_id, $action, $table, $target_id, $detail, $ip);
-    $stmt->execute();
-    $stmt->close();
+function log_audit($conn, ?int $user_id, string $action, string $table = '', int $target_id = 0, string $detail = '', string $severity = 'info', ?string $user_display = null): void {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+    $uid = ($user_id && $user_id > 0) ? $user_id : null;
+    $stmt = $conn->prepare("INSERT INTO audit_logs (user_id, user_display, action, target_table, target_id, detail, ip_address, severity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    if ($stmt) {
+        $stmt->bind_param('ississss', $uid, $user_display, $action, $table, $target_id, $detail, $ip, $severity);
+        $stmt->execute();
+        $stmt->close();
+    }
 }
 
 // ── Only run as AJAX if called directly ─────────────────────
@@ -41,11 +49,19 @@ if (empty($_SESSION['user_id'])) respond(false, 'Not authenticated.');
 $user_id = (int)$_SESSION['user_id'];
 $action  = $_POST['action'] ?? $_GET['action'] ?? '';
 
+// Mutating actions require POST and CSRF validation
+if ($action !== 'list') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        respond(false, 'POST method is required for this action.');
+    }
+    verify_csrf();
+}
+
 switch ($action) {
     case 'list':
         $limit = min((int)($_GET['limit'] ?? 20), 50);
         $stmt = $conn->prepare(
-            "SELECT id, title, message, type, is_read, created_at
+            "SELECT id, title, message, type, priority, reference_type, reference_id, link, is_read, created_at
              FROM notifications WHERE user_id = ?
              ORDER BY created_at DESC LIMIT ?"
         );
@@ -72,7 +88,10 @@ switch ($action) {
             $stmt->execute();
             $stmt->close();
         } else {
-            $conn->query("UPDATE notifications SET is_read = 1 WHERE user_id = $user_id");
+            $stmt = $conn->prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ?");
+            $stmt->bind_param('i', $user_id);
+            $stmt->execute();
+            $stmt->close();
         }
         respond(true, 'Marked as read.');
 
@@ -86,14 +105,26 @@ switch ($action) {
 
         if (!$club_id || empty($title) || empty($message)) respond(false, 'Missing required fields.');
 
-        $members = $conn->query("SELECT user_id FROM club_memberships WHERE club_id=$club_id AND status='Active'");
+        // Enforce organization scope for club adviser
+        if ($user_role === 'club_adviser') {
+            if (!verify_club_adviser_scope($conn, $club_id, $user_id)) {
+                respond(false, 'Unauthorized: You can only broadcast announcements to your assigned organization.');
+            }
+        }
+
+        $stmt = $conn->prepare("SELECT user_id FROM club_memberships WHERE club_id = ? AND status = 'Active'");
+        $stmt->bind_param('i', $club_id);
+        $stmt->execute();
+        $res = $stmt->get_result();
         $count = 0;
-        if ($members) {
-            while ($m = $members->fetch_assoc()) {
-                push_notification($conn, (int)$m['user_id'], $title, $message, 'info');
+        if ($res) {
+            while ($m = $res->fetch_assoc()) {
+                push_notification($conn, (int)$m['user_id'], $title, $message, 'info', 'org_announcement', $club_id, '../dashboard/announcements.php');
                 $count++;
             }
         }
+        $stmt->close();
+        log_audit($conn, $user_id, 'notification_broadcast', 'clubs', $club_id, "Broadcasted announcement \"$title\" to $count members");
         respond(true, "Announcement broadcasted to $count active member(s).", ['sent_count' => $count]);
 
     default:

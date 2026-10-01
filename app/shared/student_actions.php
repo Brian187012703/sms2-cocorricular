@@ -10,7 +10,7 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 require_once __DIR__ . '/security.php';
-require_role(['admin', 'ssc']);
+require_any_permission(['users.manage.all', 'users.view.directory']);
 require_once __DIR__ . '/db.php';
 
 $user_role = $_SESSION['role'] ?? 'student';

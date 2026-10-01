@@ -13,14 +13,29 @@ class Student extends Model
 
     protected $fillable = [
         'user_id',
-        'student_id',
+        'student_number',
         'first_name',
         'last_name',
-        'email',
+        'birthday',
         'course',
         'year_level',
+        'section',
+        'phone',
         'status',
     ];
+
+    /**
+     * Alias student_id to student_number for API backward compatibility
+     */
+    public function getStudentIdAttribute()
+    {
+        return $this->student_number;
+    }
+
+    public function setStudentIdAttribute($value)
+    {
+        $this->attributes['student_number'] = $value;
+    }
 
     public function user()
     {

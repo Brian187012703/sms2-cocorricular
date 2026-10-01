@@ -299,19 +299,53 @@ if (!function_exists('get_ph_holidays')) {
         // 5. ACADEMIC CALENDAR BLACKOUT WINDOWS (Institutional Policy)
         // ----------------------------------------------------------------------
         $academic_blackouts = [
-            // 2025-2026 2nd Semester Midterms
+            // 2025-2026 1st Semester Examinations
+            '2025-10-20' => ['name' => 'Midterm Examination Week (Day 1)', 'type' => 'exam_blackout'],
+            '2025-10-21' => ['name' => 'Midterm Examination Week (Day 2)', 'type' => 'exam_blackout'],
+            '2025-10-22' => ['name' => 'Midterm Examination Week (Day 3)', 'type' => 'exam_blackout'],
+            '2025-10-23' => ['name' => 'Midterm Examination Week (Day 4)', 'type' => 'exam_blackout'],
+            '2025-10-24' => ['name' => 'Midterm Examination Week (Day 5)', 'type' => 'exam_blackout'],
+            '2025-12-15' => ['name' => 'Final Examination Week (Day 1)', 'type' => 'exam_blackout'],
+            '2025-12-16' => ['name' => 'Final Examination Week (Day 2)', 'type' => 'exam_blackout'],
+            '2025-12-17' => ['name' => 'Final Examination Week (Day 3)', 'type' => 'exam_blackout'],
+            '2025-12-18' => ['name' => 'Final Examination Week (Day 4)', 'type' => 'exam_blackout'],
+            '2025-12-19' => ['name' => 'Final Examination Week (Day 5)', 'type' => 'exam_blackout'],
+
+            // 2025-2026 2nd Semester Midterms & Finals
             '2026-03-09' => ['name' => 'Midterm Examination Week (Day 1)', 'type' => 'exam_blackout'],
             '2026-03-10' => ['name' => 'Midterm Examination Week (Day 2)', 'type' => 'exam_blackout'],
             '2026-03-11' => ['name' => 'Midterm Examination Week (Day 3)', 'type' => 'exam_blackout'],
             '2026-03-12' => ['name' => 'Midterm Examination Week (Day 4)', 'type' => 'exam_blackout'],
             '2026-03-13' => ['name' => 'Midterm Examination Week (Day 5)', 'type' => 'exam_blackout'],
-
-            // 2025-2026 2nd Semester Final Exams
             '2026-05-18' => ['name' => 'Final Examination Week (Day 1)', 'type' => 'exam_blackout'],
             '2026-05-19' => ['name' => 'Final Examination Week (Day 2)', 'type' => 'exam_blackout'],
             '2026-05-20' => ['name' => 'Final Examination Week (Day 3)', 'type' => 'exam_blackout'],
             '2026-05-21' => ['name' => 'Final Examination Week (Day 4)', 'type' => 'exam_blackout'],
             '2026-05-22' => ['name' => 'Final Examination Week (Day 5)', 'type' => 'exam_blackout'],
+
+            // 2026-2027 1st Semester Midterms & Finals
+            '2026-10-19' => ['name' => 'Midterm Examination Week (Day 1)', 'type' => 'exam_blackout'],
+            '2026-10-20' => ['name' => 'Midterm Examination Week (Day 2)', 'type' => 'exam_blackout'],
+            '2026-10-21' => ['name' => 'Midterm Examination Week (Day 3)', 'type' => 'exam_blackout'],
+            '2026-10-22' => ['name' => 'Midterm Examination Week (Day 4)', 'type' => 'exam_blackout'],
+            '2026-10-23' => ['name' => 'Midterm Examination Week (Day 5)', 'type' => 'exam_blackout'],
+            '2026-12-14' => ['name' => 'Final Examination Week (Day 1)', 'type' => 'exam_blackout'],
+            '2026-12-15' => ['name' => 'Final Examination Week (Day 2)', 'type' => 'exam_blackout'],
+            '2026-12-16' => ['name' => 'Final Examination Week (Day 3)', 'type' => 'exam_blackout'],
+            '2026-12-17' => ['name' => 'Final Examination Week (Day 4)', 'type' => 'exam_blackout'],
+            '2026-12-18' => ['name' => 'Final Examination Week (Day 5)', 'type' => 'exam_blackout'],
+
+            // 2026-2027 2nd Semester Midterms & Finals
+            '2027-03-08' => ['name' => 'Midterm Examination Week (Day 1)', 'type' => 'exam_blackout'],
+            '2027-03-09' => ['name' => 'Midterm Examination Week (Day 2)', 'type' => 'exam_blackout'],
+            '2027-03-10' => ['name' => 'Midterm Examination Week (Day 3)', 'type' => 'exam_blackout'],
+            '2027-03-11' => ['name' => 'Midterm Examination Week (Day 4)', 'type' => 'exam_blackout'],
+            '2027-03-12' => ['name' => 'Midterm Examination Week (Day 5)', 'type' => 'exam_blackout'],
+            '2027-05-17' => ['name' => 'Final Examination Week (Day 1)', 'type' => 'exam_blackout'],
+            '2027-05-18' => ['name' => 'Final Examination Week (Day 2)', 'type' => 'exam_blackout'],
+            '2027-05-19' => ['name' => 'Final Examination Week (Day 3)', 'type' => 'exam_blackout'],
+            '2027-05-20' => ['name' => 'Final Examination Week (Day 4)', 'type' => 'exam_blackout'],
+            '2027-05-21' => ['name' => 'Final Examination Week (Day 5)', 'type' => 'exam_blackout'],
         ];
 
         foreach ($academic_blackouts as $bdate => $binfo) {

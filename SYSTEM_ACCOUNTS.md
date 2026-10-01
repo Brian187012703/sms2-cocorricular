@@ -1,5 +1,12 @@
 # BCP Co-Curricular Management System — Account Credentials
 
+> [!CAUTION]
+> **DEVELOPMENT & TESTING CREDENTIALS ONLY**
+> These credentials apply solely to seeded development and testing environments.
+> In staging or production environments, supply strong unique passwords via environment variables:
+> `ADMIN_DEFAULT_PASSWORD`, `SSC_DEFAULT_PASSWORD`, `ADVISER_DEFAULT_PASSWORD`, and `STUDENT_DEFAULT_PASSWORD`.
+> All accounts must have their credentials rotated upon initial provisioning.
+
 This document contains the complete list of system accounts, default passwords, and assigned organizations/programs for testing and system administration.
 
 ---

@@ -7,6 +7,7 @@ header('Content-Type: application/json');
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/security.php';
 require_once __DIR__ . '/ai_config.php';
 require_once __DIR__ . '/ai_engine.php';
 
@@ -15,9 +16,15 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
+$action    = $_POST['action'] ?? $_GET['action'] ?? '';
+
+// CSRF check on mutating requests (e.g. saving credentials)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['save_api_key'])) {
+    verify_csrf();
+}
+
 $user_id   = (int)$_SESSION['user_id'];
 $user_role = $_SESSION['role'] ?? 'student';
-$action    = $_POST['action'] ?? $_GET['action'] ?? '';
 
 // Restrict AI tools to Adviser, SSC, and Admin
 if (!in_array($user_role, ['club_adviser', 'ssc', 'admin'])) {
@@ -30,8 +37,13 @@ if (!in_array($user_role, ['club_adviser', 'ssc', 'admin'])) {
 
 switch ($action) {
 
-    // ── Save Google Gemini API Key ─────────────────────────────
+    // ── Save Google Gemini API Key (Admin Only) ────────────────
     case 'save_api_key': {
+        if ($user_role !== 'admin') {
+            echo json_encode(['success' => false, 'message' => 'Permission denied: Only System Administrators can configure system AI credentials.']);
+            break;
+        }
+
         $api_key = trim($_POST['api_key'] ?? '');
         if (empty($api_key)) {
             echo json_encode(['success' => false, 'message' => 'API Key cannot be empty.']);
@@ -40,6 +52,7 @@ switch ($action) {
 
         $ok = save_gemini_api_key($api_key, $conn);
         if ($ok) {
+            log_audit($conn, $user_id, 'ai_api_key_update', 'system_settings', 0, 'Updated Google Gemini API key');
             echo json_encode(['success' => true, 'message' => 'Google Gemini API key saved successfully! Live AI generation is active.']);
         } else {
             echo json_encode(['success' => false, 'message' => 'Failed to save API key to database.']);
@@ -58,6 +71,14 @@ switch ($action) {
 
     // ── Live AI Event Planner & Schedule Conflict Optimizer ────
     case 'plan_events': {
+        if (!in_array($user_role, ['club_adviser', 'ssc', 'admin'])) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Permission denied: AI Event Planner is available to Club Advisers, SSC Officers, and Administrators.'
+            ]);
+            break;
+        }
+
         $club_id = (int)($_POST['club_id'] ?? $_GET['club_id'] ?? 0);
         $theme   = trim($_POST['theme'] ?? $_GET['theme'] ?? '');
 

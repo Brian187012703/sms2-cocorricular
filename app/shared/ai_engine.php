@@ -18,58 +18,193 @@ require_once __DIR__ . '/ph_holidays.php';
 function gemini_generate(string $prompt, ?mysqli $conn = null): array {
     $apiKey = get_gemini_api_key($conn);
 
-    if (!empty($apiKey)) {
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" . urlencode($apiKey);
+    if (empty($apiKey)) {
+        return ['success' => false, 'engine' => 'Embedded Generative AI', 'google_error' => 'No API key configured'];
+    }
 
-        $payload = [
-            'contents' => [
-                [
-                    'role' => 'user',
-                    'parts' => [
-                        ['text' => $prompt]
-                    ]
-                ]
-            ],
-            'generationConfig' => [
-                'temperature' => 0.85,
-                'topP' => 0.95,
-                'topK' => 40,
-                'maxOutputTokens' => 2048,
-                'responseMimeType' => 'application/json'
-            ]
-        ];
-
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($payload),
-            CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-            CURLOPT_TIMEOUT => 8,
-            CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => false
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($httpCode === 200 && $response) {
-            $data = json_decode($response, true);
-            $rawText = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
-            if ($rawText) {
-                // Strip markdown code fences if Gemini included them
-                $cleanJson = preg_replace('/^```(?:json)?\s*|\s*```$/i', '', trim($rawText));
-                $parsed = json_decode($cleanJson, true);
-                if (is_array($parsed)) {
-                    return ['success' => true, 'engine' => 'google-gemini-1.5-flash', 'data' => $parsed];
-                }
+    // ── Preferred model from DB setting ────────────────────────────────────
+    $preferredModel = 'gemini-3.5-flash-lite';
+    if ($conn) {
+        $checkM = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'ai_model' LIMIT 1");
+        if ($checkM && $rowM = $checkM->fetch_assoc()) {
+            $customM = trim($rowM['setting_value'] ?? '');
+            if (!empty($customM)) {
+                $preferredModel = $customM;
             }
         }
     }
 
-    return ['success' => false, 'engine' => 'embedded-generative-ai'];
+    // ── Candidate models — verified active for Google Gemini API, fastest first
+    // gemini-3.5-flash-lite: lightest + fastest free-tier model with highest quotas
+    // gemini-flash-lite-latest: dynamic latest lightweight alias
+    // gemini-3.6-flash:      high performance active flash model
+    // gemini-3.1-flash-lite: reliable fast fallback
+    // gemini-3.8-flash:      next-gen flash fallback
+    $candidateModels = array_values(array_unique(array_filter([
+        'gemini-3.5-flash-lite',
+        $preferredModel,
+        'gemini-flash-lite-latest',
+        'gemini-3.6-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-3.8-flash',
+        'gemini-3.5-flash',
+        'gemini-flash-latest',
+    ])));
+
+    // ── Payload — NO responseMimeType (causes hangs on some models) ────────
+    // Ask for JSON in the prompt text instead; we parse it ourselves.
+    // thinkingConfig must be nested inside generationConfig per Google API schema.
+    $payload = [
+        'contents' => [
+            [
+                'role'  => 'user',
+                'parts' => [['text' => $prompt]]
+            ]
+        ],
+        'generationConfig' => [
+            'temperature'     => 0.85,
+            'topP'            => 0.95,
+            'topK'            => 40,
+            'maxOutputTokens' => 4096,
+            'thinkingConfig'  => [
+                'thinkingBudget' => 512,
+            ],
+        ],
+    ];
+
+    $lastError   = '';
+    $globalStart = microtime(true);
+    $GLOBAL_LIMIT = 20.0; // Never spend more than 20 seconds total
+
+    foreach ($candidateModels as $model) {
+        // ── Global time budget check ──────────────────────────────────────
+        if ((microtime(true) - $globalStart) >= $GLOBAL_LIMIT) {
+            $lastError = 'Global time limit reached. Try again in a moment.';
+            break;
+        }
+
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+             . urlencode($model)
+             . ':generateContent?key='
+             . urlencode($apiKey);
+
+        // Per-model: try up to 2 times only on 503 (server overload)
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+
+            // Remaining global budget for this request
+            $elapsed   = microtime(true) - $globalStart;
+            $remaining = $GLOBAL_LIMIT - $elapsed;
+            if ($remaining < 2.0) break 2; // no time left — bail out
+
+            $perRequestTimeout = (int) min(10, $remaining); // max 10s per call
+
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => json_encode($payload),
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+                CURLOPT_TIMEOUT        => $perRequestTimeout,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_SSL_VERIFYHOST => false,
+            ]);
+
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr  = curl_error($ch);
+            curl_close($ch);
+
+            // ── cURL-level timeout / network error → skip model immediately
+            if ($response === false || ($httpCode === 0 && $curlErr)) {
+                $lastError = $curlErr ?: 'Network error';
+                break; // Don't retry timeouts — move to next model fast
+            }
+
+            // ── HTTP 200 — Parse response ─────────────────────────────────
+            if ($httpCode === 200) {
+                $data       = json_decode($response, true);
+                $candidate  = $data['candidates'][0] ?? [];
+                $finishReason = strtoupper($candidate['finishReason'] ?? '');
+                $content    = $candidate['content'] ?? [];
+                $rawText    = '';
+
+                // Handle both standard and thinking-model response shapes
+                if (isset($content['parts']) && is_array($content['parts'])) {
+                    foreach ($content['parts'] as $part) {
+                        // Skip internal thought parts (role='model', no output key)
+                        if (isset($part['thought']) && $part['thought']) continue;
+                        $rawText .= ($part['text'] ?? '');
+                    }
+                } elseif (is_array($content)) {
+                    foreach ($content as $part) {
+                        if (is_array($part)) $rawText .= ($part['text'] ?? '');
+                    }
+                }
+
+                if (!empty($rawText)) {
+                    // Strip markdown code fences if present
+                    $cleanJson = preg_replace('/^```(?:json)?\s*|\s*```$/i', '', trim($rawText));
+                    // Find the first {...} or [...] block
+                    if (preg_match('/[\[{].*[\]}]/s', $cleanJson, $m)) {
+                        $cleanJson = $m[0];
+                    }
+                    $parsed = json_decode($cleanJson, true);
+                    if (is_array($parsed)) {
+                        return [
+                            'success' => true,
+                            'engine'  => "Google Gemini ({$model})",
+                            'data'    => $parsed,
+                            'text'    => $rawText,
+                        ];
+                    }
+                    // Valid text but not JSON — still return text so caller can use it
+                    return [
+                        'success' => true,
+                        'engine'  => "Google Gemini ({$model})",
+                        'data'    => [],
+                        'text'    => $rawText,
+                    ];
+                }
+
+                // Empty output — check why and skip to next model
+                if ($finishReason === 'MAX_TOKENS') {
+                    $lastError = "Model {$model} hit token limit with no output. Trying next model.";
+                } elseif ($finishReason === 'SAFETY') {
+                    $lastError = "Model {$model} blocked by safety filters. Trying next model.";
+                } elseif ($finishReason === 'RECITATION') {
+                    $lastError = "Model {$model} recitation guard triggered. Trying next model.";
+                } else {
+                    $lastError = "Empty response from {$model} (finishReason: " . ($candidate['finishReason'] ?? 'unknown') . ')';
+                }
+                break; // Skip to next model
+
+            // ── HTTP 503 — Server overloaded, retry once with 1s wait ────
+            } elseif ($httpCode === 503) {
+                $errData   = json_decode($response, true);
+                $lastError = $errData['error']['message'] ?? 'Server overloaded (503)';
+                if ($attempt < 2) {
+                    sleep(1);
+                    continue;
+                }
+                break; // Two 503s in a row — skip to next model
+
+            // ── HTTP 429 — Quota exhausted, next model immediately ────────
+            } elseif ($httpCode === 429) {
+                $errData   = json_decode($response, true);
+                $lastError = $errData['error']['message'] ?? 'Quota exceeded (429)';
+                break;
+
+            // ── All other errors (404 deprecated, 400 bad payload, etc.) ─
+            } else {
+                $errData   = json_decode($response, true);
+                $lastError = $errData['error']['message'] ?? "HTTP {$httpCode}";
+                break;
+            }
+        }
+    }
+
+    return ['success' => false, 'engine' => 'Embedded Generative AI', 'google_error' => $lastError];
 }
 
 /**
@@ -901,15 +1036,18 @@ function ai_plan_events_and_schedule(mysqli $conn, int $user_id, array $params =
                 . "{\"analysis_summary\": \"...\", \"organization\": \"{$club['name']} ({$club['code']})\", \"plans\": [{\"title\": \"...\", \"category\": \"...\", \"description\": \"...\", \"recommended_date\": \"YYYY-MM-DDTHH:MM\", \"recommended_venue\": \"...\", \"target_audience\": \"...\", \"estimated_budget\": 5000, \"accessibility_verdict\": \"...\", \"holiday_check\": \"...\", \"clash_status\": \"Conflict-Free & Accessible\", \"feasibility_score\": 95, \"expected_outcomes\": \"...\"}], \"scheduling_insights\": \"...\"}";
 
         $result = gemini_generate($prompt, $conn);
-        if ($result['success']) {
-            $text = preg_replace('/^```(?:json)?\s*/m', '', $result['text']);
-            $text = preg_replace('/```\s*$/m', '', $text);
-            $parsed = json_decode(trim($text), true);
+        if (!empty($result['success'])) {
+            $parsed = $result['data'] ?? null;
+            if (!$parsed && !empty($result['text'])) {
+                $text = preg_replace('/^```(?:json)?\s*/m', '', $result['text']);
+                $text = preg_replace('/```\s*$/m', '', $text);
+                $parsed = json_decode(trim($text), true);
+            }
             if ($parsed && !empty($parsed['plans'])) {
                 foreach ($parsed['plans'] as $p) {
                     if (!empty($p['title'])) $_SESSION['recent_ai_proposals'][] = $p['title'];
                 }
-                log_ai_interaction($conn, $user_id, 'event_planning', "Google Gemini AI for club #$club_id", $result['text']);
+                log_ai_interaction($conn, $user_id, 'event_planning', "Google Gemini AI for club #$club_id", $result['text'] ?? json_encode($parsed));
                 return ['success' => true, 'parsed' => $parsed, 'club_id' => $club_id, 'engine' => $result['engine']];
             }
         }
@@ -928,10 +1066,11 @@ function ai_plan_events_and_schedule(mysqli $conn, int $user_id, array $params =
     log_ai_interaction($conn, $user_id, 'event_planning', "Embedded Generative AI for club #$club_id", json_encode($embeddedResult));
 
     return [
-        'success' => true,
-        'parsed'  => $embeddedResult,
-        'club_id' => $club_id,
-        'engine'  => 'Embedded Generative AI'
+        'success'      => true,
+        'parsed'       => $embeddedResult,
+        'club_id'      => $club_id,
+        'engine'       => 'Embedded Generative AI',
+        'google_error' => $result['google_error'] ?? (empty($apiKey) ? 'No API key configured in System Settings' : '')
     ];
 }
 
@@ -1089,14 +1228,17 @@ function ai_generate_report(mysqli $conn, string $report_type, int $user_id): ar
             . "}";
 
         $res = gemini_generate($prompt, $conn);
-        if (!empty($res['success']) && !empty($res['text'])) {
-            $clean_json = preg_replace('/^```(?:json)?\s*/m', '', $res['text']);
-            $clean_json = preg_replace('/```\s*$/m', '', $clean_json);
-            $parsed = json_decode(trim($clean_json), true);
+        if (!empty($res['success'])) {
+            $parsed = $res['data'] ?? null;
+            if (!$parsed && !empty($res['text'])) {
+                $clean_json = preg_replace('/^```(?:json)?\s*/m', '', $res['text']);
+                $clean_json = preg_replace('/```\s*$/m', '', $clean_json);
+                $parsed = json_decode(trim($clean_json), true);
+            }
             if ($parsed && !empty($parsed['executive_summary'])) {
                 if (empty($parsed['overall_health_score'])) $parsed['overall_health_score'] = $score;
                 if (empty($parsed['overall_health_label'])) $parsed['overall_health_label'] = $health_label;
-                log_ai_interaction($conn, $user_id, 'report_generation', "Gemini Report for $report_type", $res['text']);
+                log_ai_interaction($conn, $user_id, 'report_generation', "Gemini Report for $report_type", $res['text'] ?? json_encode($parsed));
                 return ['success' => true, 'parsed' => $parsed, 'engine' => $res['engine'] ?? 'Google Gemini'];
             }
         }

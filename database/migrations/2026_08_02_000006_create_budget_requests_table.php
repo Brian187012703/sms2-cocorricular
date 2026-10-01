@@ -10,15 +10,22 @@ return new class extends Migration
     {
         if (!Schema::hasTable('budget_requests')) {
             Schema::create('budget_requests', function (Blueprint $table) {
-                $table->id();
-                $table->foreignId('club_id')->constrained('clubs')->cascadeOnDelete();
+                $table->increments('id');
+                $table->unsignedInteger('club_id')->index();
                 $table->string('title', 200);
                 $table->text('description')->nullable();
+                $table->text('line_items')->nullable();
                 $table->decimal('amount', 10, 2);
-                $table->enum('status', ['Pending Adviser', 'Pending OSA', 'Pending Finance', 'Disbursed', 'Rejected'])->default('Pending Adviser');
-                $table->foreignId('requested_by')->constrained('users')->cascadeOnDelete();
+                $table->decimal('recommended_amount', 10, 2)->nullable();
+                $table->decimal('final_approved_amount', 10, 2)->nullable();
+                $table->string('status', 50)->default('Pending Adviser');
+                $table->unsignedInteger('requested_by')->index();
                 $table->text('notes')->nullable();
+                $table->dateTime('disbursed_at')->nullable();
+                $table->string('disbursement_reference', 100)->nullable();
+                $table->unsignedInteger('disbursed_by')->nullable();
                 $table->timestamps();
+                $table->timestamp('deleted_at')->nullable();
             });
         }
     }

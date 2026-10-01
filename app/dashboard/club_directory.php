@@ -7,6 +7,7 @@
 require_once __DIR__ . '/../shared/db.php';
 require_once __DIR__ . '/../shared/security.php';
 require_auth();
+require_permission('organization.view');
 
 $sess_first = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last = htmlspecialchars($_SESSION['last_name'] ?? '');
@@ -15,13 +16,13 @@ $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'U', 0, 1));
 $sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id = (int) ($_SESSION['user_id'] ?? 0);
 
-// Restrict Adviser role from accessing the Organization Directory module
-if ($sess_role === 'club_adviser') {
+// Restrict users who only manage their own club rather than browsing directory
+if (can('organization.manage.own') && !can('organization.review.all')) {
   header('Location: ../dashboard/dashboard.php');
   exit;
 }
 
-$can_apply = ($sess_role === 'student');
+$can_apply = can('organization.apply');
 
 // Fetch student profile details from DB if logged in as student
 $student_info = null;
@@ -52,128 +53,289 @@ if ($club_res) {
   }
 }
 
-
-// -- Organization profiles (achievements + officers per org) --
-// In production, pull from DB. Keyed by acronym.
-$org_profiles = [
-  'ACADS' => ['desc' => 'ACADS is dedicated to academic excellence among Computer Engineering students through seminars, competitions, and peer mentoring programs.', 'achievements' => ['Regional Hackathon Champions 2025', 'Best Academic Org AY 2024-2025', 'SSC Excellence Award 2025'], 'officers' => [['name' => 'Sarah Dela Cruz', 'pos' => 'President'], ['name' => 'Mark Reyes', 'pos' => 'Vice President'], ['name' => 'Lea Santos', 'pos' => 'Secretary']]],
-  'ACES' => ['desc' => 'ACES unites Computer Engineering students and promotes technical growth through workshops, laboratory enhancement campaigns, and industry visits.', 'achievements' => ['IEEE Student Chapter Partner', 'Top Performing CpE Org 2025'], 'officers' => [['name' => 'John Pascual', 'pos' => 'President'], ['name' => 'Nina Cruz', 'pos' => 'Vice President'], ['name' => 'Gio Marquez', 'pos' => 'Secretary']]],
-  'AISS' => ['desc' => 'AISS advances accounting information literacy and bridges academic knowledge with industry technology practices in financial systems.', 'achievements' => ['Best Org Newsletter 2025', 'PICPA Youth Partner'], 'officers' => [['name' => 'Christine Tan', 'pos' => 'President'], ['name' => 'Jose Lim', 'pos' => 'Vice President'], ['name' => 'Ana Ramos', 'pos' => 'Secretary']]],
-  'BLISS' => ['desc' => 'BLISS promotes library science excellence and information literacy across all BCP academic departments through advocacy and community service.', 'achievements' => ['National Library Advocacy Award', 'Outstanding Student Org 2024'], 'officers' => [['name' => 'Maria Fontanilla', 'pos' => 'President'], ['name' => 'Rob Santos', 'pos' => 'Vice President']]],
-  'BRAVE' => ['desc' => 'BRAVE fosters values education and responsible leadership among BCP students through community outreach and character formation programs.', 'achievements' => ['National Values Org Award', '100 Hours Community Service 2025'], 'officers' => [['name' => 'Patricia Gomez', 'pos' => 'President'], ['name' => 'Ryan Dela Cruz', 'pos' => 'Vice President']]],
-  'CJSU' => ['desc' => 'CJSU strengthens criminal justice students through moot courts, criminology seminars, and law enforcement immersion programs.', 'achievements' => ['Best Criminology Org 2025', 'Regional Moot Court Champions'], 'officers' => [['name' => 'Carlo Bautista', 'pos' => 'President'], ['name' => 'Mae Santos', 'pos' => 'Secretary']]],
-  'EYO' => ['desc' => 'EYO cultivates entrepreneurial mindsets among BCP youth through business incubation workshops, trade fairs, and start-up mentorship.', 'achievements' => ['DTI Youth Entrepreneurship Awardee', 'Best Business Plan Org 2025'], 'officers' => [['name' => 'Anna Roque', 'pos' => 'President'], ['name' => 'James Ong', 'pos' => 'Vice President']]],
-  'default' => ['desc' => 'This organization is an accredited co-curricular body under the BCP Supreme Student Council (SSC), dedicated to student development, community service, and academic excellence.', 'achievements' => ['BCP Accredited Organization AY 2025-2026', 'SSC Recognition Award'], 'officers' => [['name' => 'President (TBA)', 'pos' => 'President'], ['name' => 'Vice President (TBA)', 'pos' => 'Vice President']]],
-];
-
-function getOrgProfile(string $acronym, array $profiles): array
-{
-  return $profiles[$acronym] ?? $profiles['default'];
-}
-
-$organizations = [
-  'academic' => [
-    'label' => 'LEAGUE OF ORGANIZATIONAL CHAIRPERSONS (LOC)',
-    'sub' => 'Academic Organizations',
-    'color' => '#1a3a8c',
-    'accent' => '#2563eb',
-    'orgs' => [
-      ['acronym' => 'ACADS', 'name' => 'Association of Computer Engineering Academic Driven Students'],
-      ['acronym' => 'ACES', 'name' => 'Association of Computer Engineering Students'],
-      ['acronym' => 'AISS', 'name' => 'Accounting Information System Society'],
-      ['acronym' => 'BLISS', 'name' => 'Bestlink Library and Information Science Society'],
-      ['acronym' => 'BRAVE', 'name' => 'Building Responsibility and Accountability Through Values Education'],
-      ['acronym' => 'CJSU', 'name' => 'Criminal Justice Student Unit'],
-      ['acronym' => 'EYO', 'name' => 'Entrepreyouth Organization'],
-      ['acronym' => 'G.A.L.A.W', 'name' => 'Group of Athletes and Leaders Association for Wellness'],
-      ['acronym' => 'GEMs', 'name' => 'Guild of English Majors'],
-      ['acronym' => 'GOLD', 'name' => 'Guild of Officers to Lead Development'],
-      ['acronym' => 'JFINEX', 'name' => 'Junior Financial Executives'],
-      ['acronym' => 'HRS', 'name' => 'Human Resources Society'],
-      ['acronym' => 'J.M.A', 'name' => 'Junior Marketing Association'],
-      ['acronym' => 'LAKAS', 'name' => 'Liga ng mga Aktibong Kabataan sa Araling Panlipunan'],
-      ['acronym' => 'L.A.P.I.S', 'name' => 'Leadership Association Program Including Services'],
-      ['acronym' => 'LIBRO', 'name' => 'Lucid of Bright and Righteous Officers'],
-      ['acronym' => 'OMEGA', 'name' => 'Organization for Mathematics in Engineering for Global Application'],
-      ['acronym' => 'PsychSoc', 'name' => 'Psychology Society'],
-      ['acronym' => 'RSD', 'name' => 'Regnum Scientiae Discipulus'],
-      ['acronym' => 'SIGMA', 'name' => "Students' Interactive Guild for Mathematics Major"],
-      ['acronym' => 'TECHs', 'name' => 'Technology, Exploratory, Creativity and Hospitality Skills'],
-      ['acronym' => 'TTS', 'name' => 'Tourism Student Society'],
-      ['acronym' => 'WIKA', 'name' => 'Wikang Filipino Instrumento sa Kaunlarang Akademya'],
-    ]
-  ],
-  'talent' => [
-    'label' => 'CENTER FOR TALENT AND CULTURAL EMPOWERMENT (CTCE)',
-    'sub' => 'Non-Academic Organizations',
-    'color' => '#1a3a8c',
-    'accent' => '#2563eb',
-    'subcategories' => [
-      [
-        'label' => 'Department Based Talent Group',
-        'orgs' => [
-          ['acronym' => 'ACAC', 'name' => 'Association of Cultural Art Club'],
-          ['acronym' => 'CESC', 'name' => 'Computer Engineering Sports Club'],
-          ['acronym' => 'EBCPCT', 'name' => 'Elite BCP Chess Team'],
-          ['acronym' => 'RCYC-BCP', 'name' => 'Red Cross Youth Council - BCP Chapter'],
-          ['acronym' => 'SMC', 'name' => 'Shuttle Master Club'],
-        ]
-      ],
-      [
-        'label' => 'Talent Center',
-        'orgs' => [
-          ['acronym' => 'ALL STAR', 'name' => 'All Star'],
-          ['acronym' => 'B-FORCE', 'name' => 'B-Force'],
-          ['acronym' => 'CREATIVE', 'name' => 'Creative Arts'],
-          ['acronym' => 'CDC', 'name' => 'Criminology Dance Company'],
-          ['acronym' => 'DLC', 'name' => 'Drum and Lyre Corporation'],
-          ['acronym' => 'IKATLONG', 'name' => 'Ikatlong Lahi Royalties'],
-          ['acronym' => 'IMAGE', 'name' => 'Image Alchemy'],
-          ['acronym' => 'S.I.K.A.T', 'name' => 'Sining Interpretasyon ng Kabataang Aktor sa Teatro'],
-          ['acronym' => 'UV', 'name' => 'Unlimited Voice'],
-        ]
-      ],
-    ]
-  ],
-  'independent' => [
-    'label' => 'INDEPENDENT ORGANIZATIONS',
-    'sub' => 'Campus-Wide Independent Bodies',
-    'color' => '#1a3a8c',
-    'accent' => '#2563eb',
-    'orgs' => [
-      ['acronym' => 'PEER', 'name' => 'Peer Counselor'],
-      ['acronym' => 'NEWSLINK', 'name' => 'Newslink: The School Publications'],
-      ['acronym' => 'GAD-CG', 'name' => 'Gender and Development - Core Group'],
-    ]
-  ]
-];
-
-$talent_count = array_sum(array_map(fn($s) => count($s['orgs']), $organizations['talent']['subcategories']));
-$total_count = count($organizations['academic']['orgs']) + $talent_count + count($organizations['independent']['orgs']);
-
-// Build flat org list for JS data injection
-$all_orgs = [];
-foreach ($organizations['academic']['orgs'] as $o) {
-  $p = getOrgProfile($o['acronym'], $org_profiles);
-  $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($o['acronym']));
-  $club_id = $db_clubs[strtoupper($o['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
-  $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => 'Academic Organization', 'accent' => '#2563eb', 'color' => '#1a3a8c', 'profile' => $p, 'club_id' => $club_id];
-}
-foreach ($organizations['talent']['subcategories'] as $sub) {
-  foreach ($sub['orgs'] as $o) {
-    $p = getOrgProfile($o['acronym'], $org_profiles);
-    $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($o['acronym']));
-    $club_id = $db_clubs[strtoupper($o['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
-    $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => $sub['label'], 'accent' => '#2563eb', 'color' => '#1a3a8c', 'profile' => $p, 'club_id' => $club_id];
+// -- Fetch student's current club memberships and applications --
+$student_applications = []; // [club_id => status]
+$student_org_statuses = []; // [acronym => status]
+if ($can_apply && !empty($user_id)) {
+  $st_app_res = $conn->query("SELECT club_id, status FROM club_memberships WHERE user_id = " . (int)$user_id);
+  if ($st_app_res) {
+    while ($row = $st_app_res->fetch_assoc()) {
+      $student_applications[(int)$row['club_id']] = $row['status'];
+    }
+  }
+  $st_app_res2 = $conn->query("SELECT club_id, status FROM club_applications WHERE user_id = " . (int)$user_id . " ORDER BY id ASC");
+  if ($st_app_res2) {
+    while ($row = $st_app_res2->fetch_assoc()) {
+      $cid = (int)$row['club_id'];
+      if (!isset($student_applications[$cid])) {
+        $student_applications[$cid] = $row['status'];
+      }
+    }
   }
 }
-foreach ($organizations['independent']['orgs'] as $o) {
-  $p = getOrgProfile($o['acronym'], $org_profiles);
-  $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($o['acronym']));
-  $club_id = $db_clubs[strtoupper($o['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
-  $all_orgs[$o['acronym']] = ['name' => $o['name'], 'category' => 'Independent Organization', 'accent' => '#2563eb', 'color' => '#1a3a8c', 'profile' => $p, 'club_id' => $club_id];
+
+
+// ============================================================
+// DYNAMIC DATABASE DATA FETCHING (NO HARDCODED ARRAYS)
+// ============================================================
+
+// 1. Fetch real student officers by club from club_memberships
+$officers_by_club = [];
+$officers_res = $conn->query("
+    SELECT cm.club_id, cm.role, u.first_name, u.last_name, u.profile_pic
+    FROM club_memberships cm
+    JOIN users u ON u.id = cm.user_id
+    WHERE cm.status = 'Active' AND cm.role NOT IN ('Member', 'Adviser', 'club_adviser')
+    ORDER BY cm.club_id, FIELD(cm.role, 'President', 'Vice President', 'VP Internal', 'VP External', 'Secretary', 'Treasurer', 'Auditor', 'Public Relations Officer', 'PRO', 'Creative Lead', 'Editor-in-Chief', 'Officer') ASC
+");
+if ($officers_res) {
+    while ($off = $officers_res->fetch_assoc()) {
+        $cid = (int)$off['club_id'];
+        $officers_by_club[$cid][] = [
+            'name' => trim($off['first_name'] . ' ' . $off['last_name']),
+            'pos'  => $off['role']
+        ];
+    }
 }
 
+// 2. Fetch real verified achievements by club from achievements table
+$achievements_by_club = [];
+$ach_res = $conn->query("
+    SELECT club_id, title, competition, award_date 
+    FROM achievements 
+    WHERE status = 'Verified' 
+    ORDER BY award_date DESC
+");
+if ($ach_res) {
+    while ($ach = $ach_res->fetch_assoc()) {
+        $cid = (int)$ach['club_id'];
+        $entry = $ach['title'];
+        if (!empty($ach['competition'])) {
+            $entry .= ' (' . $ach['competition'] . ')';
+        }
+        $achievements_by_club[$cid][] = $entry;
+    }
+}
+
+// 3. Fetch all active clubs from database
+$academic_orgs = [];
+$talent_subcategories = [
+    'Department Based Talent Group' => [],
+    'Talent Center' => []
+];
+$independent_orgs = [];
+$all_orgs = [];
+
+$clubs_query = $conn->query("
+    SELECT c.*, 
+           (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Active') as active_count
+    FROM clubs c 
+    WHERE c.deleted_at IS NULL 
+    ORDER BY c.category ASC, c.name ASC
+");
+
+if ($clubs_query) {
+    while ($row = $clubs_query->fetch_assoc()) {
+        $cid = (int)$row['id'];
+        $acronym = $row['code'];
+        $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($acronym));
+        $db_clubs[strtoupper($acronym)] = $cid;
+        $db_clubs[$clean_a] = $cid;
+
+        $desc = !empty($row['description']) 
+            ? $row['description'] 
+            : 'Official accredited student organization under the BCP Supreme Student Council (SSC), dedicated to student empowerment, community service, and academic excellence.';
+        
+        $adviser = !empty($row['adviser_name']) ? $row['adviser_name'] : 'Faculty Adviser';
+
+        // Officers: Use real student officers from DB; if none yet, include Adviser
+        $officers = $officers_by_club[$cid] ?? [];
+        if (empty($officers)) {
+            $officers = [
+                ['name' => $adviser, 'pos' => 'Faculty Adviser']
+            ];
+        }
+
+        // Achievements: Use verified records from DB; fallback to default accreditation
+        $achievements = $achievements_by_club[$cid] ?? [
+            'BCP Accredited Organization AY 2025-2026',
+            'Supreme Student Council Charter Recognition'
+        ];
+
+        $org_item = [
+            'club_id'   => $cid,
+            'acronym'   => $acronym,
+            'name'      => $row['name'],
+            'category'  => $row['category'],
+            'sub_category' => $row['sub_category'] ?? '',
+            'adviser'   => $adviser,
+            'profile'   => [
+                'desc'         => $desc,
+                'adviser'      => $adviser,
+                'achievements' => $achievements,
+                'officers'     => $officers
+            ]
+        ];
+
+        // Classification into sections
+        $cat = strtolower(trim($row['category']));
+        $sub = trim($row['sub_category'] ?? '');
+        $is_active_club = ($row['status'] === 'Active');
+
+        if ($cat === 'academic') {
+            if ($is_active_club) {
+                $academic_orgs[] = $org_item;
+            }
+            $all_orgs[$acronym] = [
+                'name'     => $row['name'],
+                'category' => 'Academic Organization',
+                'accent'   => '#2563eb',
+                'color'    => '#1a3a8c',
+                'profile'  => $org_item['profile'],
+                'club_id'  => $cid
+            ];
+        } elseif (in_array($cat, ['cultural', 'sports']) || in_array($sub, ['Department Based Talent Group', 'Talent Center'])) {
+            $sub_label = ($sub === 'Department Based Talent Group') ? 'Department Based Talent Group' : 'Talent Center';
+            if ($is_active_club) {
+                $talent_subcategories[$sub_label][] = $org_item;
+            }
+            $all_orgs[$acronym] = [
+                'name'     => $row['name'],
+                'category' => $sub_label,
+                'accent'   => '#2563eb',
+                'color'    => '#1a3a8c',
+                'profile'  => $org_item['profile'],
+                'club_id'  => $cid
+            ];
+        } else {
+            // Advocacy / Independent / Others
+            if ($is_active_club) {
+                $independent_orgs[] = $org_item;
+            }
+            $all_orgs[$acronym] = [
+                'name'     => $row['name'],
+                'category' => 'Independent Organization',
+                'accent'   => '#2563eb',
+                'color'    => '#1a3a8c',
+                'profile'  => $org_item['profile'],
+                'club_id'  => $cid
+            ];
+        }
+
+        // Also index by clean and upper acronym so lookups never fail
+        if (!empty($clean_a) && !isset($all_orgs[$clean_a])) {
+            $all_orgs[$clean_a] = $all_orgs[$acronym];
+        }
+        $upper_a = strtoupper($acronym);
+        if (!isset($all_orgs[$upper_a])) {
+            $all_orgs[$upper_a] = $all_orgs[$acronym];
+        }
+    }
+}
+
+$talent_count = array_sum(array_map('count', $talent_subcategories));
+$total_count = count($academic_orgs) + $talent_count + count($independent_orgs);
+
+// Map student status by acronym
+foreach ($all_orgs as $acr => $o) {
+  $cid = (int)$o['club_id'];
+  if ($cid > 0 && isset($student_applications[$cid])) {
+    $student_org_statuses[$acr] = $student_applications[$cid];
+  }
+}
+
+// Helper to render organization card action button based on real application/membership status
+if (!function_exists('renderOrgCardButton')) {
+function renderOrgCardButton(array $org, bool $can_apply, array $db_clubs, array $student_applications): string {
+  if (!$can_apply) {
+    return '<button class="org-card-qr-btn" style="background:#f1f5f9;color:#64748b;border-color:#e2e8f0;" onclick="openOrgProfile(\'' . htmlspecialchars($org['acronym'], ENT_QUOTES) . '\')"><i class="fa-solid fa-eye"></i> View Profile</button>';
+  }
+
+  $clean_a = preg_replace('/[^A-Z0-9]/', '', strtoupper($org['acronym']));
+  $cid = $db_clubs[strtoupper($org['acronym'])] ?? $db_clubs[$clean_a] ?? 0;
+  $status = ($cid > 0 && isset($student_applications[$cid])) ? $student_applications[$cid] : null;
+
+  if ($status === 'Pending') {
+    return '<button class="org-card-qr-btn org-status-pending" data-org-acronym="' . htmlspecialchars($org['acronym'], ENT_QUOTES) . '" style="background:#fffbeb; color:#b45309; border-color:#fde68a; cursor:default;" disabled title="Your application has been submitted and is awaiting adviser review."><i class="fa-solid fa-clock"></i> Waiting for Approval</button>';
+  }
+  if ($status === 'Active') {
+    return '<button class="org-card-qr-btn org-status-member" data-org-acronym="' . htmlspecialchars($org['acronym'], ENT_QUOTES) . '" style="background:#f0fdf4; color:#166534; border-color:#bbf7d0; cursor:default;" disabled title="You are an active member of this organization."><i class="fa-solid fa-circle-check"></i> Member</button>';
+  }
+
+  // If status is 'Rejected' or not applied, return to original 'Apply Now' state
+  return '<button class="org-card-qr-btn" data-org-acronym="' . htmlspecialchars($org['acronym'], ENT_QUOTES) . '" onclick="openAppForm(\'' . htmlspecialchars($org['acronym'], ENT_QUOTES) . '\')"><i class="fa-solid fa-user-plus"></i> Apply Now</button>';
+}
+}
+
+// Governance queries for SSC / Admin
+$is_gov_role = in_array($sess_role, ['ssc', 'admin']);
+$gov_clubs = [];
+$active_orgs_count = 0;
+$pending_charters_count = 0;
+$total_pending_charters = 0;
+$suspended_orgs_count = 0;
+$cat_counts = [];
+$no_adviser_count = 0;
+$compliance_warning_count = 0;
+
+if ($is_gov_role) {
+    $active_orgs_count = (int) ($conn->query("SELECT COUNT(*) FROM clubs WHERE status = 'Active' AND deleted_at IS NULL")->fetch_row()[0] ?? 0);
+    $pending_charters_count = (int) ($conn->query("SELECT COUNT(*) FROM clubs WHERE status = 'Pending Charter' AND deleted_at IS NULL")->fetch_row()[0] ?? 0);
+    $pending_charter_apps = (int) ($conn->query("SELECT COUNT(*) FROM club_applications WHERE status = 'Pending'")->fetch_row()[0] ?? 0);
+    $total_pending_charters = $pending_charters_count + $pending_charter_apps;
+    $suspended_orgs_count = (int) ($conn->query("SELECT COUNT(*) FROM clubs WHERE status = 'Suspended' AND deleted_at IS NULL")->fetch_row()[0] ?? 0);
+
+    $cats_query = $conn->query("SELECT category, COUNT(*) as cnt FROM clubs WHERE deleted_at IS NULL GROUP BY category");
+    if ($cats_query) {
+        while ($cr = $cats_query->fetch_assoc()) {
+            $cat_counts[$cr['category']] = (int)$cr['cnt'];
+        }
+    }
+
+    $no_adviser_count = (int) ($conn->query("SELECT COUNT(*) FROM clubs WHERE (adviser_name IS NULL OR adviser_name = '' OR adviser_name = 'Unassigned') AND deleted_at IS NULL")->fetch_row()[0] ?? 0);
+    $compliance_warning_count = $no_adviser_count + $suspended_orgs_count + $pending_charters_count;
+
+    $gov_clubs_query = $conn->query("
+        SELECT c.*,
+               (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Active') as member_count,
+               (SELECT CONCAT(e.title, ' (', DATE_FORMAT(e.event_date, '%b %d, %Y'), ')') FROM events e WHERE e.club_id = c.id AND e.status IN ('Approved', 'Completed') ORDER BY e.event_date DESC LIMIT 1) as last_activity
+        FROM clubs c
+        WHERE c.deleted_at IS NULL
+        ORDER BY c.status ASC, c.name ASC
+    ");
+    if ($gov_clubs_query) {
+        while ($g = $gov_clubs_query->fetch_assoc()) {
+            // Compliance
+            if ($g['status'] === 'Suspended') {
+                $g['compliance'] = 'Non-Compliant';
+                $g['compliance_badge'] = '<span class="badge-danger" style="background:#fee2e2; color:#b91c1c; font-weight:700; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-circle-xmark"></i> Non-Compliant</span>';
+            } elseif (empty($g['adviser_name']) || $g['adviser_name'] === 'Unassigned') {
+                $g['compliance'] = 'Warning';
+                $g['compliance_badge'] = '<span class="badge-warning" style="background:#fef3c7; color:#b45309; font-weight:700; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-triangle-exclamation"></i> Warning (No Adviser)</span>';
+            } elseif ($g['status'] === 'Pending Charter') {
+                $g['compliance'] = 'Pending Review';
+                $g['compliance_badge'] = '<span class="badge-info" style="background:#e0f2fe; color:#0369a1; font-weight:700; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-clock"></i> Under Review</span>';
+            } else {
+                $g['compliance'] = 'Complete';
+                $g['compliance_badge'] = '<span class="badge-active" style="background:#dcfce7; color:#15803d; font-weight:700; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-circle-check"></i> Complete</span>';
+            }
+
+            // Charter Status
+            if ($g['status'] === 'Active') {
+                $g['charter_status'] = 'Accredited';
+                $g['charter_badge'] = '<span class="badge-active" style="background:#dbeafe; color:#1e40af; font-weight:600; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-stamp"></i> Accredited</span>';
+            } elseif ($g['status'] === 'Pending Charter') {
+                $g['charter_status'] = 'Pending Review';
+                $g['charter_badge'] = '<span class="badge-warning" style="background:#fef3c7; color:#b45309; font-weight:600; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-hourglass-half"></i> Under Review</span>';
+            } else {
+                $g['charter_status'] = 'Suspended';
+                $g['charter_badge'] = '<span class="badge-danger" style="background:#fee2e2; color:#b91c1c; font-weight:600; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-ban"></i> Suspended</span>';
+            }
+
+            $gov_clubs[] = $g;
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -181,17 +343,421 @@ foreach ($organizations['independent']['orgs'] as $o) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Organization Directory â€“ BCP Co-Curricular Portal</title>
+  <title>Organization Directory – BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?php echo filemtime(__DIR__ . '/../css/dashboard.css'); ?>" />
   <link rel="stylesheet" href="../css/page-loader.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <meta name="loader-logo" content="../images/BCP_LOGO.png" />
   <script src="../js/page-loader.js"></script>
 
-  <!-- jsPDF for client-side PDF generation -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
   <style>
+    /* ── Governance KPI Summary Grid & Cards Alignment ── */
+    .gov-summary-grid {
+      display: grid !important;
+      grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+      gap: 14px !important;
+      margin-bottom: 22px !important;
+      align-items: stretch !important;
+    }
+
+    /* Base Desktop Styles */
+    .gov-kpi-tile {
+      margin: 0 !important;
+      padding: 16px 18px !important;
+      background: #ffffff !important;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 12px !important;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: space-between !important;
+      height: 100% !important;
+      box-sizing: border-box !important;
+      transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    }
+
+    .gov-kpi-tile:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+    }
+
+    .gov-kpi-header {
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: flex-start !important;
+      gap: 8px !important;
+      min-height: 38px !important;
+    }
+
+    .gov-kpi-title {
+      font-size: 0.72rem !important;
+      font-weight: 800 !important;
+      color: #475569 !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.5px !important;
+      line-height: 1.25 !important;
+    }
+
+    .gov-kpi-icon {
+      width: 32px !important;
+      height: 32px !important;
+      min-width: 32px !important;
+      border-radius: 8px !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      font-size: 0.95rem !important;
+    }
+
+    .gov-kpi-body {
+      min-height: 48px !important;
+      display: flex !important;
+      align-items: center !important;
+      margin: 10px 0 8px !important;
+    }
+
+    .gov-kpi-value {
+      font-size: 1.8rem !important;
+      font-weight: 800 !important;
+      color: #0f172a !important;
+      line-height: 1 !important;
+    }
+
+    .gov-kpi-desc {
+      font-size: 0.75rem !important;
+      color: #64748b !important;
+      line-height: 1.35 !important;
+      margin-top: auto !important;
+    }
+
+    .gov-kpi-cat-grid {
+      display: grid !important;
+      grid-template-columns: 1fr 1fr !important;
+      gap: 5px !important;
+      width: 100% !important;
+    }
+
+    .gov-cat-item {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      background: #f8fafc !important;
+      border: 1px solid #ede9fe !important;
+      border-radius: 6px !important;
+      padding: 3px 6px !important;
+      min-width: 0 !important;
+      transition: background 0.15s ease !important;
+    }
+
+    .gov-cat-item:hover {
+      background: #f5f3ff !important;
+    }
+
+    .gov-cat-name {
+      font-size: 0.68rem !important;
+      font-weight: 600 !important;
+      color: #334155 !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      margin-right: 4px !important;
+    }
+
+    .gov-cat-pill {
+      font-size: 0.68rem !important;
+      font-weight: 800 !important;
+      background: #ede9fe !important;
+      color: #7c3aed !important;
+      padding: 1px 6px !important;
+      border-radius: 10px !important;
+      line-height: 1.25 !important;
+      flex-shrink: 0 !important;
+    }
+
+    /* Responsive adjustments for KPI summary grid & compact mobile tiles */
+    @media (max-width: 1399px) {
+      .gov-summary-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .gov-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+        margin-bottom: 14px !important;
+      }
+      .gov-kpi-tile {
+        padding: 9px 11px !important;
+        border-radius: 9px !important;
+      }
+      .gov-kpi-header {
+        min-height: unset !important;
+        gap: 6px !important;
+      }
+      .gov-kpi-title {
+        font-size: 0.65rem !important;
+        letter-spacing: 0.3px !important;
+      }
+      .gov-kpi-icon {
+        width: 24px !important;
+        height: 24px !important;
+        min-width: 24px !important;
+        font-size: 0.75rem !important;
+        border-radius: 6px !important;
+      }
+      .gov-kpi-body {
+        min-height: unset !important;
+        margin: 3px 0 2px !important;
+      }
+      .gov-kpi-value {
+        font-size: 1.3rem !important;
+      }
+      .gov-kpi-desc {
+        font-size: 0.65rem !important;
+        line-height: 1.25 !important;
+      }
+      .gov-kpi-cat-grid {
+        gap: 3px !important;
+      }
+      .gov-cat-item {
+        padding: 2px 4px !important;
+        border-radius: 4px !important;
+      }
+      .gov-cat-name {
+        font-size: 0.58rem !important;
+        margin-right: 2px !important;
+      }
+      .gov-cat-pill {
+        font-size: 0.58rem !important;
+        padding: 1px 4px !important;
+        border-radius: 8px !important;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .gov-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 6px !important;
+      }
+      .gov-kpi-tile {
+        padding: 8px 10px !important;
+      }
+      .gov-kpi-value {
+        font-size: 1.22rem !important;
+      }
+    }
+
+    @media (max-width: 340px) {
+      .gov-summary-grid {
+        grid-template-columns: 1fr !important;
+      }
+    }
+
+    /* ── Governance Registry Table Formatting & Cut-off Prevention ── */
+    #govRegistrySection .table-wrap {
+      overflow-x: auto !important;
+      position: relative !important;
+      margin-bottom: 0 !important;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 10px !important;
+      scrollbar-width: thin !important;
+      scrollbar-color: #cbd5e1 #f8fafc !important;
+    }
+
+    #orgGovernanceTable {
+      width: 100% !important;
+      min-width: 980px !important;
+      border-collapse: separate !important;
+      border-spacing: 0 !important;
+    }
+
+    #orgGovernanceTable th {
+      background: #f8fafc !important;
+      padding: 10px 10px !important;
+      font-size: 0.74rem !important;
+      font-weight: 800 !important;
+      text-transform: uppercase !important;
+      letter-spacing: 0.4px !important;
+      color: #475569 !important;
+      border-bottom: 2px solid #e2e8f0 !important;
+      white-space: nowrap !important;
+    }
+
+    #orgGovernanceTable td {
+      padding: 10px 10px !important;
+      font-size: 0.82rem !important;
+      vertical-align: middle !important;
+      border-bottom: 1px solid #f1f5f9 !important;
+      background: #ffffff !important;
+    }
+
+    #orgGovernanceTable tr:hover td {
+      background: #f8fafc !important;
+    }
+
+    #orgGovernanceTable td strong.org-table-name {
+      font-size: 0.82rem !important;
+      line-height: 1.3 !important;
+      display: block !important;
+      max-width: 200px !important;
+      word-break: normal !important;
+    }
+
+    /* Action Column Styling: Seamless, Flat, and Centered (Eliminates artificial embossing/shadows) */
+    #orgGovernanceTable th.gov-actions-head,
+    #orgGovernanceTable td.gov-actions-col {
+      position: static !important;
+      border-left: none !important;
+      border-right: none !important;
+      box-shadow: none !important;
+      text-align: center !important;
+      white-space: nowrap !important;
+      padding: 10px 14px !important;
+      min-width: 185px !important;
+      width: 185px !important;
+      box-sizing: border-box !important;
+    }
+
+    #orgGovernanceTable th.gov-actions-head {
+      background: #f8fafc !important;
+      color: #475569 !important;
+      border-bottom: 2px solid #e2e8f0 !important;
+      text-align: center !important;
+    }
+
+    #orgGovernanceTable td.gov-actions-col {
+      background: #ffffff !important;
+      border-bottom: 1px solid #f1f5f9 !important;
+    }
+
+    #orgGovernanceTable tr:hover td.gov-actions-col {
+      background: #f8fafc !important;
+    }
+
+    #orgGovernanceTable .actions-group {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 8px !important;
+      flex-wrap: nowrap !important;
+      width: 100% !important;
+      margin: 0 auto !important;
+    }
+
+    /* Common Button Styling: clean, flat, consistent sizing without 3D emboss/drop-shadows */
+    #orgGovernanceTable .actions-group .card-btn {
+      padding: 6px 12px !important;
+      font-size: 0.8rem !important;
+      font-weight: 600 !important;
+      border-radius: 6px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      white-space: nowrap !important;
+      box-shadow: none !important;
+      height: 32px !important;
+      min-height: 32px !important;
+      min-width: 82px !important;
+      cursor: pointer !important;
+      transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease !important;
+      flex-shrink: 0 !important;
+      text-decoration: none !important;
+      box-sizing: border-box !important;
+    }
+
+    #orgGovernanceTable .actions-group .card-btn:hover {
+      transform: none !important;
+      box-shadow: none !important;
+      opacity: 0.92 !important;
+    }
+
+    /* Mobile / Responsive Card View (width <= 768px): clean centered full-width actions */
+    @media (max-width: 768px) {
+      #orgGovernanceTable td.gov-actions-col {
+        position: static !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        border-left: none !important;
+        box-shadow: none !important;
+        padding: 12px 0 4px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+      }
+
+      #orgGovernanceTable td.gov-actions-col::before {
+        display: block !important;
+        text-align: center !important;
+        margin-bottom: 8px !important;
+        font-size: 0.72rem !important;
+        font-weight: 800 !important;
+        color: #94a3b8 !important;
+        letter-spacing: 0.5px !important;
+        width: 100% !important;
+      }
+
+      #orgGovernanceTable .actions-group {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 10px !important;
+        width: 100% !important;
+        margin: 0 auto !important;
+      }
+
+      #orgGovernanceTable .actions-group .card-btn {
+        flex: 1 1 0 !important;
+        max-width: 160px !important;
+        min-height: 36px !important;
+        font-size: 0.84rem !important;
+        padding: 8px 16px !important;
+      }
+    }
+
+    /* -- Status Badges for Org Cards & Profile Modal -- */
+    .org-card-qr-btn.org-status-pending {
+      background: #fffbeb !important;
+      border-color: #fde68a !important;
+      color: #b45309 !important;
+      cursor: default !important;
+      box-shadow: none !important;
+    }
+    .org-card-qr-btn.org-status-pending:hover {
+      background: #fffbeb !important;
+      border-color: #fde68a !important;
+      color: #b45309 !important;
+    }
+    .org-card-qr-btn.org-status-member {
+      background: #f0fdf4 !important;
+      border-color: #bbf7d0 !important;
+      color: #166534 !important;
+      cursor: default !important;
+      box-shadow: none !important;
+    }
+    .org-card-qr-btn.org-status-member:hover {
+      background: #f0fdf4 !important;
+      border-color: #bbf7d0 !important;
+      color: #166534 !important;
+    }
+    .opm-apply-cta.is-pending {
+      background: #fef3c7 !important;
+      color: #92400e !important;
+      border: 1px solid #fde68a !important;
+      box-shadow: none !important;
+      cursor: default !important;
+    }
+    .opm-apply-cta.is-member {
+      background: #dcfce7 !important;
+      color: #166534 !important;
+      border: 1px solid #bbf7d0 !important;
+      box-shadow: none !important;
+      cursor: default !important;
+    }
+
     /* -- Category Filter Pills -- */
     .cat-filter-pill {
       background: #f1f5f9;
@@ -1196,10 +1762,11 @@ foreach ($organizations['independent']['orgs'] as $o) {
       <button class="hamburger" id="hamburgerBtn" aria-label="Toggle sidebar"><i class="fa-solid fa-bars"></i></button>
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
-        <div class="search-wrap">
-          <input type="text" placeholder="Search pages, events..." autocomplete="off" />
-          <i class="fa-solid fa-magnifying-glass"></i>
-        </div>
+        <div class="search-wrap" id="topbarSearchWrap">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" placeholder="Search modules, events, clubs..." autocomplete="off" />
+        <button type="button" class="search-clear-btn" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
+      </div>
         <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i
             class="fa-solid fa-qrcode"></i></button>
         <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
@@ -1215,15 +1782,234 @@ foreach ($organizations['independent']['orgs'] as $o) {
     <div class="content">
       <div class="page-title-bar">
         <h2 class="page-title"><i class="fa-solid fa-sitemap"></i>
-          <?= $sess_role === 'club_adviser' ? 'My Organization & Directory' : 'BCP Accredited Organizations Directory' ?>
+          <?= $is_gov_role ? 'Organization Governance' : ($sess_role === 'club_adviser' ? 'My Organization & Directory' : 'BCP Accredited Organizations Directory') ?>
         </h2>
-        <div style="font-size:0.82rem; color:#64748b; margin-top:4px;">
-          <i class="fa-solid fa-building-columns" style="color:#2563eb;"></i>
-          <?php echo $total_count; ?> accredited organizations &mdash; Academic Year 2025&ndash;2026
-        </div>
       </div>
 
       <div class="content-body">
+
+        <?php if ($is_gov_role): ?>
+          <!-- ══════════════════════════════════════════════════════════════
+               2.2 ORGANIZATION GOVERNANCE MODULE (SSC Executive / Admin)
+               ══════════════════════════════════════════════════════════════ -->
+          <!-- Summary Cards Section (6 KPI tiles from specification) -->
+          <div class="gov-summary-grid">
+            
+            <!-- Card 1: Active Organizations -->
+            <div class="card gov-kpi-tile">
+              <div class="gov-kpi-header">
+                <span class="gov-kpi-title">Active Organizations</span>
+                <div class="gov-kpi-icon" style="background:#dcfce7; color:#16a34a;"><i class="fa-solid fa-circle-check"></i></div>
+              </div>
+              <div class="gov-kpi-body">
+                <span class="gov-kpi-value"><?= $active_orgs_count ?></span>
+              </div>
+              <span class="gov-kpi-desc">Recognized organizations currently active.</span>
+            </div>
+
+            <!-- Card 2: Pending Charters -->
+            <div class="card gov-kpi-tile">
+              <div class="gov-kpi-header">
+                <span class="gov-kpi-title">Pending Charters</span>
+                <div class="gov-kpi-icon" style="background:#dbeafe; color:#2563eb;"><i class="fa-solid fa-file-signature"></i></div>
+              </div>
+              <div class="gov-kpi-body">
+                <span class="gov-kpi-value"><?= $total_pending_charters ?></span>
+              </div>
+              <span class="gov-kpi-desc">Organizations awaiting charter / recognition review.</span>
+            </div>
+
+            <!-- Card 3: Suspended Organizations -->
+            <div class="card gov-kpi-tile">
+              <div class="gov-kpi-header">
+                <span class="gov-kpi-title">Suspended Organizations</span>
+                <div class="gov-kpi-icon" style="background:#fee2e2; color:#ef4444;"><i class="fa-solid fa-ban"></i></div>
+              </div>
+              <div class="gov-kpi-body">
+                <span class="gov-kpi-value"><?= $suspended_orgs_count ?></span>
+              </div>
+              <span class="gov-kpi-desc">Organizations temporarily restricted.</span>
+            </div>
+
+            <!-- Card 4: Organizations by Category -->
+            <div class="card gov-kpi-tile">
+              <div class="gov-kpi-header">
+                <span class="gov-kpi-title">Orgs by Category</span>
+                <div class="gov-kpi-icon" style="background:#ede9fe; color:#8b5cf6;"><i class="fa-solid fa-layer-group"></i></div>
+              </div>
+              <div class="gov-kpi-body">
+                <div class="gov-kpi-cat-grid">
+                  <?php if (empty($cat_counts)): ?>
+                    <div class="gov-cat-item" style="grid-column:1/-1;">
+                      <span class="gov-cat-name">General</span>
+                      <span class="gov-cat-pill">0</span>
+                    </div>
+                  <?php else: ?>
+                    <?php foreach ($cat_counts as $cat_key => $cat_num): ?>
+                      <div class="gov-cat-item" title="<?= htmlspecialchars($cat_key) ?>: <?= $cat_num ?>">
+                        <span class="gov-cat-name"><?= htmlspecialchars($cat_key) ?></span>
+                        <span class="gov-cat-pill"><?= $cat_num ?></span>
+                      </div>
+                    <?php endforeach; ?>
+                  <?php endif; ?>
+                </div>
+              </div>
+              <span class="gov-kpi-desc">Distribution by configured category.</span>
+            </div>
+
+            <!-- Card 5: Organizations Without Adviser -->
+            <div class="card gov-kpi-tile">
+              <div class="gov-kpi-header">
+                <span class="gov-kpi-title">Without Adviser</span>
+                <div class="gov-kpi-icon" style="background:#fef3c7; color:#f59e0b;"><i class="fa-solid fa-user-slash"></i></div>
+              </div>
+              <div class="gov-kpi-body">
+                <span class="gov-kpi-value"><?= $no_adviser_count ?></span>
+              </div>
+              <span class="gov-kpi-desc">Governance exception count.</span>
+            </div>
+
+            <!-- Card 6: Organizations With Expiring Documents / Warnings -->
+            <div class="card gov-kpi-tile">
+              <div class="gov-kpi-header">
+                <span class="gov-kpi-title">Compliance Warnings</span>
+                <div class="gov-kpi-icon" style="background:#fef3c7; color:#d97706;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+              </div>
+              <div class="gov-kpi-body">
+                <span class="gov-kpi-value"><?= $compliance_warning_count ?></span>
+              </div>
+              <span class="gov-kpi-desc">Compliance warning count.</span>
+            </div>
+          </div>
+
+          <?php if ($sess_role === 'admin'): ?>
+          <!-- Admin Charter Action Header -->
+          <div style="display:flex; justify-content:flex-end; align-items:center; margin-bottom:16px;">
+            <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px; white-space:nowrap;" onclick="openCharterModal()">
+              <i class="fa-solid fa-plus-circle"></i> Charter New Organization
+            </button>
+          </div>
+          <?php endif; ?>
+
+          <!-- ══════════════════════════════════════════════════════════════
+               ORGANIZATION GOVERNANCE REGISTRY TABLE (11 COLUMNS)
+               ══════════════════════════════════════════════════════════════ -->
+          <div class="card" id="govRegistrySection" style="margin-bottom:24px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+              <div>
+                <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-table-list" style="color:#2563eb;"></i> Organization Governance Registry</h3>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <input type="text" id="govTableSearch" placeholder="Search code, name, adviser..." style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; min-width:200px;" oninput="filterGovRegistryTable()"/>
+                <select id="govCategoryFilter" style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; font-weight:600; color:#334155;" onchange="filterGovRegistryTable()">
+                  <option value="all">All Categories</option>
+                  <option value="academic">Academic</option>
+                  <option value="cultural">Cultural</option>
+                  <option value="sports">Sports</option>
+                  <option value="advocacy">Advocacy</option>
+                  <option value="religious">Religious</option>
+                </select>
+                <select id="govStatusFilter" style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; font-weight:600; color:#334155;" onchange="filterGovRegistryTable()">
+                  <option value="all">All Statuses</option>
+                  <option value="active">Active</option>
+                  <option value="pending charter">Pending Charter</option>
+                  <option value="suspended">Suspended</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Responsive 11-column Governance Registry Table -->
+            <div class="table-wrap">
+              <table class="table-wide" id="orgGovernanceTable">
+                <thead>
+                  <tr>
+                    <th>Code</th>
+                    <th>Organization Name</th>
+                    <th>Category</th>
+                    <th>Program</th>
+                    <th>Adviser</th>
+                    <th style="text-align:center;">Members</th>
+                    <th style="text-align:center;">Status</th>
+                    <th style="text-align:center;">Charter</th>
+                    <th>Last Activity</th>
+                    <th style="text-align:center;">Compliance</th>
+                    <th class="gov-actions-head" style="text-align:center;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <?php if (empty($gov_clubs)): ?>
+                    <tr><td colspan="11" class="table-empty-cell">No organizations found in database.</td></tr>
+                  <?php else: ?>
+                    <?php foreach ($gov_clubs as $gc_idx => $gc): ?>
+                      <?php 
+                        $search_blob = strtolower($gc['code'] . ' ' . $gc['name'] . ' ' . $gc['category'] . ' ' . ($gc['program'] ?? '') . ' ' . ($gc['adviser_name'] ?? ''));
+                        $init_hidden = ($gc_idx >= 5);
+                      ?>
+                      <tr class="gov-registry-row<?= $init_hidden ? ' is-hidden' : '' ?>" <?= $init_hidden ? 'style="display:none !important;" ' : '' ?>data-search="<?= htmlspecialchars($search_blob, ENT_QUOTES) ?>" data-category="<?= htmlspecialchars(strtolower($gc['category']), ENT_QUOTES) ?>" data-status="<?= htmlspecialchars(strtolower($gc['status']), ENT_QUOTES) ?>">
+                        <td><code><?= htmlspecialchars($gc['code']) ?></code></td>
+                        <td><strong class="org-table-name"><?= htmlspecialchars($gc['name']) ?></strong></td>
+                        <td><span class="badge-info"><?= htmlspecialchars($gc['category']) ?></span></td>
+                        <td><span style="font-size:0.82rem; color:#475569;"><?= htmlspecialchars($gc['program'] ?: 'Institutional') ?></span></td>
+                        <td>
+                          <?php if (!empty($gc['adviser_name']) && $gc['adviser_name'] !== 'Unassigned'): ?>
+                            <span style="font-weight:600; color:#1e293b;"><?= htmlspecialchars($gc['adviser_name']) ?></span>
+                          <?php else: ?>
+                            <span style="color:#d97706; font-size:0.78rem; font-weight:700;"><i class="fa-solid fa-triangle-exclamation"></i> Unassigned</span>
+                          <?php endif; ?>
+                        </td>
+                        <td style="text-align:center;">
+                          <strong style="color:#0f172a;"><?= (int)$gc['member_count'] ?></strong> <span style="font-size:0.75rem; color:#64748b;">members</span>
+                        </td>
+                        <td style="text-align:center;">
+                          <?php if ($gc['status'] === 'Active'): ?>
+                            <span class="badge-active"><i class="fa-solid fa-circle-check"></i> Active</span>
+                          <?php elseif ($gc['status'] === 'Suspended'): ?>
+                            <span class="badge-danger" style="background:#fee2e2; color:#b91c1c; font-weight:700; padding:3px 8px; border-radius:12px; font-size:0.75rem;"><i class="fa-solid fa-ban"></i> Suspended</span>
+                          <?php else: ?>
+                            <span class="badge-warning"><?= htmlspecialchars($gc['status']) ?></span>
+                          <?php endif; ?>
+                        </td>
+                        <td style="text-align:center;"><?= $gc['charter_badge'] ?></td>
+                        <td>
+                          <span style="font-size:0.8rem; color:#475569;"><?= htmlspecialchars($gc['last_activity'] ?: 'No activity recorded') ?></span>
+                        </td>
+                        <td style="text-align:center;"><?= $gc['compliance_badge'] ?></td>
+                        <td class="gov-actions-col" style="text-align:center;">
+                          <div class="actions-group" style="justify-content:center;">
+                            <button type="button" class="card-btn" style="background:#2563eb; color:#fff;" onclick="openOrgProfile('<?= htmlspecialchars(addslashes($gc['code'])) ?>')" title="Inspect Organization Profile &amp; Governance Details">
+                              <i class="fa-solid fa-eye"></i> View
+                            </button>
+                            <a href="roster.php?view=roster&club_id=<?= $gc['id'] ?>&club_code=<?= urlencode($gc['code']) ?>" class="card-btn" style="background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;" title="View <?= htmlspecialchars($gc['code']) ?> Member Roster">
+                              <i class="fa-solid fa-users"></i> Roster
+                            </a>
+                          </div>
+                        </td>
+                      </tr>
+                    <?php endforeach; ?>
+                  <?php endif; ?>
+                  <tr id="govTableEmptyMsg" style="display:none;">
+                    <td colspan="11" class="table-empty-cell"><i class="fa-solid fa-circle-info"></i> No organizations match the current filter criteria.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Table Pagination Bar (5 records per page) -->
+            <div id="govPaginationWrap" class="pagination-toolbar" style="justify-content:flex-end;">
+              <div class="pagination-controls" style="margin-left:auto;">
+                <div class="pagination-buttons" id="govPaginationButtons">
+                  <!-- Dynamically rendered -->
+                </div>
+              </div>
+            </div>
+          </div>
+        <?php endif; ?>
+
+        <!-- ══════════════════════════════════════════════════════════════
+             DIRECTORY CARDS SECTION (General Students Only)
+             ══════════════════════════════════════════════════════════════ -->
+        <?php if (!$is_gov_role): ?>
+        <div id="orgDirectoryCardsSection">
 
         <?php if ($sess_role === 'club_adviser'): ?>
           <?php
@@ -1309,31 +2095,22 @@ foreach ($organizations['independent']['orgs'] as $o) {
             <div class="org-category-header">
               <div class="cat-icon"><i class="fa-solid fa-graduation-cap"></i></div>
               <div class="cat-info">
-                <div class="cat-title"><?php echo htmlspecialchars($organizations['academic']['label']); ?></div>
-                <div class="cat-sub"><?php echo htmlspecialchars($organizations['academic']['sub']); ?></div>
+                <div class="cat-title">LEAGUE OF ORGANIZATIONAL CHAIRPERSONS (LOC)</div>
+                <div class="cat-sub">Academic Organizations</div>
               </div>
-              <span class="cat-count"><?php echo count($organizations['academic']['orgs']); ?> orgs</span>
+              <span class="cat-count"><?php echo count($academic_orgs); ?> orgs</span>
             </div>
             <div class="org-subcategory">
               <div class="org-cards-grid">
-                <?php foreach ($organizations['academic']['orgs'] as $org): ?>
+                <?php foreach ($academic_orgs as $org): ?>
                   <div class="org-card"
-                    data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>">
+                    data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
+                    data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>">
                     <span class="org-card-acronym"><?php echo htmlspecialchars($org['acronym']); ?></span>
                     <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                     <div class="org-card-type"><i class="fa-solid fa-circle-dot"
                         style="color:#2563eb;font-size:.6rem;"></i> Academic Organization</div>
-                    <?php if ($can_apply): ?>
-                      <button class="org-card-qr-btn"
-                        onclick="openAppForm('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
-                        <i class="fa-solid fa-user-plus"></i> Apply Now
-                      </button>
-                    <?php else: ?>
-                      <button class="org-card-qr-btn" style="background:#f1f5f9;color:#64748b;border-color:#e2e8f0;"
-                        onclick="openOrgProfile('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
-                        <i class="fa-solid fa-eye"></i> View Profile
-                      </button>
-                    <?php endif; ?>
+                    <?php echo renderOrgCardButton($org, $can_apply, $db_clubs, $student_applications); ?>
                   </div>
                 <?php endforeach; ?>
               </div>
@@ -1346,44 +2123,37 @@ foreach ($organizations['independent']['orgs'] as $o) {
               style="background:#1a3a8c;">
               <div class="cat-icon"><i class="fa-solid fa-star"></i></div>
               <div class="cat-info">
-                <div class="cat-title"><?php echo htmlspecialchars($organizations['talent']['label']); ?></div>
-                <div class="cat-sub"><?php echo htmlspecialchars($organizations['talent']['sub']); ?></div>
+                <div class="cat-title">CENTER FOR TALENT AND CULTURAL EMPOWERMENT (CTCE)</div>
+                <div class="cat-sub">Non-Academic Organizations</div>
               </div>
               <span class="cat-count"><?php echo $talent_count; ?> orgs</span>
             </div>
-            <?php foreach ($organizations['talent']['subcategories'] as $subcat): ?>
-              <div class="org-subcategory">
-                <div class="org-subcategory-label">
-                  <i class="fa-solid fa-chevron-right" style="color:#2563eb;font-size:.6rem;"></i>
-                  <?php echo htmlspecialchars($subcat['label']); ?>
-                  <span
-                    style="background:#eff6ff;color:#2563eb;border-radius:12px;padding:2px 8px;font-size:.65rem;margin-left:4px;"><?php echo count($subcat['orgs']); ?></span>
-                </div>
-                <div class="org-cards-grid">
-                  <?php foreach ($subcat['orgs'] as $org): ?>
-                    <div class="org-card"
-                      data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>">
-                      <span class="org-card-acronym"
-                        style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
-                      <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
-                      <div class="org-card-type"><i class="fa-solid fa-circle-dot"
-                          style="color:#2563eb;font-size:.6rem;"></i> <?php echo htmlspecialchars($subcat['label']); ?>
+            <?php foreach ($talent_subcategories as $subcat_label => $subcat_orgs): ?>
+              <?php if (!empty($subcat_orgs)): ?>
+                <div class="org-subcategory">
+                  <div class="org-subcategory-label">
+                    <i class="fa-solid fa-chevron-right" style="color:#2563eb;font-size:.6rem;"></i>
+                    <?php echo htmlspecialchars($subcat_label); ?>
+                    <span
+                      style="background:#eff6ff;color:#2563eb;border-radius:12px;padding:2px 8px;font-size:.65rem;margin-left:4px;"><?php echo count($subcat_orgs); ?></span>
+                  </div>
+                  <div class="org-cards-grid">
+                    <?php foreach ($subcat_orgs as $org): ?>
+                      <div class="org-card"
+                        data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
+                        data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>">
+                        <span class="org-card-acronym"
+                          style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
+                        <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
+                        <div class="org-card-type"><i class="fa-solid fa-circle-dot"
+                            style="color:#2563eb;font-size:.6rem;"></i> <?php echo htmlspecialchars($subcat_label); ?>
+                        </div>
+                        <?php echo renderOrgCardButton($org, $can_apply, $db_clubs, $student_applications); ?>
                       </div>
-                      <?php if ($can_apply): ?>
-                        <button class="org-card-qr-btn"
-                          onclick="openAppForm('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
-                          <i class="fa-solid fa-user-plus"></i> Apply Now
-                        </button>
-                      <?php else: ?>
-                        <button class="org-card-qr-btn" style="background:#f1f5f9;color:#64748b;border-color:#e2e8f0;"
-                          onclick="openOrgProfile('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
-                          <i class="fa-solid fa-eye"></i> View Profile
-                        </button>
-                      <?php endif; ?>
-                    </div>
-                  <?php endforeach; ?>
+                    <?php endforeach; ?>
+                  </div>
                 </div>
-              </div>
+              <?php endif; ?>
             <?php endforeach; ?>
           </div>
 
@@ -1393,32 +2163,23 @@ foreach ($organizations['independent']['orgs'] as $o) {
               style="background:#1a3a8c;">
               <div class="cat-icon"><i class="fa-solid fa-seedling"></i></div>
               <div class="cat-info">
-                <div class="cat-title"><?php echo htmlspecialchars($organizations['independent']['label']); ?></div>
-                <div class="cat-sub"><?php echo htmlspecialchars($organizations['independent']['sub']); ?></div>
+                <div class="cat-title">INDEPENDENT ORGANIZATIONS</div>
+                <div class="cat-sub">Campus-Wide Independent Bodies</div>
               </div>
-              <span class="cat-count"><?php echo count($organizations['independent']['orgs']); ?> orgs</span>
+              <span class="cat-count"><?php echo count($independent_orgs); ?> orgs</span>
             </div>
             <div class="org-subcategory">
               <div class="org-cards-grid">
-                <?php foreach ($organizations['independent']['orgs'] as $org): ?>
+                <?php foreach ($independent_orgs as $org): ?>
                   <div class="org-card"
-                    data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>">
+                    data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
+                    data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>">
                     <span class="org-card-acronym"
                       style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
                     <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                     <div class="org-card-type"><i class="fa-solid fa-circle-dot"
                         style="color:#2563eb;font-size:.6rem;"></i> Independent Organization</div>
-                    <?php if ($can_apply): ?>
-                      <button class="org-card-qr-btn"
-                        onclick="openAppForm('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
-                        <i class="fa-solid fa-user-plus"></i> Apply Now
-                      </button>
-                    <?php else: ?>
-                      <button class="org-card-qr-btn" style="background:#f1f5f9;color:#64748b;border-color:#e2e8f0;"
-                        onclick="openOrgProfile('<?php echo htmlspecialchars($org['acronym'], ENT_QUOTES); ?>')">
-                        <i class="fa-solid fa-eye"></i> View Profile
-                      </button>
-                    <?php endif; ?>
+                    <?php echo renderOrgCardButton($org, $can_apply, $db_clubs, $student_applications); ?>
                   </div>
                 <?php endforeach; ?>
               </div>
@@ -1436,6 +2197,8 @@ foreach ($organizations['independent']['orgs'] as $o) {
           </div>
 
         </div><!-- end #orgDirectory -->
+      </div><!-- end #orgDirectoryCardsSection -->
+      <?php endif; ?>
       </div>
     </div>
     <div class="footer">eLearning Commons &copy; 2026</div>
@@ -1464,6 +2227,10 @@ foreach ($organizations['independent']['orgs'] as $o) {
         <div class="opm-section-label"><i class="fa-solid fa-circle-info"></i> About</div>
         <div class="opm-description" id="opmDescription"></div>
 
+        <!-- Adviser -->
+        <div class="opm-section-label"><i class="fa-solid fa-user-tie"></i> Faculty Adviser</div>
+        <div class="opm-description" id="opmAdviser" style="margin-bottom:18px; font-weight:700; color:#1e3a8a;"></div>
+
         <!-- Achievements -->
         <div class="opm-section-label"><i class="fa-solid fa-trophy"></i> Achievements</div>
         <ul class="opm-achievements" id="opmAchievements"></ul>
@@ -1481,10 +2248,13 @@ foreach ($organizations['independent']['orgs'] as $o) {
           Submit Your Application
         </button>
       <?php else: ?>
-        <div
-          style="margin:6px 26px 24px; padding:12px 20px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; color:#64748b; font-size:0.85rem; text-align:center;">
-          <i class="fa-solid fa-info-circle" style="color:#94a3b8;"></i>
-          Organization applications are for students only.
+        <div style="margin:6px 26px 24px; display:flex; gap:10px; flex-wrap:wrap;">
+          <a href="roster.php?view=roster" id="opmRosterLinkBtn" class="card-btn" style="flex:1; justify-content:center; text-align:center; text-decoration:none; background:#2563eb; color:#fff; font-weight:700; padding:12px 20px; border-radius:12px; font-size:0.9rem; display:inline-flex; align-items:center; gap:8px;">
+            <i class="fa-solid fa-users"></i> View Member Roster
+          </a>
+          <a href="roster.php?view=queue" id="opmQueueLinkBtn" class="card-btn" style="text-decoration:none; background:#f1f5f9; color:#334155; border:1px solid #cbd5e1; font-weight:600; padding:12px 18px; border-radius:12px; font-size:0.85rem; display:inline-flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-list-check"></i> Review Queue
+          </a>
         </div>
       <?php endif; ?>
 
@@ -1556,21 +2326,15 @@ foreach ($organizations['independent']['orgs'] as $o) {
         <div class="afm-success-icon"><i class="fa-solid fa-circle-check"></i></div>
         <h3>Application Submitted!</h3>
         <p>Your membership application has been received. The organization will review your application and contact you
-          via email within 3Â–5 business days.</p>
-        <button class="afm-btn-download" id="afmSuccessDownloadBtn" style="margin-top:6px;">
-          <i class="fa-solid fa-file-pdf"></i> Download PDF Copy
-        </button>
-        <button class="afm-btn-submit" onclick="closeAppForm()" style="max-width:240px; margin-top:4px;">
+          via email within 3–5 business days.</p>
+        <button class="afm-btn-submit" onclick="closeAppForm()" style="max-width:240px; margin:16px auto 0;">
           <i class="fa-solid fa-check"></i> Done
         </button>
       </div>
 
       <!-- Sticky Footer Actions -->
       <div class="afm-footer" id="afmFooter">
-        <button class="afm-btn-download" id="afmDownloadBtn">
-          <i class="fa-solid fa-file-pdf"></i> Download PDF
-        </button>
-        <button class="afm-btn-submit" id="afmSubmitBtn">
+        <button class="afm-btn-submit" id="afmSubmitBtn" style="width:100%;">
           <i class="fa-solid fa-paper-plane"></i> Submit Application
         </button>
       </div>
@@ -1579,10 +2343,11 @@ foreach ($organizations['independent']['orgs'] as $o) {
   </div>
 
 
-  <script src="../js/dashboard.js"></script>
+  <script src="../js/dashboard.js?v=<?= filemtime(__DIR__ . '/../js/dashboard.js') ?>"></script>
   <script>
     // -- Org data from PHP -----------------------------------------
     const ORG_DATA = <?php echo json_encode($all_orgs, JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+    const STUDENT_STATUSES = <?php echo json_encode($student_org_statuses, JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
     const studentDb = <?php echo json_encode($student_info ?? [
       'first_name' => $sess_first,
       'last_name' => $sess_last,
@@ -1595,6 +2360,26 @@ foreach ($organizations['independent']['orgs'] as $o) {
       'birthday' => ''
     ], JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
     let currentOrg = null; // { acronym, ...data }
+
+    // Helper to dynamically reflect 'Waiting for Approval' on the org card
+    function updateOrgCardToPending(acronym) {
+      if (!acronym) return;
+      const cards = document.querySelectorAll(`.org-card[data-acronym="${acronym}"]`);
+      cards.forEach(card => {
+        const btn = card.querySelector('.org-card-qr-btn');
+        if (btn) {
+          btn.className = 'org-card-qr-btn org-status-pending';
+          btn.disabled = true;
+          btn.removeAttribute('onclick');
+          btn.style.background = '#fffbeb';
+          btn.style.borderColor = '#fde68a';
+          btn.style.color = '#b45309';
+          btn.style.cursor = 'default';
+          btn.title = 'Your application has been submitted and is awaiting adviser review.';
+          btn.innerHTML = '<i class="fa-solid fa-clock"></i> Waiting for Approval';
+        }
+      });
+    }
 
     // -- CATEGORY & SEARCH FILTERS ---------------------------------
     let currentCategory = 'all';
@@ -1684,28 +2469,53 @@ foreach ($organizations['independent']['orgs'] as $o) {
 
     // -- OPEN ORG PROFILE MODAL ------------------------------------
     function openOrgProfile(acronym) {
-      const data = ORG_DATA[acronym];
-      if (!data) return;
+      if (!acronym) return;
+      let data = (typeof ORG_DATA !== 'undefined' && ORG_DATA) ? ORG_DATA[acronym] : null;
+      if (!data && typeof ORG_DATA !== 'undefined' && ORG_DATA) {
+        // Fallback: search case-insensitively or by clean alphanumeric key or by club name
+        const cleanAcr = String(acronym).replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+        const matchKey = Object.keys(ORG_DATA).find(k => 
+          k.toLowerCase() === String(acronym).toLowerCase() || 
+          k.replace(/[^A-Za-z0-9]/g, '').toLowerCase() === cleanAcr ||
+          (ORG_DATA[k] && ORG_DATA[k].name && ORG_DATA[k].name.toLowerCase() === String(acronym).toLowerCase())
+        );
+        if (matchKey) {
+          data = ORG_DATA[matchKey];
+          acronym = matchKey;
+        }
+      }
+
+      if (!data) {
+        console.warn('Organization profile data not found for:', acronym);
+        return;
+      }
       currentOrg = { acronym, ...data };
 
       // Hero
       const hero = document.getElementById('opmHero');
-      if (hero) hero.style.background = data.color;
+      if (hero) hero.style.background = data.color || '#1a3a8c';
       const acrEl = document.getElementById('opmAcronym');
       if (acrEl) acrEl.textContent = acronym;
       const titEl = document.getElementById('opmTitle');
-      if (titEl) titEl.textContent = data.name;
+      if (titEl) titEl.textContent = data.name || acronym;
       const catEl = document.getElementById('opmCategory');
-      if (catEl && catEl.querySelector('span')) catEl.querySelector('span').textContent = data.category;
+      if (catEl && catEl.querySelector('span')) catEl.querySelector('span').textContent = data.category || 'Accredited Organization';
 
       // Description
       const descEl = document.getElementById('opmDescription');
-      if (descEl) descEl.textContent = data.profile.desc;
+      if (descEl) descEl.textContent = (data.profile && data.profile.desc) ? data.profile.desc : 'Official accredited student organization dedicated to student empowerment and academic excellence.';
+
+      // Adviser
+      const advEl = document.getElementById('opmAdviser');
+      if (advEl) advEl.textContent = (data.profile && data.profile.adviser) ? data.profile.adviser : 'Prof. BCP Faculty Adviser';
 
       // Achievements
       const achList = document.getElementById('opmAchievements');
       if (achList) {
-        achList.innerHTML = data.profile.achievements.map(a =>
+        const achs = (data.profile && Array.isArray(data.profile.achievements) && data.profile.achievements.length) 
+          ? data.profile.achievements 
+          : ['BCP Accredited Organization AY 2025-2026', 'Supreme Student Council Charter Recognition'];
+        achList.innerHTML = achs.map(a =>
           `<li><i class="fa-solid fa-medal"></i> ${a}</li>`
         ).join('');
       }
@@ -1713,15 +2523,50 @@ foreach ($organizations['independent']['orgs'] as $o) {
       // Officers
       const officersGrid = document.getElementById('opmOfficers');
       if (officersGrid) {
-        officersGrid.innerHTML = data.profile.officers.map(o => {
-          const initials = o.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
-          return `
-        <div class="opm-officer-card">
-          <div class="opm-officer-avatar" style="background:${data.color};">${initials}</div>
-          <div class="opm-officer-name">${o.name}</div>
-          <div class="opm-officer-pos">${o.pos}</div>
-        </div>`;
-        }).join('');
+        const offs = (data.profile && Array.isArray(data.profile.officers)) ? data.profile.officers : [];
+        if (offs.length === 0) {
+          officersGrid.innerHTML = '<div style="color:#64748b; font-size:0.8rem; font-style:italic; padding:6px 0;">No active student officers recorded yet.</div>';
+        } else {
+          officersGrid.innerHTML = offs.map(o => {
+            const initials = (o.name || 'O').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+            return `
+          <div class="opm-officer-card">
+            <div class="opm-officer-avatar" style="background:${data.color || '#1a3a8c'};">${initials}</div>
+            <div class="opm-officer-name">${o.name || ''}</div>
+            <div class="opm-officer-pos">${o.pos || 'Officer'}</div>
+          </div>`;
+          }).join('');
+        }
+      }
+
+      // Check application / membership status for the profile CTA button
+      const applyBtn = document.getElementById('opmApplyBtn');
+      if (applyBtn) {
+        const status = (typeof STUDENT_STATUSES !== 'undefined' && STUDENT_STATUSES[acronym]) ? STUDENT_STATUSES[acronym] : null;
+        if (status === 'Pending') {
+          applyBtn.disabled = true;
+          applyBtn.className = 'opm-apply-cta is-pending';
+          applyBtn.innerHTML = '<i class="fa-solid fa-clock"></i> Waiting for Approval';
+        } else if (status === 'Active') {
+          applyBtn.disabled = true;
+          applyBtn.className = 'opm-apply-cta is-member';
+          applyBtn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Active Member';
+        } else {
+          // If rejected or not applied, regular old state
+          applyBtn.disabled = false;
+          applyBtn.className = 'opm-apply-cta';
+          applyBtn.innerHTML = '<i class="fa-solid fa-file-pen"></i> Submit Your Application';
+        }
+      }
+
+      // Wire direct links for Admin & SSC in the modal
+      const rosterLink = document.getElementById('opmRosterLinkBtn');
+      if (rosterLink) {
+        rosterLink.href = 'roster.php?view=roster&club_code=' + encodeURIComponent(acronym);
+      }
+      const queueLink = document.getElementById('opmQueueLinkBtn');
+      if (queueLink) {
+        queueLink.href = 'roster.php?view=queue&filter_org=' + encodeURIComponent(acronym);
       }
 
       const profOverlay = document.getElementById('orgProfileOverlay');
@@ -1752,6 +2597,15 @@ foreach ($organizations['independent']['orgs'] as $o) {
     // Apply CTA button in profile modal -> close profile, open application form
     document.getElementById('opmApplyBtn')?.addEventListener('click', () => {
       if (currentOrg) {
+        const status = (typeof STUDENT_STATUSES !== 'undefined' && STUDENT_STATUSES[currentOrg.acronym]) ? STUDENT_STATUSES[currentOrg.acronym] : null;
+        if (status === 'Pending') {
+          showToast('Your application for this organization is already awaiting adviser review.', 'info');
+          return;
+        }
+        if (status === 'Active') {
+          showToast('You are already an active member of this organization.', 'info');
+          return;
+        }
         openAppForm(currentOrg.acronym);
       } else {
         openAppForm();
@@ -1760,6 +2614,18 @@ foreach ($organizations['independent']['orgs'] as $o) {
 
     // -- OPEN APPLICATION FORM MODAL -------------------------------
     function openAppForm(acronym) {
+      if (acronym && typeof STUDENT_STATUSES !== 'undefined') {
+        const status = STUDENT_STATUSES[acronym];
+        if (status === 'Pending') {
+          showToast('Your application for this organization is already awaiting adviser review.', 'info');
+          return;
+        }
+        if (status === 'Active') {
+          showToast('You are already an active member of this organization.', 'info');
+          return;
+        }
+      }
+
       if (acronym && ORG_DATA[acronym]) {
         currentOrg = { acronym, ...ORG_DATA[acronym] };
       } else if (acronym) {
@@ -1906,12 +2772,19 @@ foreach ($organizations['independent']['orgs'] as $o) {
     }
 
     // -- SUBMIT HANDLER (Real AJAX with Files) ---------------------
-    document.getElementById('afmSubmitBtn')?.addEventListener('click', function () {
+    document.getElementById('afmSubmitBtn')?.addEventListener('click', async function () {
       if (!validateForm()) return;
 
       const clubId = currentOrg ? (currentOrg.club_id || 0) : 0;
       const orgAcr = currentOrg ? (currentOrg.acronym || '') : '';
       const orgName = currentOrg ? (currentOrg.name || '') : '';
+
+      const confirmed = await window.showConfirmModal(
+        'Submit Membership Application?',
+        `Do you want to submit your membership application to ${orgName || 'this organization'}? Your application will be sent to the club adviser for verification.`,
+        { type: 'info', confirmText: 'Yes, Submit Application' }
+      );
+      if (!confirmed) return;
 
       this.disabled = true;
       this.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting...';
@@ -1938,7 +2811,14 @@ foreach ($organizations['independent']['orgs'] as $o) {
             document.getElementById('afmFormBody').style.display = 'none';
             document.getElementById('afmFooter').style.display = 'none';
             document.getElementById('afmSuccess').classList.add('active');
-            document.getElementById('afmSuccessDownloadBtn').onclick = generatePDF;
+
+            // Dynamically update card to 'Waiting for Approval' state
+            if (currentOrg && currentOrg.acronym) {
+              if (typeof STUDENT_STATUSES !== 'undefined') {
+                STUDENT_STATUSES[currentOrg.acronym] = 'Pending';
+              }
+              updateOrgCardToPending(currentOrg.acronym);
+            }
           } else {
             showToast(data.message || 'Submission failed. Please try again.', 'error');
           }
@@ -1950,155 +2830,35 @@ foreach ($organizations['independent']['orgs'] as $o) {
         });
     });
 
-    // -- PDF GENERATION --------------------------------------------
-    document.getElementById('afmDownloadBtn')?.addEventListener('click', generatePDF);
 
-    function generatePDF() {
-      if (typeof window.jspdf === 'undefined' && typeof jsPDF === 'undefined') {
-        showToast('PDF library not loaded. Please check your internet connection.', 'error');
-        return;
-      }
+    async function openBroadcastModal(clubId, orgName) {
+      const titleDecision = await window.showDecisionModal({
+        title: 'Broadcast Announcement',
+        message: `Do you want to post an official broadcast announcement for ${orgName}?`,
+        badge: 'Official Broadcast',
+        badgeType: 'info',
+        inputLabel: 'Announcement Title',
+        inputPlaceholder: 'Enter clear headline...',
+        inputRequired: true,
+        confirmText: 'Next: Enter Content',
+        confirmClass: 'btn-modal-primary'
+      });
+      if (!titleDecision.confirmed || !titleDecision.reason.trim()) return;
+      const title = titleDecision.reason.trim();
 
-      const { jsPDF } = window.jspdf || { jsPDF };
-      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-
-      const orgName = currentOrg ? `${currentOrg.acronym} - ${currentOrg.name}` : 'Organization';
-      const fName = studentDb.first_name || '';
-      const lName = studentDb.last_name || '';
-      const mName = '';
-      const dob = studentDb.birthday || '';
-      const sex = '';
-      const contact = studentDb.phone || '';
-      const email = studentDb.email || '';
-      const address = '';
-      const studId = studentDb.student_number || '';
-      const year = studentDb.year_level || '';
-      const course = studentDb.course || '';
-      const section = studentDb.section || '';
-      const skills = document.getElementById('afmSkills')?.value.trim() || '';
-      const motiv = document.getElementById('afmMotivation')?.value.trim() || '';
-
-      const intentFile = document.getElementById('afmLetterIntent')?.files[0]?.name || 'Attached';
-      const endorsementFile = document.getElementById('afmLetterEndorsement')?.files[0]?.name || 'Attached';
-
-      const pageW = 210, margin = 18, colW = pageW - margin * 2;
-      let y = 0;
-
-      // Header band
-      doc.setFillColor(26, 58, 140);
-      doc.rect(0, 0, pageW, 38, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(14);
-      doc.text('BCP CO-CURRICULAR MANAGEMENT SYSTEM', pageW / 2, 13, { align: 'center' });
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'normal');
-      doc.text('Membership Application Form', pageW / 2, 20, { align: 'center' });
-      doc.setFontSize(8);
-      doc.text(orgName, pageW / 2, 27, { align: 'center' });
-      doc.text('Academic Year 2025-2026', pageW / 2, 33, { align: 'center' });
-
-      // Reset text color
-      doc.setTextColor(30, 30, 30);
-      y = 46;
-
-      function sectionHeader(title) {
-        doc.setFillColor(239, 246, 255);
-        doc.setDrawColor(191, 219, 254);
-        doc.rect(margin, y, colW, 7, 'FD');
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(26, 58, 140);
-        doc.text(title.toUpperCase(), margin + 3, y + 5);
-        doc.setTextColor(30, 30, 30);
-        y += 10;
-      }
-
-      function field(label, value, x, fieldWidth) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7);
-        doc.setTextColor(100, 116, 139);
-        doc.text(label, x, y);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9);
-        doc.setTextColor(15, 23, 42);
-        const lines = doc.splitTextToSize(value || '-', fieldWidth - 2);
-        doc.text(lines, x, y + 4.5);
-        return Math.max(lines.length * 4.5 + 4.5, 9);
-      }
-
-      function twoFields(l1, v1, l2, v2) {
-        const half = colW / 2 - 3;
-        const h = Math.max(field(l1, v1, margin, half), field(l2, v2, margin + half + 6, half));
-        y += h + 5;
-      }
-
-      function oneField(label, value) {
-        field(label, value, margin, colW);
-        const lines = doc.splitTextToSize(value || '-', colW - 2);
-        y += Math.max(lines.length * 4.5 + 4.5, 9) + 5;
-      }
-
-      // PERSONAL INFO
-      sectionHeader('Personal Information');
-      twoFields('First Name', fName, 'Last Name', lName);
-      twoFields('Middle Name', mName, 'Date of Birth', dob);
-      twoFields('Sex', sex, 'Contact Number', contact);
-      oneField('Email Address', email);
-      oneField('Permanent Address', address);
-
-      // ACADEMIC INFO
-      y += 2; sectionHeader('Academic Information');
-      twoFields('Student ID', studId, 'Year Level', year);
-      twoFields('Program / Course', course, 'Section', section);
-
-      // SKILLS & MOTIVATION
-      y += 2; sectionHeader('Skills & Motivation');
-      oneField('Skills & Competencies', skills);
-      oneField('Motivation for Joining', motiv);
-
-      // SUBMITTED DOCUMENTS
-      y += 2; sectionHeader('Attached Documents');
-      twoFields('Letter of Intent', intentFile, 'Letter of Endorsement', endorsementFile);
-
-      // DECLARATION
-      y += 2; sectionHeader('Declaration & Agreement');
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(60, 60, 60);
-      doc.text('I certify that all information provided above is true and accurate. I agree to abide by the BCP Student', margin, y);
-      doc.text('Handbook and the organization\'s constitution and by-laws.', margin, y + 4);
-      y += 14;
-
-      doc.setDrawColor(180, 180, 180);
-      doc.line(margin, y, margin + 70, y);
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text('Applicant Signature over Printed Name', margin, y + 4);
-
-      // Footer
-      const now = new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
-      doc.setFontSize(7);
-      doc.setTextColor(150, 150, 150);
-      doc.text(`Date Filed: ${now}`, pageW - margin, y + 4, { align: 'right' });
-
-      doc.setFillColor(26, 58, 140);
-      doc.rect(0, 287, pageW, 10, 'F');
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(7);
-      doc.text('Bestlink College of the Philippines - Co-Curricular Management System', pageW / 2, 293, { align: 'center' });
-
-      const filename = `${(currentOrg?.acronym || 'ORG').replace(/[^a-zA-Z0-9]/g, '_')}_Application_${fName}_${lName}.pdf`;
-      doc.save(filename);
-      showToast('PDF downloaded successfully!', 'success');
-    }
-
-
-    function openBroadcastModal(clubId, orgName) {
-      const title = prompt(`Post Official Announcement for ${orgName}:\nTitle:`);
-      if (!title) return;
-      const message = prompt(`Announcement Details / Content:`);
-      if (!message) return;
+      const bodyDecision = await window.showDecisionModal({
+        title: 'Announcement Content',
+        message: `Enter the full announcement text for "${title}":`,
+        badge: 'Details',
+        badgeType: 'info',
+        inputLabel: 'Announcement Body',
+        inputPlaceholder: 'Type announcement content for all organization members...',
+        inputRequired: true,
+        confirmText: 'Publish Announcement',
+        confirmClass: 'btn-modal-primary'
+      });
+      if (!bodyDecision.confirmed || !bodyDecision.reason.trim()) return;
+      const message = bodyDecision.reason.trim();
 
       const formData = new FormData();
       formData.append('action', 'broadcast');
@@ -2106,16 +2866,17 @@ foreach ($organizations['independent']['orgs'] as $o) {
       formData.append('title', title);
       formData.append('message', message);
 
-      fetch('../shared/notification_actions.php', { method: 'POST', body: formData })
-        .then(res => res.json())
-        .then(data => {
-          if (data.success) {
-            alert('Announcement successfully posted to active organization members!');
-          } else {
-            alert('Error: ' + data.message);
-          }
-        })
-        .catch(() => alert('Network error.'));
+      try {
+        const res = await fetch('../shared/notification_actions.php', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+          window.alert('Announcement successfully posted to active organization members!', 'success');
+        } else {
+          window.alert('Error: ' + data.message, 'error');
+        }
+      } catch {
+        window.alert('Network error posting announcement.', 'error');
+      }
     }
 
     // -- CHARTER NEW ORGANIZATION (SSC & Admin) ---------------------
@@ -2141,6 +2902,124 @@ foreach ($organizations['independent']['orgs'] as $o) {
           }
         })
         .catch(() => alert('Network error.'));
+    }
+
+    // -- GOVERNANCE REGISTRY PAGINATION & FILTER SYSTEM (5 records/page)
+    let govCurrentPage = 1;
+    const GOV_PAGE_SIZE = 5;
+
+    function getMatchingGovRows() {
+      const query = (document.getElementById('govTableSearch')?.value || '').toLowerCase().trim();
+      const cat = (document.getElementById('govCategoryFilter')?.value || 'all').toLowerCase();
+      const status = (document.getElementById('govStatusFilter')?.value || 'all').toLowerCase();
+
+      const allRows = Array.from(document.querySelectorAll('.gov-registry-row'));
+      return allRows.filter(row => {
+        const rowSearch = (row.getAttribute('data-search') || '').toLowerCase();
+        const rowCat = (row.getAttribute('data-category') || '').toLowerCase();
+        const rowStatus = (row.getAttribute('data-status') || '').toLowerCase();
+
+        const matchesQuery = !query || rowSearch.includes(query);
+        const matchesCat = cat === 'all' || rowCat === cat;
+        const matchesStatus = status === 'all' || rowStatus === status;
+
+        return matchesQuery && matchesCat && matchesStatus;
+      });
+    }
+
+    function renderGovTablePage() {
+      const allRows = document.querySelectorAll('.gov-registry-row');
+      if (!allRows.length) return;
+
+      const matchingRows = getMatchingGovRows();
+      const total = matchingRows.length;
+      const totalPages = Math.ceil(total / GOV_PAGE_SIZE) || 1;
+
+      if (govCurrentPage > totalPages) govCurrentPage = totalPages;
+      if (govCurrentPage < 1) govCurrentPage = 1;
+
+      const startIndex = (govCurrentPage - 1) * GOV_PAGE_SIZE;
+      const endIndex = Math.min(startIndex + GOV_PAGE_SIZE, total);
+
+      // Hide all rows with both is-hidden class and display none
+      allRows.forEach(r => {
+        r.style.setProperty('display', 'none', 'important');
+        r.classList.add('is-hidden');
+      });
+
+      // Display slice for current page
+      for (let i = startIndex; i < endIndex; i++) {
+        if (matchingRows[i]) {
+          matchingRows[i].style.removeProperty('display');
+          matchingRows[i].classList.remove('is-hidden');
+        }
+      }
+
+      // Empty state
+      const emptyMsg = document.getElementById('govTableEmptyMsg');
+      if (emptyMsg) {
+        emptyMsg.style.display = total === 0 ? '' : 'none';
+      }
+
+      // Update info labels
+      const startEl = document.getElementById('govPageStart');
+      const endEl = document.getElementById('govPageEnd');
+      const totalEl = document.getElementById('govTotalCount');
+      if (startEl) startEl.textContent = total === 0 ? 0 : startIndex + 1;
+      if (endEl) endEl.textContent = endIndex;
+      if (totalEl) totalEl.textContent = total;
+
+      // Render pagination buttons
+      renderGovPaginationControls(totalPages);
+
+      // Re-apply responsive mobile card labels
+      if (typeof window.initResponsiveTables === 'function') {
+        window.initResponsiveTables();
+      }
+    }
+
+    function renderGovPaginationControls(totalPages) {
+      const container = document.getElementById('govPaginationButtons');
+      if (!container) return;
+
+      let html = '';
+      const prevDisabled = govCurrentPage <= 1 ? 'disabled' : '';
+      html += `<button type="button" class="card-btn btn-sm pagination-btn prev-btn ${govCurrentPage <= 1 ? 'disabled' : ''}" onclick="goToGovPage(${govCurrentPage - 1})" ${prevDisabled}><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
+
+      for (let p = 1; p <= totalPages; p++) {
+        if (p === govCurrentPage) {
+          html += `<button type="button" class="card-btn btn-sm pagination-btn page-num-btn active">${p}</button>`;
+        } else if (p === 1 || p === totalPages || (p >= govCurrentPage - 1 && p <= govCurrentPage + 1)) {
+          html += `<button type="button" class="card-btn btn-sm pagination-btn page-num-btn" onclick="goToGovPage(${p})">${p}</button>`;
+        } else if (p === govCurrentPage - 2 || p === govCurrentPage + 2) {
+          html += `<span class="pagination-ellipsis">...</span>`;
+        }
+      }
+
+      const nextDisabled = govCurrentPage >= totalPages ? 'disabled' : '';
+      html += `<button type="button" class="card-btn btn-sm pagination-btn next-btn ${govCurrentPage >= totalPages ? 'disabled' : ''}" onclick="goToGovPage(${govCurrentPage + 1})" ${nextDisabled}>Next <i class="fa-solid fa-chevron-right"></i></button>`;
+
+      container.innerHTML = html;
+    }
+
+    function goToGovPage(page) {
+      govCurrentPage = page;
+      renderGovTablePage();
+      const tblWrap = document.getElementById('orgGovernanceTable');
+      if (tblWrap) {
+        tblWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function filterGovRegistryTable() {
+      govCurrentPage = 1;
+      renderGovTablePage();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', renderGovTablePage);
+    } else {
+      renderGovTablePage();
     }
   </script>
 

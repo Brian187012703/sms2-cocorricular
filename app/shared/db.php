@@ -3,6 +3,11 @@
 //  DB.PHP — Database Connection & Environment Loader
 // ============================================================
 
+// Bestlink College of the Philippines timezone synchronization
+if (date_default_timezone_get() !== 'Asia/Manila') {
+    date_default_timezone_set('Asia/Manila');
+}
+
 // 1. Load environment variables from .env if available
 $envFile = dirname(__DIR__, 2) . '/.env';
 if (file_exists($envFile)) {
@@ -15,7 +20,7 @@ if (file_exists($envFile)) {
                 list($key, $val) = explode('=', $line, 2);
                 $key = trim($key);
                 $val = trim($val, " \t\n\r\0\x0B\"'");
-                if (!array_key_exists($key, $_SERVER) && !array_key_exists($key, $_ENV)) {
+                if (getenv($key) === false && !array_key_exists($key, $_SERVER) && !array_key_exists($key, $_ENV)) {
                     putenv("$key=$val");
                     $_ENV[$key] = $val;
                     $_SERVER[$key] = $val;
@@ -25,24 +30,53 @@ if (file_exists($envFile)) {
     }
 }
 
-// 2. Define DB constants from environment or fallback defaults
-if (!defined('DB_HOST')) define('DB_HOST', getenv('DB_HOST') ?: '127.0.0.1');
-if (!defined('DB_PORT')) define('DB_PORT', (int)(getenv('DB_PORT') ?: 3306));
-if (!defined('DB_USER')) define('DB_USER', getenv('DB_USERNAME') ?: (getenv('DB_USER') ?: 'root'));
-if (!defined('DB_PASS')) define('DB_PASS', getenv('DB_PASSWORD') !== false ? getenv('DB_PASSWORD') : (getenv('DB_PASS') !== false ? getenv('DB_PASS') : ''));
-if (!defined('DB_NAME')) define('DB_NAME', getenv('DB_DATABASE') ?: (getenv('DB_NAME') ?: 'sms_db'));
+// 2. Normalize database environment variables / aliases
+if (!getenv('DB_USER') && getenv('DB_USERNAME')) {
+    putenv('DB_USER=' . getenv('DB_USERNAME'));
+    $_ENV['DB_USER'] = getenv('DB_USERNAME');
+}
+if (getenv('DB_PASS') === false && getenv('DB_PASSWORD') !== false) {
+    putenv('DB_PASS=' . getenv('DB_PASSWORD'));
+    $_ENV['DB_PASS'] = getenv('DB_PASSWORD');
+}
+if (!getenv('DB_NAME') && getenv('DB_DATABASE')) {
+    putenv('DB_NAME=' . getenv('DB_DATABASE'));
+    $_ENV['DB_NAME'] = getenv('DB_DATABASE');
+}
+
+$host = getenv('DB_HOST') ?: 'localhost';
+$user = getenv('DB_USER') ?: 'root';
+$pass = getenv('DB_PASS') ?: '';
+$db   = getenv('DB_NAME') ?: 'sms_db';
+$port = (int)(getenv('DB_PORT') ?: 3306);
+
+// Define DB constants for backward compatibility across modules
+if (!defined('DB_HOST')) define('DB_HOST', $host);
+if (!defined('DB_USER')) define('DB_USER', $user);
+if (!defined('DB_PASS')) define('DB_PASS', $pass);
+if (!defined('DB_NAME')) define('DB_NAME', $db);
+if (!defined('DB_PORT')) define('DB_PORT', $port);
 
 $is_setup_script = (basename($_SERVER['PHP_SELF'] ?? '') === 'setup.php');
 
-// 3. Connect to database directly (connects directly to DB_NAME without redundant schema creation)
-if ($is_setup_script) {
-    $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, '', (int)DB_PORT);
-} else {
-    $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, DB_NAME, (int)DB_PORT);
+// 3. Connect to MySQL server
+$conn = @new mysqli($host, $user, $pass, $is_setup_script ? '' : $db, $port);
+
+// If database does not exist (MySQL error 1049: Unknown database), auto-connect and create it
+if (!$is_setup_script && $conn->connect_errno === 1049) {
+    $conn = @new mysqli($host, $user, $pass, '', $port);
+    if (!$conn->connect_error) {
+        $conn->query("CREATE DATABASE IF NOT EXISTS `" . $db . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        $conn->select_db($db);
+    }
 }
 
 $db_connected = true;
 $db_error = null;
+
+if (!$conn->connect_error) {
+    @$conn->query("SET time_zone = '+08:00'");
+}
 
 if ($conn->connect_error) {
     $db_connected = false;
@@ -54,22 +88,37 @@ if ($conn->connect_error) {
             http_response_code(500);
             die(json_encode([
                 'success' => false,
-                'message' => 'Database connection failed: ' . $conn->connect_error . '. Please verify database credentials in .env.'
+                'message' => 'Database connection failed: ' . $conn->connect_error . '. Please start MySQL or verify credentials in .env.'
             ]));
         }
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $http_host = $_SERVER['HTTP_HOST'] ?? 'localhost';
         $proto = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
         
-        // Calculate dynamic relative path to setup.php without hardcoded /sms/
-        $setupPath = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/') . '/../shared/setup.php';
-        header("Location: {$proto}://{$host}{$setupPath}?error=db_connect");
+        // Calculate dynamic relative path to setup.php without hardcoded folder names
+        $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+        if (strpos($scriptName, '/app/') !== false) {
+            $base = substr($scriptName, 0, strpos($scriptName, '/app/'));
+        } else {
+            $base = rtrim(dirname($scriptName), '/\\');
+            if ($base === '/' || $base === '\\') $base = '';
+        }
+        $setupUrl = "{$proto}://{$http_host}{$base}/app/shared/setup.php?error=db_connect";
+        header("Location: {$setupUrl}");
         exit;
     }
 } else {
     if ($is_setup_script) {
-        $conn->query("CREATE DATABASE IF NOT EXISTS `" . DB_NAME . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-        $conn->select_db(DB_NAME);
+        $conn->query("CREATE DATABASE IF NOT EXISTS `" . $db . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        $conn->select_db($db);
     }
     $conn->set_charset('utf8mb4');
 }
-?>
+
+/**
+ * Helper to get a dedicated connection to an organization's isolated database.
+ * Accepts club ID or club code (e.g. 1, 'CSSEC', 'RCYC-BCP').
+ */
+function getOrgDb(string|int $club_identifier): ?mysqli {
+    require_once __DIR__ . '/org_db_manager.php';
+    return get_org_db_connection($club_identifier);
+}

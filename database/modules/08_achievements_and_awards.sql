@@ -24,9 +24,3 @@ CREATE TABLE IF NOT EXISTS `achievements` (
   CONSTRAINT `fk_ach_user` FOREIGN KEY (`submitted_by`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_ach_verifier` FOREIGN KEY (`verified_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Sample Seed Achievements
-INSERT INTO `achievements` (`id`, `club_id`, `submitted_by`, `title`, `competition`, `award_date`, `proof_file`, `status`, `verified_by`, `notes`) VALUES
-(1, 1, 1, 'Champion - National Web Development Challenge', 'PH Inter-College WebDev Expo 2025', '2025-11-20', NULL, 'Verified', 58, 'Verified and approved by SSC.'),
-(2, 1, 1, '1st Runner-Up - Algorithmic Coding Cup', 'Luzon CS Summit 2025', '2025-10-14', NULL, 'Verified', 58, 'Verified and approved by SSC.')
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);

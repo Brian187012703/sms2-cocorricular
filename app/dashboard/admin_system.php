@@ -1,12 +1,12 @@
 <?php
 // ============================================================
 //  ADMIN_SYSTEM.PHP  (dashboard/)
-//  Co-Curricular System — System Administration & RBAC Portal
-//  Accessible to: System Admin (Full CRUD), SSC (Audited Oversight)
+//  Co-Curricular System — User & Access Management
+//  Accessible to: System Admin (Full CRUD)
 // ============================================================
 require_once __DIR__ . '/../shared/db.php';
 require_once __DIR__ . '/../shared/security.php';
-require_role(['admin', 'ssc']);
+require_permission('users.manage.all');
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -14,76 +14,26 @@ $sess_role    = $_SESSION['role'] ?? 'admin';
 $sess_initial = strtoupper(substr($_SESSION['first_name'] ?? 'A', 0, 1));
 $sess_pic     = $_SESSION['profile_pic'] ?? null;
 $user_id      = (int)$_SESSION['user_id'];
-$is_admin     = ($sess_role === 'admin');
+$is_admin     = true;
 
-// Server-side active tab determination with strict role gating
-$requested_tab = $_GET['tab'] ?? ($is_admin ? 'usersTab' : 'auditTab');
-$allowed_tabs  = ['usersTab', 'matrixTab', 'auditTab', 'opsTab'];
-
-if (!$is_admin) {
-    // SSC role is strictly restricted to the System Activity Audit Trail
-    $active_tab = 'auditTab';
-} else {
-    $active_tab = in_array($requested_tab, $allowed_tabs, true) ? $requested_tab : 'usersTab';
-}
-
-// Fetch system settings if admin
-$sys_settings = [];
-if ($is_admin) {
-    $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
-        setting_key VARCHAR(100) NOT NULL PRIMARY KEY,
-        setting_value TEXT DEFAULT NULL,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-
-    $res_s = $conn->query("SELECT setting_key, setting_value FROM system_settings");
-    if ($res_s) {
-        while ($r = $res_s->fetch_assoc()) {
-            $sys_settings[$r['setting_key']] = $r['setting_value'];
-        }
-    }
-}
-$academic_year        = $sys_settings['academic_year'] ?? '2025-2026';
-$active_semester      = $sys_settings['active_semester'] ?? '1st Semester';
-$org_categories       = $sys_settings['org_categories'] ?? "Academic\nTalent & Cultural\nIndependent\nSports";
-$notification_tpl     = $sys_settings['notification_templates'] ?? "Event Approval Notice\nBudget Disbursement Notice\nCouncil Endorsement Notice";
-
-// -- Live Statistics ------------------------------------------
+// -- Live User & Access Statistics (User & Access Management) ──
 $user_count     = (int)$conn->query("SELECT COUNT(*) FROM users")->fetch_row()[0];
 $student_count  = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='student'")->fetch_row()[0];
 $adviser_count  = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='club_adviser'")->fetch_row()[0];
 $ssc_count      = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='ssc'")->fetch_row()[0];
 $admin_count    = (int)$conn->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetch_row()[0];
+$inactive_count = (int)$conn->query("SELECT COUNT(*) FROM users WHERE status='Inactive'")->fetch_row()[0];
 
-$club_count     = (int)$conn->query("SELECT COUNT(*) FROM clubs WHERE status='Active' AND deleted_at IS NULL")->fetch_row()[0];
-$pending_apps   = (int)$conn->query("SELECT COUNT(*) FROM club_memberships WHERE status='Pending'")->fetch_row()[0];
-$stuck_budgets  = (int)$conn->query("SELECT COUNT(*) FROM budget_requests WHERE status NOT IN ('Disbursed','Rejected') AND deleted_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)")->fetch_row()[0];
-
-$stuck_events   = 0;
-if ($is_admin) {
-    $r_se = $conn->query("SELECT COUNT(*) FROM events WHERE status NOT IN ('Approved','Completed','Cancelled','Rejected') AND deleted_at IS NULL AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)");
-    if ($r_se) $stuck_events = (int)$r_se->fetch_row()[0];
-}
-
-// -- Fetch all users with profile data -------------------------
-$all_users = [];
-if ($is_admin) {
-    $all_users = $conn->query(
-        "SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.role, u.created_at,
-                s.student_number, s.course, s.year_level, s.section, s.status AS student_status
-         FROM users u
-         LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
-         ORDER BY u.role, u.last_name, u.first_name"
-    )->fetch_all(MYSQLI_ASSOC);
-}
-
-// -- Recent audit logs -----------------------------------------
-$audit_logs = $conn->query(
-    "SELECT al.id, al.action, al.target_table, al.target_id, al.detail, al.ip_address, al.created_at,
-            u.first_name, u.last_name, u.role
-     FROM audit_logs al
-     JOIN users u ON u.id = al.user_id
-     ORDER BY al.created_at DESC LIMIT 50"
+// -- Fetch all users with profile data and organizational scope ──
+$all_users = $conn->query(
+    "SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.role, u.status, u.last_login, u.last_password_change, u.created_at,
+            s.student_number, s.course, s.year_level, s.section, s.status AS student_status,
+            (SELECT GROUP_CONCAT(c.name SEPARATOR ', ') FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id = u.id AND cm.status = 'Active') AS club_names,
+            (SELECT GROUP_CONCAT(COALESCE(c.code, c.name) SEPARATOR ', ') FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id = u.id AND cm.status = 'Active') AS club_codes,
+            (SELECT GROUP_CONCAT(cm.role SEPARATOR ', ') FROM club_memberships cm WHERE cm.user_id = u.id AND cm.status = 'Active') AS membership_roles
+     FROM users u
+     LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
+     ORDER BY u.role, u.last_name, u.first_name"
 )->fetch_all(MYSQLI_ASSOC);
 
 $role_labels = [
@@ -98,52 +48,275 @@ $role_labels = [
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>System Administration &amp; RBAC — BCP Co-Curricular Portal</title>
+  <title>User &amp; Access Management — BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <meta name="loader-logo" content="../images/BCP_LOGO.png"/>
+  <meta name="csrf-token" content="<?= csrf_token() ?>"/>
   <script src="../js/page-loader.js"></script>
   <style>
-    /* Tab System */
-    .admin-tab-nav {
-      display: flex;
-      gap: 10px;
-      border-bottom: 2px solid #e2e8f0;
-      margin-bottom: 24px;
-      flex-wrap: wrap;
-    }
-    .admin-tab-btn {
-      background: none;
-      border: none;
-      padding: 12px 20px;
-      font-size: 0.9rem;
-      font-weight: 700;
-      color: #64748b;
-      cursor: pointer;
-      border-bottom: 3px solid transparent;
-      margin-bottom: -2px;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      transition: all 0.2s ease;
-    }
-    .admin-tab-btn:hover { color: #1e3a8a; }
-    .admin-tab-btn.active {
-      color: #1e3a8a;
-      border-bottom-color: #2563eb;
-    }
-    .admin-tab-content { display: none; }
-    .admin-tab-content.active { display: block; animation: fadeIn 0.2s ease; }
-
     .role-badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:0.72rem; font-weight:800; }
     .role-admin   { background:#fee2e2; color:#991b1b; border: 1px solid #fca5a5; }
     .role-ssc     { background:#fef3c7; color:#92400e; border: 1px solid #fde68a; }
     .role-adviser { background:#e0e7ff; color:#3730a3; border: 1px solid #c7d2fe; }
     .role-student { background:#f1f5f9; color:#475569; border: 1px solid #e2e8f0; }
 
+    .status-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:700; }
+    .status-active { background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; }
+    .status-inactive { background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; }
+
     .admin-alert { padding:14px 18px; border-radius:10px; margin-bottom:20px; font-size:0.88rem; font-weight:600; display:none; }
     
+    /* 6 KPI Cards Grid */
+    .kpi-grid-6 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .kpi-grid-6 .info-card {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 16px 18px;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 100px;
+    }
+    .kpi-grid-6 .info-card .card-label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #64748b;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .kpi-grid-6 .info-card .card-amount {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.2;
+      margin-bottom: 4px;
+    }
+    .kpi-grid-6 .info-card .card-detail {
+      font-size: 0.75rem;
+      color: #64748b;
+      font-weight: 500;
+    }
+
+    /* User Directory Compact Table & Row Layout */
+    #userTable {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: auto;
+    }
+    #userTable th {
+      padding: 9px 12px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #475569;
+      background: #f8fafc;
+      border-bottom: 2px solid #e2e8f0;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    #userTable td {
+      padding: 6px 12px;
+      vertical-align: middle;
+      font-size: 0.82rem;
+      border-bottom: 1px solid #f1f5f9;
+      white-space: nowrap;
+      height: 42px;
+      color: #334155;
+    }
+    #userTable tr:hover td {
+      background: #f8fafc;
+    }
+    #userTable .role-badge {
+      padding: 2px 8px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      border-radius: 10px;
+      display: inline-block;
+      line-height: 1.3;
+    }
+    #userTable .status-badge {
+      padding: 2px 7px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      border-radius: 10px;
+      display: inline-block;
+      line-height: 1.3;
+    }
+    #userTable code {
+      font-size: 0.78rem;
+      padding: 2px 6px;
+      background: #f1f5f9;
+      color: #0f172a;
+      border-radius: 4px;
+      border: 1px solid #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* Action Buttons in Single Compact Row */
+    .user-actions-nowrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: nowrap !important;
+      white-space: nowrap !important;
+      justify-content: flex-end;
+    }
+    .btn-action-view {
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      border: none;
+      background: #0284c7;
+      color: #fff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .btn-action-view:hover {
+      background: #0369a1;
+      transform: translateY(-1px);
+    }
+    .btn-action-icon {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .btn-action-icon:hover {
+      transform: translateY(-1px);
+      filter: brightness(0.92);
+    }
+    .btn-action-edit {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+    }
+    .btn-action-edit:hover {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+    .btn-action-role {
+      background: #f5f3ff;
+      color: #6d28d9;
+      border: 1px solid #ddd6fe;
+    }
+    .btn-action-role:hover {
+      background: #ede9fe;
+      color: #5b21b6;
+    }
+    .btn-action-reset {
+      background: #fffbeb;
+      color: #b45309;
+      border: 1px solid #fde68a;
+    }
+    .btn-action-reset:hover {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    .btn-action-deactivate {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
+    .btn-action-deactivate:hover {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .btn-action-activate {
+      background: #f0fdf4;
+      color: #15803d;
+      border: 1px solid #bbf7d0;
+    }
+    .btn-action-activate:hover {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .btn-action-audit {
+      background: #f8fafc;
+      color: #475569;
+      border: 1px solid #cbd5e1;
+    }
+    .btn-action-audit:hover {
+      background: #f1f5f9;
+      color: #1e293b;
+    }
+    .btn-action-disabled {
+      background: #f1f5f9;
+      color: #94a3b8;
+      border: 1px solid #e2e8f0;
+      cursor: not-allowed;
+    }
+    .action-tag {
+      background: #e2e8f0;
+      color: #1e293b;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 0.73rem;
+    }
+
+    /* Card Pagination Toolbar & Layout */
+    .pagination-toolbar {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      flex-wrap: wrap !important;
+      gap: 12px !important;
+      padding: 12px 6px 4px !important;
+      margin-top: 10px !important;
+      border-top: 1px solid #f1f5f9 !important;
+    }
+    .pagination-info {
+      display: none !important;
+    }
+    .pagination-controls {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: flex-end !important;
+      gap: 14px !important;
+      flex-wrap: wrap !important;
+      width: auto !important;
+    }
+
+    /* Layout & Footer Anchor */
+    .main {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .content {
+      flex: 1;
+      padding-bottom: 0 !important;
+    }
+    .footer {
+      margin-top: auto;
+      flex-shrink: 0;
+    }
+
     /* Modal styles */
     .modal-overlay { position:fixed; inset:0; background:rgba(15,23,42,0.65); backdrop-filter:blur(4px); z-index:9999; display:none; align-items:center; justify-content:center; padding:16px; }
     .modal-overlay.active { display:flex !important; }
@@ -158,20 +331,98 @@ $role_labels = [
     .form-group-admin input, .form-group-admin select, .form-group-admin textarea { width:100%; padding:9px 12px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:0.88rem; color:#1e293b; background:#fff; font-family:inherit; }
     .form-group-admin input:focus, .form-group-admin select:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 3px rgba(37,99,235,0.1); }
 
-    /* RBAC Matrix Table */
-    .matrix-table { width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem; }
-    .matrix-table th, .matrix-table td { padding:12px 14px; border-bottom:1px solid #e2e8f0; }
-    .matrix-table th { background:#f8fafc; font-weight:800; color:#334155; }
-    .perm-yes { color:#16a34a; font-weight:800; display:inline-flex; align-items:center; gap:4px; }
-    .perm-no  { color:#94a3b8; font-weight:600; }
-    .perm-cond { color:#d97706; font-weight:700; font-size:0.78rem; }
+    /* Slide-in User Profile Drawer */
+    .profile-drawer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(3px);
+      z-index: 10000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.28s ease;
+    }
+    .profile-drawer-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .profile-drawer {
+      position: fixed;
+      top: 0;
+      right: -500px;
+      width: 480px;
+      max-width: 95vw;
+      height: 100vh;
+      background: #ffffff;
+      box-shadow: -8px 0 36px rgba(15, 23, 42, 0.2);
+      z-index: 10001;
+      transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .profile-drawer.active {
+      right: 0;
+    }
+    .drawer-header {
+      padding: 18px 22px;
+      border-bottom: 1px solid #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #f8fafc;
+    }
+    .drawer-body {
+      padding: 22px 24px;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .drawer-section {
+      margin-bottom: 22px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    .drawer-section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+    }
+    .drawer-section-title {
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .drawer-info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+    .drawer-info-item {
+      font-size: 0.82rem;
+    }
+    .drawer-info-label {
+      color: #94a3b8;
+      font-size: 0.72rem;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+    .drawer-info-value {
+      color: #0f172a;
+      font-weight: 700;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
 
 <?php
 $APP_ROOT   = '../';
-$ACTIVE_NAV = 'admin';
+$ACTIVE_NAV = 'admin_users';
 require_once __DIR__ . '/../shared/sidebar.php';
 ?>
 
@@ -184,9 +435,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
     </button>
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
-      <div class="search-wrap">
-        <input type="text" placeholder="Search accounts, logs..." autocomplete="off" />
-        <i class="fa-solid fa-magnifying-glass"></i>
+      <div class="search-wrap" id="topbarSearchWrap">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" placeholder="Search modules, events, clubs..." autocomplete="off" />
+        <button type="button" class="search-clear-btn" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i class="fa-solid fa-qrcode"></i></button>
       <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
@@ -204,8 +456,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
     <div class="page-title-bar" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
       <h2 class="page-title">
-        <i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i>
-        System Administration &amp; Access Control
+        <i class="fa-solid fa-users-gear" style="color:#2563eb;"></i>
+        User &amp; Access Management
       </h2>
       <div style="font-size:0.8rem; color:#64748b; font-weight:600;">
         Role: <strong style="color:#0f172a;"><?= htmlspecialchars($role_labels[$sess_role] ?? $sess_role) ?></strong>
@@ -217,395 +469,207 @@ require_once __DIR__ . '/../shared/sidebar.php';
       <!-- Alert Box -->
       <div id="adminAlert" class="admin-alert"></div>
 
-      <!-- KPI Stat Cards -->
-      <div class="info-row">
+      <!-- 6 User & Access Management Stat Cards -->
+      <div class="kpi-grid-6">
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-users-gear"></i> Total Users</div>
+          <div class="card-label"><i class="fa-solid fa-users" style="color:#2563eb;"></i> Total Users</div>
           <div class="card-amount"><?= $user_count ?></div>
-          <div class="card-detail"><?= $student_count ?> Students &bull; <?= $adviser_count ?> Advisers &bull; <?= $ssc_count ?> SSC &bull; <?= $admin_count ?> Admins</div>
+          <div class="card-detail">All system accounts.</div>
         </div>
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-building-columns"></i> Active Orgs</div>
-          <div class="card-amount"><?= $club_count ?></div>
-          <div class="card-detail">Recognized Campus Clubs</div>
+          <div class="card-label"><i class="fa-solid fa-user-graduate" style="color:#0284c7;"></i> Students</div>
+          <div class="card-amount"><?= $student_count ?></div>
+          <div class="card-detail">Student role accounts.</div>
         </div>
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-clock"></i> Pending Applications</div>
-          <div class="card-amount"><?= $pending_apps ?></div>
-          <div class="card-detail">Membership Queue</div>
+          <div class="card-label"><i class="fa-solid fa-chalkboard-user" style="color:#4f46e5;"></i> Advisers</div>
+          <div class="card-amount"><?= $adviser_count ?></div>
+          <div class="card-detail">Faculty adviser accounts.</div>
         </div>
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-sliders"></i> Stuck Budgets</div>
-          <div class="card-amount" style="color:<?= $stuck_budgets > 0 ? '#dc2626' : '#16a34a' ?>;"><?= $stuck_budgets ?></div>
-          <div class="card-detail">> 7 Days Pending Action</div>
+          <div class="card-label"><i class="fa-solid fa-user-tie" style="color:#d97706;"></i> SSC Officers</div>
+          <div class="card-amount"><?= $ssc_count ?></div>
+          <div class="card-detail">SSC role accounts.</div>
         </div>
-      </div>
-
-      <!-- Tab Navigation -->
-      <div class="admin-tab-nav">
-        <?php if ($is_admin): ?>
-          <button class="admin-tab-btn <?= $active_tab==='usersTab'?'active':'' ?>" onclick="switchAdminTab('usersTab', this)">
-            <i class="fa-solid fa-users"></i> User Accounts &amp; RBAC
-          </button>
-          <button class="admin-tab-btn <?= $active_tab==='matrixTab'?'active':'' ?>" onclick="switchAdminTab('matrixTab', this)">
-            <i class="fa-solid fa-table-cells"></i> Permission Matrix
-          </button>
-          <button class="admin-tab-btn <?= $active_tab==='auditTab'?'active':'' ?>" onclick="switchAdminTab('auditTab', this)">
-            <i class="fa-solid fa-list-check"></i> System Audit Trail
-          </button>
-          <button class="admin-tab-btn <?= $active_tab==='opsTab'?'active':'' ?>" onclick="switchAdminTab('opsTab', this)">
-            <i class="fa-solid fa-server"></i> System Health &amp; Settings
-          </button>
-        <?php else: ?>
-          <button class="admin-tab-btn active" onclick="switchAdminTab('auditTab', this)">
-            <i class="fa-solid fa-list-check"></i> System Audit Logs (Read-Only)
-          </button>
-        <?php endif; ?>
+        <div class="info-card">
+          <div class="card-label"><i class="fa-solid fa-user-shield" style="color:#dc2626;"></i> Administrators</div>
+          <div class="card-amount"><?= $admin_count ?></div>
+          <div class="card-detail">Admin role accounts.</div>
+        </div>
+        <div class="info-card">
+          <div class="card-label"><i class="fa-solid fa-user-slash" style="color:#64748b;"></i> Inactive Accounts</div>
+          <div class="card-amount" style="color:<?= $inactive_count > 0 ? '#dc2626' : '#64748b' ?>;"><?= $inactive_count ?></div>
+          <div class="card-detail">Disabled accounts.</div>
+        </div>
       </div>
 
       <!-- ══════════════════════════════════════════════════════════════
-           TAB 1: User Accounts & RBAC (Admin Only)
+           SECTION 1: User Directory Table
       ══════════════════════════════════════════════════════════════ -->
-      <?php if ($is_admin): ?>
-      <div class="admin-tab-content <?= $active_tab==='usersTab'?'active':'' ?>" id="usersTab">
-        <div class="table-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #f1f5f9;">
-            <div>
-              <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-users-gear" style="color:#2563eb;"></i> User Account Directory</h3>
-              <p style="margin:2px 0 0; font-size:0.78rem; color:#64748b;">Manage user authentication credentials, system roles, and status</p>
-            </div>
-            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-              <input type="text" id="userSearchInput" placeholder="Search name, username, email..." style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; min-width:220px;" oninput="filterUserTable()"/>
-              <select id="userRoleFilterSelect" style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; font-weight:600;" onchange="filterUserTable()">
-                <option value="ALL">All Roles</option>
-                <option value="student">Student</option>
-                <option value="club_adviser">Club Adviser</option>
-                <option value="ssc">SSC Officer</option>
-                <option value="admin">System Admin</option>
-              </select>
-              <?php if ($is_admin): ?>
-              <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openCreateUserModal()">
-                <i class="fa-solid fa-user-plus"></i> Add New User
-              </button>
-              <a href="../shared/admin_actions.php?action=export_users_csv" class="card-btn" style="background:#2563eb; color:#fff; font-weight:700; text-decoration:none;">
-                <i class="fa-solid fa-file-csv"></i> Export Users (CSV)
-              </a>
-              <?php endif; ?>
-            </div>
+      <div class="card" style="margin-bottom:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #f1f5f9;">
+          <div>
+            <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-users-gear" style="color:#2563eb;"></i> User directory</h3>
+            <p style="margin:2px 0 0; font-size:0.78rem; color:#64748b;">Manage user authentication credentials, system roles, and status</p>
           </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <input type="text" id="userSearchInput" placeholder="Search name, username, email, program..." style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; min-width:220px;" oninput="filterUserTable()"/>
+            <select id="userRoleFilterSelect" style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; font-weight:600;" onchange="filterUserTable()">
+              <option value="ALL">All Roles</option>
+              <option value="student">Student</option>
+              <option value="club_adviser">Club Adviser</option>
+              <option value="ssc">SSC Officer</option>
+              <option value="admin">System Admin</option>
+            </select>
+            <select id="userStatusFilterSelect" style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; font-weight:600;" onchange="filterUserTable()">
+              <option value="ALL">All Statuses</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+            <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openCreateUserModal()">
+              <i class="fa-solid fa-user-plus"></i> Add New User
+            </button>
+            <a href="../shared/admin_actions.php?action=export_users_csv" class="card-btn" style="background:#2563eb; color:#fff; font-weight:700; text-decoration:none;">
+              <i class="fa-solid fa-file-csv"></i> Export Users (CSV)
+            </a>
+          </div>
+        </div>
 
-          <table class="data-table" id="userTable">
+        <div class="table-responsive">
+          <table id="userTable" class="table-wide">
             <thead>
               <tr>
-                <th>#</th>
+                <th style="width:70px; text-align:center;">User ID</th>
                 <th>Full Name</th>
                 <th>Username</th>
                 <th>Email</th>
-                <th>System Role</th>
-                <th>Program / Detail</th>
-                <th>Registered</th>
-                <?php if ($is_admin): ?><th>Actions</th><?php endif; ?>
+                <th>Role</th>
+                <th>Program / Organization</th>
+                <th style="text-align:center;">Account Status</th>
+                <th>Last Login</th>
+                <th>Created</th>
+                <th style="text-align:right; width:220px;">Action</th>
               </tr>
             </thead>
             <tbody>
+              <?php if (empty($all_users)): ?>
+              <tr>
+                <td colspan="10" style="text-align:center; padding:32px; color:#94a3b8;">
+                  <i class="fa-regular fa-folder-open" style="font-size:2rem; margin-bottom:8px; display:block;"></i>
+                  No user records found in the database.
+                </td>
+              </tr>
+              <?php else: ?>
+              <tr id="userTableNoMatch" style="display:none;">
+                <td colspan="10" style="text-align:center; padding:32px; color:#94a3b8;">
+                  <i class="fa-solid fa-magnifying-glass" style="font-size:1.8rem; margin-bottom:8px; display:block; color:#cbd5e1;"></i>
+                  No users match the search criteria.
+                </td>
+              </tr>
               <?php foreach ($all_users as $u): ?>
               <?php 
                 $r_cls = str_replace('_', '', $u['role']); 
-                $detail_str = $u['course'] ? ($u['student_number'] ? "{$u['student_number']} ({$u['course']})" : $u['course']) : 'System Staff';
+                $u_status = !empty($u['status']) ? $u['status'] : 'Active';
+                $scope_val = '—';
+                if ($u['role'] === 'student') {
+                  $scope_val = $u['course'] ?? 'Student';
+                  if (!empty($u['club_codes'])) {
+                    $scope_val .= ' (' . $u['club_codes'] . ')';
+                  }
+                } elseif ($u['role'] === 'club_adviser') {
+                  $scope_val = !empty($u['club_names']) ? $u['club_names'] : 'Faculty Adviser';
+                } elseif ($u['role'] === 'ssc') {
+                  $scope_val = 'Supreme Student Council';
+                } else {
+                  $scope_val = 'System Administration';
+                }
+                $search_content = strtolower($u['id'] . ' ' . $u['first_name'] . ' ' . $u['last_name'] . ' ' . $u['username'] . ' ' . $u['email'] . ' ' . $scope_val . ' ' . $u_status);
               ?>
-              <tr class="user-row" data-role="<?= $u['role'] ?>" data-search="<?= strtolower($u['first_name'] . ' ' . $u['last_name'] . ' ' . $u['username'] . ' ' . $u['email'] . ' ' . $detail_str) ?>">
-                <td><?= $u['id'] ?></td>
-                <td><strong><?= htmlspecialchars($u['first_name'] . ' ' . $u['last_name']) ?></strong></td>
+              <tr class="user-row" data-role="<?= $u['role'] ?>" data-status="<?= $u_status ?>" data-search="<?= htmlspecialchars($search_content, ENT_QUOTES) ?>">
+                <td style="text-align:center;"><strong>#<?= $u['id'] ?></strong></td>
+                <td><strong style="color:#0f172a;"><?= htmlspecialchars($u['first_name'] . ' ' . $u['last_name']) ?></strong></td>
                 <td><code><?= htmlspecialchars($u['username']) ?></code></td>
-                <td><?= htmlspecialchars($u['email']) ?></td>
+                <td><span style="font-size:0.8rem; color:#475569;" title="<?= htmlspecialchars($u['email']) ?>"><?= htmlspecialchars($u['email']) ?></span></td>
                 <td>
                   <span class="role-badge role-<?= $r_cls ?>"><?= htmlspecialchars($role_labels[$u['role']] ?? $u['role']) ?></span>
                 </td>
-                <td style="font-size:0.8rem; color:#64748b; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                  <?= htmlspecialchars($detail_str) ?>
-                </td>
-                <td style="font-size:0.8rem; color:#64748b;"><?= date('M d, Y', strtotime($u['created_at'])) ?></td>
-                <?php if ($is_admin): ?>
                 <td>
-                  <div style="display:flex; gap:6px;">
-                    <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff;" onclick="window.openStudentQrModal(<?= htmlspecialchars(json_encode([
-                      'user_id' => $u['id'],
-                      'username' => $u['username'],
-                      'first_name' => $u['first_name'],
-                      'last_name' => $u['last_name'],
-                      'role' => $u['role'],
-                      'student_number' => $u['student_number'] ?? '',
-                      'course' => $u['course'] ?? '',
-                      'year_level' => $u['year_level'] ?? '',
-                      'section' => $u['section'] ?? ''
-                    ]), ENT_QUOTES) ?>)" title="View &amp; Print Unique QR Badge">
-                      <i class="fa-solid fa-qrcode"></i>
+                  <span style="font-size:0.78rem; color:#475569; max-width:200px; display:inline-block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($scope_val) ?>">
+                    <?= htmlspecialchars($scope_val) ?>
+                  </span>
+                </td>
+                <td style="text-align:center;">
+                  <span class="status-badge <?= $u_status === 'Active' ? 'status-active' : 'status-inactive' ?>">
+                    <i class="fa-solid <?= $u_status === 'Active' ? 'fa-circle-check' : 'fa-circle-xmark' ?>" style="font-size:0.68rem; margin-right:3px;"></i>
+                    <?= htmlspecialchars($u_status) ?>
+                  </span>
+                </td>
+                <td>
+                  <span style="font-size:0.78rem; color:#64748b;">
+                    <?= !empty($u['last_login']) ? date('M d, Y H:i', strtotime($u['last_login'])) : '<span style="color:#94a3b8;">Never</span>' ?>
+                  </span>
+                </td>
+                <td>
+                  <span style="font-size:0.78rem; color:#64748b;">
+                    <?= !empty($u['created_at']) ? date('M d, Y', strtotime($u['created_at'])) : '—' ?>
+                  </span>
+                </td>
+                <td style="text-align:right;">
+                  <div class="user-actions-nowrap">
+                    <!-- View (Opens Profile Drawer) -->
+                    <button type="button" class="btn-action-view" onclick="openUserProfileDrawer(<?= $u['id'] ?>)" title="View user profile drawer">
+                      <i class="fa-solid fa-eye"></i> View
                     </button>
-                    <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="openEditUserModal(<?= htmlspecialchars(json_encode($u), ENT_QUOTES) ?>)" title="Edit User">
-                      <i class="fa-solid fa-pen-to-square"></i>
+                    <!-- Edit -->
+                    <button type="button" class="btn-action-icon btn-action-edit" onclick="openEditUserModal(<?= htmlspecialchars(json_encode($u), ENT_QUOTES) ?>)" title="Edit account details">
+                      <i class="fa-solid fa-pen"></i>
                     </button>
-                    <button type="button" class="card-btn btn-sm" style="background:#f59e0b; color:#fff;" onclick="openResetPasswordModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="Reset Password">
+                    <!-- Role -->
+                    <button type="button" class="btn-action-icon btn-action-role" onclick="openChangeRoleModal(<?= $u['id'] ?>, '<?= $u['role'] ?>', '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="Assign system role">
+                      <i class="fa-solid fa-user-tag"></i>
+                    </button>
+                    <!-- Reset -->
+                    <button type="button" class="btn-action-icon btn-action-reset" onclick="openResetPasswordModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="Reset account password">
                       <i class="fa-solid fa-key"></i>
                     </button>
-                    <?php if ($u['id'] !== $user_id): ?>
-                    <button type="button" class="card-btn btn-sm btn-danger" onclick="deleteUser(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="Delete User">
-                      <i class="fa-solid fa-trash-can"></i>
-                    </button>
+                    <!-- Deactivate / Activate -->
+                    <?php if ($u_status === 'Inactive'): ?>
+                      <button type="button" class="btn-action-icon btn-action-activate" onclick="toggleUserStatus(<?= $u['id'] ?>, 'Active', '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="Activate account">
+                        <i class="fa-solid fa-user-check"></i>
+                      </button>
+                    <?php else: ?>
+                      <?php if ($u['id'] !== $user_id): ?>
+                        <button type="button" class="btn-action-icon btn-action-deactivate" onclick="toggleUserStatus(<?= $u['id'] ?>, 'Inactive', '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="Deactivate account">
+                          <i class="fa-solid fa-user-slash"></i>
+                        </button>
+                      <?php else: ?>
+                        <button type="button" class="btn-action-icon btn-action-disabled" title="You cannot deactivate your own administrative account" disabled>
+                          <i class="fa-solid fa-user-slash"></i>
+                        </button>
+                      <?php endif; ?>
                     <?php endif; ?>
+                    <!-- Activity -->
+                    <button type="button" class="btn-action-icon btn-action-audit" onclick="openUserActivityModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['first_name'] . ' ' . $u['last_name'])) ?>')" title="View recent audit activity trail">
+                      <i class="fa-solid fa-clock-rotate-left"></i>
+                    </button>
                   </div>
                 </td>
-                <?php endif; ?>
               </tr>
               <?php endforeach; ?>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <?php endif; /* end is_admin usersTab */ ?>
-
-      <?php if ($is_admin): ?>
-      <!-- ══════════════════════════════════════════════════════════════
-           TAB 2: Role & Permission Matrix (Admin Only)
-      ══════════════════════════════════════════════════════════════ -->
-      <div class="admin-tab-content <?= $active_tab==='matrixTab'?'active':'' ?>" id="matrixTab">
-        <div class="table-card">
-          <div style="margin-bottom:18px;">
-            <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-table-cells" style="color:#2563eb;"></i> Role-Based Access Control (RBAC) Permissions Matrix</h3>
-            <p style="margin:4px 0 0; font-size:0.8rem; color:#64748b;">Comprehensive map of system capabilities, approval rights, and visibility per user role</p>
-          </div>
-
-          <table class="matrix-table">
-            <thead>
-              <tr>
-                <th>System Feature / Capability</th>
-                <th>General Student</th>
-                <th>Faculty Club Adviser</th>
-                <th>Supreme Student Council (SSC)</th>
-                <th>System Administrator</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>Browse Organization Directory</strong></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Yes (Apply Now)</span></td>
-                <td><span class="perm-no">&times; Hidden &amp; Restricted</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Full Directory</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check"></i> Full Directory &amp; Charters</span></td>
-              </tr>
-              <tr>
-                <td><strong>Event Proposal Lifecycle</strong></td>
-                <td><span class="perm-no">&times; View &amp; Register only</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-plus"></i> Submit Club Proposal</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check-double"></i> Review &amp; Endorse to Admin / Create Institutional Events</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-calendar-check"></i> Final Calendar Clearance &amp; Publishing</span></td>
-              </tr>
-              <tr>
-                <td><strong>Budget &amp; Finance Pipeline</strong></td>
-                <td><span class="perm-no">&times; Access Restricted</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-plus"></i> Stage 1: Endorse to SSC</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check-double"></i> Stage 2: Audit &amp; Forward to Admin</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-hand-holding-dollar"></i> Stage 3: Disburse Funds &amp; Override</span></td>
-              </tr>
-              <tr>
-                <td><strong>Elections &amp; Voting</strong></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-check-to-slot"></i> Cast Ballot</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-plus"></i> Manage Club Elections</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-sliders"></i> Council General Elections &amp; Results Declaration</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-shield-halved"></i> Full Oversight &amp; Verification</span></td>
-              </tr>
-              <tr>
-                <td><strong>QR Attendance Scanner Terminal</strong></td>
-                <td><span class="perm-no">&times; Personal Pass only</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-camera"></i> Camera Scanner &amp; Generator</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-camera"></i> Universal Scanner &amp; Analytics</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-camera"></i> Full Attendance Administration</span></td>
-              </tr>
-              <tr>
-                <td><strong>Intelligent Reports &amp; AI Analytics</strong></td>
-                <td><span class="perm-no">&times; No Access</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-chart-line"></i> Club Reports &amp; Insights</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-brain"></i> Institutional AI Reports</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-brain"></i> Full Campus Analytics &amp; PDF Export</span></td>
-              </tr>
-              <tr>
-                <td><strong>User Account Administration</strong></td>
-                <td><span class="perm-no">&times; Profile only</span></td>
-                <td><span class="perm-no">&times; Profile only</span></td>
-                <td><span class="perm-no">&times; Restricted</span></td>
-                <td><span class="perm-yes"><i class="fa-solid fa-users-gear"></i> Full Account CRUD &amp; Role Changes</span></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <?php endif; /* end is_admin matrixTab */ ?>
-
-      <!-- ══════════════════════════════════════════════════════════════
-           TAB 3: System Audit Trail (Admin & SSC)
-      ══════════════════════════════════════════════════════════════ -->
-      <div class="admin-tab-content <?= $active_tab==='auditTab'?'active':'' ?>" id="auditTab">
-        <div class="table-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid #f1f5f9;">
-            <div>
-              <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-lock" style="color:#2563eb;"></i> System Activity Audit Trail <?= $is_admin ? '(Full Access)' : '(Read-Only)' ?></h3>
-              <p style="margin:2px 0 0; font-size:0.78rem; color:#64748b;">Real-time tamper-evident records of administrative and security events</p>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <input type="text" id="auditSearchInput" placeholder="Filter actions, details, users..." style="padding:7px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; min-width:240px;" oninput="filterAuditTable()"/>
-              <?php if ($is_admin): ?>
-              <a href="../shared/admin_actions.php?action=export_audit_csv" class="card-btn" style="background:#0f172a; color:#fff; font-weight:700; text-decoration:none;">
-                <i class="fa-solid fa-file-csv"></i> Export Audit Logs (CSV)
-              </a>
               <?php endif; ?>
-            </div>
-          </div>
-
-          <table class="data-table" id="auditTable">
-            <thead>
-              <tr>
-                <th>Timestamp</th>
-                <th>Actor</th>
-                <th>Role</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Detail &amp; Payload</th>
-                <th>IP Address</th>
-              </tr>
-            </thead>
-            <tbody>
-              <?php foreach ($audit_logs as $log): ?>
-              <?php $r_cls = str_replace('_', '', $log['role']); ?>
-              <tr class="audit-row" data-search="<?= strtolower($log['first_name'] . ' ' . $log['last_name'] . ' ' . $log['action'] . ' ' . ($log['detail'] ?? '')) ?>">
-                <td style="font-size:0.8rem; color:#64748b; white-space:nowrap;"><?= date('M d, Y h:i A', strtotime($log['created_at'])) ?></td>
-                <td><strong><?= htmlspecialchars($log['first_name'] . ' ' . $log['last_name']) ?></strong></td>
-                <td><span class="role-badge role-<?= $r_cls ?>"><?= htmlspecialchars($role_labels[$log['role']] ?? $log['role']) ?></span></td>
-                <td><code style="font-size:0.75rem; color:#1e3a8a; background:#e0f2fe; padding:2px 6px; border-radius:4px;"><?= htmlspecialchars($log['action']) ?></code></td>
-                <td><?= htmlspecialchars($log['target_table'] ?? '—') ?></td>
-                <td style="font-size:0.8rem; color:#334155; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="<?= htmlspecialchars($log['detail'] ?? '') ?>">
-                  <?= htmlspecialchars($log['detail'] ?? '—') ?>
-                </td>
-                <td style="font-size:0.75rem; color:#94a3b8; font-family:monospace;"><?= htmlspecialchars($log['ip_address'] ?? '127.0.0.1') ?></td>
-              </tr>
-              <?php endforeach; ?>
             </tbody>
           </table>
         </div>
       </div>
-
-      <!-- ══════════════════════════════════════════════════════════════
-           TAB 4: System Health & Settings (Admin Only)
-      ══════════════════════════════════════════════════════════════ -->
-      <?php if ($is_admin): ?>
-      <div class="admin-tab-content <?= $active_tab==='opsTab'?'active':'' ?>" id="opsTab">
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
-          
-          <!-- Diagnostics Card -->
-          <div class="table-card">
-            <h3 style="margin:0 0 14px; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-server" style="color:#2563eb;"></i> System Health &amp; Diagnostics</h3>
-            <table class="data-table">
-              <tbody>
-                <tr><td><strong>PHP Version</strong></td><td><code><?= PHP_VERSION ?></code></td></tr>
-                <tr><td><strong>MySQL Server</strong></td><td><code><?= $conn->server_info ?></code></td></tr>
-                <tr><td><strong>Storage Permissions</strong></td><td><span style="color:#16a34a; font-weight:700;"><i class="fa-solid fa-circle-check"></i> Writable (`uploads/`)</span></td></tr>
-                <tr><td><strong>Server Timezone</strong></td><td><code><?= date_default_timezone_get() ?> (<?= date('Y-m-d H:i:s') ?>)</code></td></tr>
-                <tr><td><strong>Registered Users</strong></td><td><strong><?= $user_count ?></strong> accounts</td></tr>
-                <tr><td><strong>Active Organizations</strong></td><td><strong><?= $club_count ?></strong> chartered orgs</td></tr>
-                <tr><td><strong>System Audit Records</strong></td><td><strong><?= (int)$conn->query("SELECT COUNT(*) FROM audit_logs")->fetch_row()[0] ?></strong> logs logged</td></tr>
-                <tr><td><strong>System Health Status</strong></td><td><span class="badge-active" style="background:#dcfce7; color:#166534;"><i class="fa-solid fa-circle-check"></i> All Systems Operational</span></td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Institutional Settings Form -->
-          <div class="table-card">
-            <h3 style="margin:0 0 14px; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-sliders" style="color:#2563eb;"></i> Institutional Configuration Store</h3>
-            <p style="font-size:0.8rem; color:#64748b; margin-top:-6px; margin-bottom:14px;">Global parameters stored in <code>system_settings</code> database table.</p>
-            <form id="sysSettingsForm" onsubmit="handleSaveSettings(event)">
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                <div class="form-group-admin">
-                  <label>Current Academic Year</label>
-                  <input type="text" name="academic_year" value="<?= htmlspecialchars($academic_year) ?>" required/>
-                </div>
-                <div class="form-group-admin">
-                  <label>Active Semester</label>
-                  <select name="active_semester">
-                    <option value="1st Semester" <?= $active_semester==='1st Semester'?'selected':'' ?>>1st Semester</option>
-                    <option value="2nd Semester" <?= $active_semester==='2nd Semester'?'selected':'' ?>>2nd Semester</option>
-                    <option value="Summer Term" <?= $active_semester==='Summer Term'?'selected':'' ?>>Summer Term</option>
-                  </select>
-                </div>
-              </div>
-              <div class="form-group-admin">
-                <label>Recognized Org Categories (one per line)</label>
-                <textarea name="org_categories" rows="2" style="font-family:monospace; font-size:0.8rem;"><?= htmlspecialchars($org_categories) ?></textarea>
-              </div>
-              <div class="form-group-admin">
-                <label>Automated Notification Templates</label>
-                <textarea name="notification_templates" rows="2" style="font-family:monospace; font-size:0.8rem;"><?= htmlspecialchars($notification_tpl) ?></textarea>
-              </div>
-              <div class="form-group-admin">
-                <label>Gemini AI Engine API Key</label>
-                <input type="password" name="gemini_api_key" value="<?= htmlspecialchars($sys_settings['gemini_api_key'] ?? '') ?>" placeholder="AIzaSy..."/>
-              </div>
-              <div style="text-align:right; margin-top:10px;">
-                <button type="submit" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;">
-                  <i class="fa-solid fa-floppy-disk"></i> Save System Settings
-                </button>
-              </div>
-            </form>
-          </div>
-
-        </div>
-
-        <!-- Stuck Requests Monitor -->
-        <div class="table-card">
-          <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid #f1f5f9;">
-            <div>
-              <h3 style="margin:0; font-size:1.05rem; color:#0f172a;"><i class="fa-solid fa-hourglass-half" style="color:#d97706;"></i> Stuck-Request Monitor &amp; Force-Advance Operations</h3>
-              <p style="margin:2px 0 0; font-size:0.78rem; color:#64748b;">Monitors requisitions and event proposals idle for over 7 days with emergency administrative override actions</p>
-            </div>
-            <button type="button" class="card-btn" style="background:#2563eb; color:#fff; font-weight:700;" onclick="loadStuckItemsLive()">
-              <i class="fa-solid fa-rotate"></i> Refresh Stuck Queue
-            </button>
-          </div>
-
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
-            <!-- Stuck Budgets Panel -->
-            <div>
-              <div style="font-size:0.82rem; font-weight:800; color:#475569; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;">
-                <span><i class="fa-solid fa-hand-holding-dollar" style="color:#2563eb;"></i> Stuck Budgets (> 7 Days):</span>
-                <span class="badge-warning" style="font-size:0.75rem;"><?= $stuck_budgets ?> idle</span>
-              </div>
-              <div id="stuckBudgetsContainer" style="max-height:260px; overflow-y:auto; border:1px solid #f1f5f9; border-radius:10px; padding:8px;">
-                <p style="text-align:center; color:#94a3b8; padding:20px; font-size:0.82rem;">Loading stuck budgets...</p>
-              </div>
-            </div>
-
-            <!-- Stuck Events Panel -->
-            <div>
-              <div style="font-size:0.82rem; font-weight:800; color:#475569; margin-bottom:10px; display:flex; align-items:center; justify-content:space-between;">
-                <span><i class="fa-solid fa-calendar-xmark" style="color:#d97706;"></i> Stuck Event Proposals (> 7 Days):</span>
-                <span class="badge-warning" style="font-size:0.75rem;"><?= $stuck_events ?> idle</span>
-              </div>
-              <div id="stuckEventsContainer" style="max-height:260px; overflow-y:auto; border:1px solid #f1f5f9; border-radius:10px; padding:8px;">
-                <p style="text-align:center; color:#94a3b8; padding:20px; font-size:0.82rem;">Loading stuck events...</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </div>
-      <?php endif; /* end is_admin opsTab */ ?>
-
     </div>
   </div>
+
   <div class="footer">eLearning Commons &copy; 2026</div>
 </div>
 
 <!-- ─────────────────────────────────────────────────────────────
      MODAL 1: Create New User (Admin Only)
 ───────────────────────────────────────────────────────────── -->
-<?php if ($is_admin): ?>
 <div class="modal-overlay" id="createUserModal">
   <div class="modal-card">
     <div class="modal-header">
@@ -653,7 +717,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         </div>
         <div class="form-group-admin">
           <label>Initial Password</label>
-          <input type="text" name="password" value="Password123!" required/>
+          <input type="password" name="password" placeholder="Enter initial password (min 8 chars)" required/>
         </div>
       </div>
       <div class="modal-footer">
@@ -723,7 +787,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <p style="font-size:0.85rem; color:#475569; margin-top:0;" id="resetUserNameText">Resetting password for user...</p>
         <div class="form-group-admin">
           <label>New Password</label>
-          <input type="text" name="new_password" value="Password123!" required/>
+          <input type="password" name="new_password" placeholder="Enter new password (min 8 chars)" required/>
         </div>
       </div>
       <div class="modal-footer">
@@ -735,31 +799,179 @@ require_once __DIR__ . '/../shared/sidebar.php';
 </div>
 
 <!-- ─────────────────────────────────────────────────────────────
-     MODAL 4: Stuck Budget Overrides (Admin Only)
+     MODAL 3B: Change Role (Admin Only)
 ───────────────────────────────────────────────────────────── -->
-<div class="modal-overlay" id="overrideModal">
-  <div class="modal-card">
+<div class="modal-overlay" id="changeRoleModal">
+  <div class="modal-card" style="max-width:440px;">
+    <div class="modal-header" style="background:#f5f3ff; border-bottom:1px solid #ddd6fe;">
+      <h3 style="color:#6d28d9;"><i class="fa-solid fa-user-tag" style="color:#7c3aed;"></i> Assign System Role</h3>
+      <button style="background:none; border:none; font-size:1.2rem; cursor:pointer; color:#64748b;" onclick="closeModal('changeRoleModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form id="changeRoleForm" onsubmit="handleUpdateRole(event)">
+      <input type="hidden" name="user_id" id="roleUserId"/>
+      <div class="modal-body">
+        <p style="font-size:0.85rem; color:#475569; margin-top:0;" id="roleUserNameText">Modifying role for user...</p>
+        <div class="form-group-admin">
+          <label>Select System Role <span style="color:#ef4444;">*</span></label>
+          <select name="new_role" id="roleSelectField" required>
+            <option value="student">General Student</option>
+            <option value="club_adviser">Faculty Club Adviser</option>
+            <option value="ssc">Supreme Student Council (SSC)</option>
+            <option value="admin">System Administrator</option>
+          </select>
+        </div>
+        <div style="font-size:0.75rem; color:#64748b; background:#f8fafc; border:1px solid #e2e8f0; padding:10px 12px; border-radius:8px; line-height:1.4;">
+          <i class="fa-solid fa-circle-info" style="color:#2563eb;"></i> Role changes alter the user's navigational permissions and data access scopes immediately.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569;" onclick="closeModal('changeRoleModal')">Cancel</button>
+        <button type="submit" class="card-btn" style="background:#7c3aed; color:#fff; font-weight:700;"><i class="fa-solid fa-check"></i> Save Role</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────
+     MODAL 3C: User Activity Trail (Admin Only)
+───────────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="userActivityModal">
+  <div class="modal-card" style="max-width:640px;">
     <div class="modal-header">
-      <h3><i class="fa-solid fa-bolt" style="color:#f59e0b;"></i> Force-Approve Stuck Budget Requests</h3>
-      <button style="background:none; border:none; font-size:1.2rem; cursor:pointer; color:#64748b;" onclick="closeModal('overrideModal')"><i class="fa-solid fa-xmark"></i></button>
+      <h3><i class="fa-solid fa-clock-rotate-left" style="color:#2563eb;"></i> User Audit Activity Trail</h3>
+      <button style="background:none; border:none; font-size:1.2rem; cursor:pointer; color:#64748b;" onclick="closeModal('userActivityModal')"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-body">
-      <p style="font-size:0.83rem; color:#64748b; margin-top:0;">Requests pending without movement for over 7 days:</p>
-      <div id="stuckList"><p style="color:#94a3b8; text-align:center;">Loading stuck items...</p></div>
+      <div style="margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid #f1f5f9;">
+        <strong id="activityUserNameText" style="font-size:0.92rem; color:#0f172a;"></strong>
+      </div>
+      <div id="userActivityTimeline" style="max-height:380px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px;">
+        <p style="text-align:center; color:#94a3b8; padding:20px;">Loading activity...</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569;" onclick="closeModal('userActivityModal')">Close</button>
     </div>
   </div>
 </div>
-<?php endif; ?>
+
+<!-- ─────────────────────────────────────────────────────────────
+     SLIDE-IN: User Profile Drawer (Admin Only)
+───────────────────────────────────────────────────────────── -->
+<div class="profile-drawer-overlay" id="userProfileDrawerOverlay" onclick="closeUserProfileDrawer()"></div>
+<div class="profile-drawer" id="userProfileDrawer">
+  <div class="drawer-header">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div id="drawerAvatar" style="width:38px; height:38px; border-radius:50%; background:#2563eb; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:0.95rem; box-shadow:0 2px 6px rgba(37,99,235,0.3);">
+        U
+      </div>
+      <div>
+        <h3 id="drawerName" style="margin:0; font-size:1.02rem; font-weight:800; color:#0f172a;">User Profile</h3>
+        <span id="drawerRoleBadge" class="role-badge role-student">Student</span>
+      </div>
+    </div>
+    <button style="background:none; border:none; font-size:1.25rem; cursor:pointer; color:#64748b;" onclick="closeUserProfileDrawer()" title="Close Drawer">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <!-- ACCOUNT INFORMATION -->
+    <div class="drawer-section">
+      <div class="drawer-section-title"><i class="fa-solid fa-id-card" style="color:#2563eb;"></i> ACCOUNT INFORMATION</div>
+      <div class="drawer-info-grid">
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Name</div>
+          <div class="drawer-info-value" id="drawerAccName">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Username</div>
+          <div class="drawer-info-value" id="drawerAccUsername">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Email</div>
+          <div class="drawer-info-value" id="drawerAccEmail">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Role</div>
+          <div class="drawer-info-value" id="drawerAccRole">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Status</div>
+          <div class="drawer-info-value" id="drawerAccStatus">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Created Date</div>
+          <div class="drawer-info-value" id="drawerAccCreated">—</div>
+        </div>
+        <div class="drawer-info-item" style="grid-column: span 2;">
+          <div class="drawer-info-label">Last Login</div>
+          <div class="drawer-info-value" id="drawerAccLastLogin">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACADEMIC / ORGANIZATIONAL -->
+    <div class="drawer-section">
+      <div class="drawer-section-title"><i class="fa-solid fa-graduation-cap" style="color:#0284c7;"></i> ACADEMIC / ORGANIZATIONAL</div>
+      <div class="drawer-info-grid">
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Student Number</div>
+          <div class="drawer-info-value" id="drawerAcaStudentNo">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Program</div>
+          <div class="drawer-info-value" id="drawerAcaProgram">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Year</div>
+          <div class="drawer-info-value" id="drawerAcaYear">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Section</div>
+          <div class="drawer-info-value" id="drawerAcaSection">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Organization</div>
+          <div class="drawer-info-value" id="drawerAcaOrg">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Membership Role</div>
+          <div class="drawer-info-value" id="drawerAcaRole">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECURITY -->
+    <div class="drawer-section">
+      <div class="drawer-section-title"><i class="fa-solid fa-shield-halved" style="color:#dc2626;"></i> SECURITY</div>
+      <div class="drawer-info-grid">
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Last Password Change</div>
+          <div class="drawer-info-value" id="drawerSecPassChange">—</div>
+        </div>
+        <div class="drawer-info-item">
+          <div class="drawer-info-label">Last Login</div>
+          <div class="drawer-info-value" id="drawerSecLastLogin">—</div>
+        </div>
+        <div class="drawer-info-item" style="grid-column: span 2;">
+          <div class="drawer-info-label">Recent IP</div>
+          <div class="drawer-info-value" id="drawerSecRecentIp">—</div>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <div class="drawer-info-label" style="margin-bottom:6px;">Recent Actions</div>
+        <div id="drawerSecRecentActions" style="font-size:0.78rem; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; max-height:160px; overflow-y:auto;">
+          <em>None recorded</em>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script src="../js/dashboard.js"></script>
 <script src="../js/table-pagination.js"></script>
 <script>
-function switchAdminTab(tabId, btn) {
-  document.querySelectorAll('.admin-tab-content').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.admin-tab-btn').forEach(el => el.classList.remove('active'));
-  document.getElementById(tabId)?.classList.add('active');
-  btn?.classList.add('active');
-}
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
 function showAlert(msg, type) {
   const el = document.getElementById('adminAlert');
@@ -783,21 +995,55 @@ function toggleStudentFields(role) {
 function filterUserTable() {
   const q = (document.getElementById('userSearchInput')?.value || '').toLowerCase().trim();
   const role = document.getElementById('userRoleFilterSelect')?.value || 'ALL';
-  document.querySelectorAll('.user-row').forEach(tr => {
+  const status = document.getElementById('userStatusFilterSelect')?.value || 'ALL';
+  const rows = document.querySelectorAll('.user-row');
+  let matchedCount = 0;
+
+  rows.forEach(tr => {
     const s = tr.getAttribute('data-search') || '';
     const r = tr.getAttribute('data-role') || '';
+    const st = tr.getAttribute('data-status') || '';
     const matchQ = !q || s.includes(q);
     const matchR = (role === 'ALL') || (r === role);
-    tr.style.display = (matchQ && matchR) ? '' : 'none';
+    const matchSt = (status === 'ALL') || (st === status);
+    const isMatch = matchQ && matchR && matchSt;
+
+    if (isMatch) {
+      tr.removeAttribute('data-search-hidden');
+      matchedCount++;
+    } else {
+      tr.setAttribute('data-search-hidden', 'true');
+      tr.style.setProperty('display', 'none', 'important');
+    }
   });
+
+  const noMatchRow = document.getElementById('userTableNoMatch');
+  if (noMatchRow) {
+    noMatchRow.style.display = (matchedCount === 0 && rows.length > 0) ? '' : 'none';
+  }
+
+  const table = document.getElementById('userTable');
+  if (table && table._paginator) {
+    table._paginator.currentPage = 1;
+    table._paginator.render();
+  }
 }
 
-function filterAuditTable() {
-  const q = (document.getElementById('auditSearchInput')?.value || '').toLowerCase().trim();
-  document.querySelectorAll('.audit-row').forEach(tr => {
-    const s = tr.getAttribute('data-search') || '';
-    tr.style.display = (!q || s.includes(q)) ? '' : 'none';
-  });
+function initUserDirectoryPagination() {
+  const tbl = document.getElementById('userTable');
+  if (tbl && window.initTablePagination && !tbl._paginator) {
+    window.initTablePagination(tbl, {
+      pageSize: 10,
+      showPageSizeSelector: false,
+      showInfo: false
+    });
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initUserDirectoryPagination);
+} else {
+  initUserDirectoryPagination();
 }
 
 function openCreateUserModal() {
@@ -810,6 +1056,7 @@ function handleCreateUser(e) {
   e.preventDefault();
   const fd = new FormData(e.target);
   fd.append('action', 'create_user');
+  if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
   fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
     .then(r => r.json())
@@ -838,6 +1085,7 @@ function handleUpdateUser(e) {
   e.preventDefault();
   const fd = new FormData(e.target);
   fd.append('action', 'update_user');
+  if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
   fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
     .then(r => r.json())
@@ -863,6 +1111,7 @@ function handleResetPassword(e) {
   e.preventDefault();
   const fd = new FormData(e.target);
   fd.append('action', 'reset_password');
+  if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
   fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
     .then(r => r.json())
@@ -877,11 +1126,18 @@ function handleResetPassword(e) {
     .catch(() => showAlert('Network error.', 'error'));
 }
 
-function deleteUser(id, name) {
-  if (!confirm(`Are you sure you want to permanently delete user "${name}"?`)) return;
+async function deleteUser(id, name) {
+  const confirmed = await window.showConfirmModal(
+    'Delete User Account?',
+    `Do you want to permanently delete the user account for "${name}"?`,
+    { type: 'error', danger: true, confirmText: 'Yes, Delete User' }
+  );
+  if (!confirmed) return;
+
   const fd = new FormData();
   fd.append('action', 'delete_user');
   fd.append('user_id', id);
+  if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
   fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
     .then(r => r.json())
@@ -896,145 +1152,179 @@ function deleteUser(id, name) {
     .catch(() => showAlert('Network error.', 'error'));
 }
 
-// Override modal handler
-document.getElementById('openOverrideBtn')?.addEventListener('click', () => {
-  openModal('overrideModal');
-  fetch('../shared/admin_actions.php?action=list_stuck')
+// ── User Profile Drawer & Lifecycle Handlers ──────────────────
+function openUserProfileDrawer(userId) {
+  document.getElementById('userProfileDrawerOverlay')?.classList.add('active');
+  document.getElementById('userProfileDrawer')?.classList.add('active');
+
+  document.getElementById('drawerName').textContent = 'Loading profile...';
+  document.getElementById('drawerAccName').textContent = 'Loading...';
+
+  fetch(`../shared/admin_actions.php?action=get_user_profile&user_id=${userId}`)
     .then(r => r.json())
-    .then(data => {
-      const el = document.getElementById('stuckList');
-      if (!data.success || !data.stuck.length) {
-        el.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:20px;">No stuck budget requests found.</p>';
+    .then(res => {
+      if (!res.success || !res.user) {
+        showAlert(res.message || 'Failed to load profile details.', 'error');
+        closeUserProfileDrawer();
         return;
       }
-      el.innerHTML = data.stuck.map(r => `
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #f1f5f9;">
+      const u = res.user;
+      const fullName = `${u.first_name} ${u.last_name}`;
+      
+      document.getElementById('drawerName').textContent = fullName;
+      const avatarEl = document.getElementById('drawerAvatar');
+      if (avatarEl) avatarEl.textContent = (u.first_name ? u.first_name[0] : 'U').toUpperCase();
+      
+      const roleMap = {
+        'student': 'General Student',
+        'club_adviser': 'Faculty Club Adviser',
+        'ssc': 'Supreme Student Council',
+        'admin': 'System Administrator'
+      };
+      const badgeEl = document.getElementById('drawerRoleBadge');
+      if (badgeEl) {
+        badgeEl.className = `role-badge role-${u.role.replace('_', '')}`;
+        badgeEl.textContent = roleMap[u.role] || u.role;
+      }
+
+      // 1. ACCOUNT INFORMATION
+      document.getElementById('drawerAccName').textContent = fullName;
+      document.getElementById('drawerAccUsername').textContent = u.username;
+      document.getElementById('drawerAccEmail').textContent = u.email;
+      document.getElementById('drawerAccRole').textContent = roleMap[u.role] || u.role;
+      document.getElementById('drawerAccStatus').innerHTML = `
+        <span class="status-badge ${u.status === 'Active' ? 'status-active' : 'status-inactive'}">
+          ${u.status || 'Active'}
+        </span>
+      `;
+      document.getElementById('drawerAccCreated').textContent = u.created_at ? new Date(u.created_at).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}) : '—';
+      document.getElementById('drawerAccLastLogin').textContent = u.last_login ? new Date(u.last_login).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'numeric'}) : 'Never authenticated';
+
+      // 2. ACADEMIC / ORGANIZATIONAL
+      document.getElementById('drawerAcaStudentNo').textContent = u.student_number || 'N/A';
+      document.getElementById('drawerAcaProgram').textContent = u.course || 'N/A';
+      document.getElementById('drawerAcaYear').textContent = u.year_level || 'N/A';
+      document.getElementById('drawerAcaSection').textContent = u.section || 'N/A';
+      document.getElementById('drawerAcaOrg').textContent = u.club_names || (u.role === 'club_adviser' ? 'Faculty Assignment' : (u.role === 'ssc' ? 'Supreme Student Council' : 'None'));
+      document.getElementById('drawerAcaRole').textContent = u.membership_roles || (u.role === 'student' ? 'Member' : (roleMap[u.role] || 'Staff'));
+
+      // 3. SECURITY
+      document.getElementById('drawerSecPassChange').textContent = u.last_password_change ? new Date(u.last_password_change).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'numeric'}) : 'Standard / Default';
+      document.getElementById('drawerSecLastLogin').textContent = u.last_login ? new Date(u.last_login).toLocaleString('en-US', {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'numeric'}) : 'Never';
+      document.getElementById('drawerSecRecentIp').textContent = res.recent_ip || '127.0.0.1 (Localhost)';
+
+      const recActionsDiv = document.getElementById('drawerSecRecentActions');
+      if (recActionsDiv) {
+        if (!res.recent_actions || res.recent_actions.length === 0) {
+          recActionsDiv.innerHTML = '<span style="color:#94a3b8; font-style:italic;">No recorded audit trail entries for this account.</span>';
+        } else {
+          recActionsDiv.innerHTML = res.recent_actions.map(a => `
+            <div style="padding:6px 0; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+              <div>
+                <strong style="color:#0f172a; font-size:0.76rem;">${a.action}</strong>
+                <div style="color:#64748b; font-size:0.72rem;">${a.detail || ''}</div>
+              </div>
+              <span style="color:#94a3b8; font-size:0.7rem; white-space:nowrap;">${a.created_at}</span>
+            </div>
+          `).join('');
+        }
+      }
+    })
+    .catch(() => {
+      showAlert('Failed to contact server for user profile.', 'error');
+      closeUserProfileDrawer();
+    });
+}
+
+function closeUserProfileDrawer() {
+  document.getElementById('userProfileDrawerOverlay')?.classList.remove('active');
+  document.getElementById('userProfileDrawer')?.classList.remove('active');
+}
+
+async function toggleUserStatus(userId, newStatus, userName) {
+  const actionWord = newStatus === 'Active' ? 'activate' : 'deactivate';
+  const confirmed = await window.showConfirmModal(
+    `${newStatus === 'Active' ? 'Activate' : 'Deactivate'} User Account?`,
+    `Do you want to ${actionWord} the account for "${userName}"?`,
+    { type: newStatus === 'Active' ? 'decision' : 'warning', warning: newStatus !== 'Active', confirmText: `Yes, ${actionWord.charAt(0).toUpperCase() + actionWord.slice(1)}` }
+  );
+  if (!confirmed) return;
+
+  const fd = new FormData();
+  fd.append('action', 'toggle_status');
+  fd.append('user_id', userId);
+  fd.append('status', newStatus);
+  if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        showAlert(res.message, 'success');
+        setTimeout(() => location.reload(), 900);
+      } else {
+        showAlert(res.message, 'error');
+      }
+    })
+    .catch(() => showAlert('Network error while toggling account status.', 'error'));
+}
+
+function openChangeRoleModal(userId, currentRole, userName) {
+  document.getElementById('roleUserId').value = userId;
+  document.getElementById('roleUserNameText').textContent = `Assigning new system role for: ${userName}`;
+  document.getElementById('roleSelectField').value = currentRole;
+  openModal('changeRoleModal');
+}
+
+function handleUpdateRole(e) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  fd.append('action', 'update_role');
+  if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success) {
+        showAlert(res.message, 'success');
+        closeModal('changeRoleModal');
+        setTimeout(() => location.reload(), 1000);
+      } else {
+        showAlert(res.message, 'error');
+      }
+    })
+    .catch(() => showAlert('Network error while updating role.', 'error'));
+}
+
+function openUserActivityModal(userId, userName) {
+  document.getElementById('activityUserNameText').textContent = `Audit Log History: ${userName}`;
+  const el = document.getElementById('userActivityTimeline');
+  el.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Fetching activity trail...</p>';
+  openModal('userActivityModal');
+
+  fetch(`../shared/admin_actions.php?action=get_user_activity&user_id=${userId}`)
+    .then(r => r.json())
+    .then(res => {
+      if (!res.success || !res.activity || res.activity.length === 0) {
+        el.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:24px;">No logged activities found for this user account.</p>';
+        return;
+      }
+      el.innerHTML = res.activity.map(a => `
+        <div style="padding:10px 12px; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
           <div>
-            <strong style="font-size:0.88rem;">${r.title}</strong>
-            <div style="font-size:0.75rem; color:#64748b;">${r.club_name} — ₱${parseFloat(r.amount).toLocaleString('en-PH', {minimumFractionDigits:2})}</div>
-            <div style="font-size:0.72rem; color:#d97706;">Status: ${r.status}</div>
+            <strong style="color:#0f172a; font-size:0.84rem;">${a.action}</strong>
+            <div style="color:#475569; font-size:0.78rem; margin-top:2px;">${a.detail || '—'}</div>
+            <div style="color:#94a3b8; font-size:0.72rem; margin-top:2px;">Target: <code>${a.target_table} #${a.target_id || ''}</code> &bull; IP: ${a.ip_address || '127.0.0.1'}</div>
           </div>
-          <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="forceApproveBudget(${r.id})">
-            <i class="fa-solid fa-bolt"></i> Force Approve
-          </button>
+          <span style="color:#64748b; font-size:0.74rem; font-weight:600; white-space:nowrap;">${a.created_at}</span>
         </div>
       `).join('');
     })
-    .catch(() => { document.getElementById('stuckList').innerHTML = '<p style="color:#dc2626;">Failed to load items.</p>'; });
-});
-
-function forceApproveBudget(id) {
-  if (!confirm('Force-forward this budget request to Administration?')) return;
-  const fd = new FormData();
-  fd.append('action', 'override_budget');
-  fd.append('budget_id', id);
-
-  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(res => {
-      if (res.success) {
-        showAlert('Budget request force-advanced successfully!', 'success');
-        closeModal('overrideModal');
-        if (typeof loadStuckItemsLive === 'function') loadStuckItemsLive();
-        setTimeout(() => location.reload(), 1200);
-      } else {
-        showAlert(res.message, 'error');
-      }
-    })
-    .catch(() => showAlert('Network error.', 'error'));
+    .catch(() => {
+      el.innerHTML = '<p style="text-align:center; color:#dc2626; padding:20px;">Failed to load activity log.</p>';
+    });
 }
 
-function handleSaveSettings(e) {
-  e.preventDefault();
-  const fd = new FormData(e.target);
-  fd.append('action', 'save_system_settings');
-
-  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(res => {
-      if (res.success) {
-        showAlert(res.message, 'success');
-      } else {
-        showAlert(res.message, 'error');
-      }
-    })
-    .catch(() => showAlert('Failed to save settings.', 'error'));
-}
-
-function loadStuckItemsLive() {
-  fetch('../shared/admin_actions.php?action=list_stuck')
-    .then(r => r.json())
-    .then(data => {
-      const bEl = document.getElementById('stuckBudgetsContainer');
-      const eEl = document.getElementById('stuckEventsContainer');
-      if (!data.success) return;
-
-      const budgets = data.stuck_budgets || data.stuck || [];
-      const events  = data.stuck_events || [];
-
-      if (bEl) {
-        if (!budgets.length) {
-          bEl.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:16px; font-size:0.8rem;"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> No stuck budget requisitions.</p>';
-        } else {
-          bEl.innerHTML = budgets.map(b => `
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:0.82rem;">
-              <div>
-                <strong>${b.title}</strong>
-                <div style="font-size:0.72rem; color:#64748b;">${b.club_name} &bull; ₱${parseFloat(b.amount).toLocaleString('en-PH', {minimumFractionDigits:2})}</div>
-              </div>
-              <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="forceApproveBudget(${b.id})">
-                <i class="fa-solid fa-bolt"></i> Force Approve
-              </button>
-            </div>
-          `).join('');
-        }
-      }
-
-      if (eEl) {
-        if (!events.length) {
-          eEl.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:16px; font-size:0.8rem;"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> No stuck event proposals.</p>';
-        } else {
-          eEl.innerHTML = events.map(ev => `
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:0.82rem;">
-              <div>
-                <strong>${ev.title}</strong>
-                <div style="font-size:0.72rem; color:#64748b;">${ev.club_name || 'Campus'} &bull; ${ev.event_date}</div>
-              </div>
-              <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff;" onclick="forceApproveEvent(${ev.id})">
-                <i class="fa-solid fa-check-double"></i> Force Clear
-              </button>
-            </div>
-          `).join('');
-        }
-      }
-    })
-    .catch(() => {});
-}
-
-function forceApproveEvent(id) {
-  if (!confirm('Force-approve and publish this event to the campus calendar?')) return;
-  const fd = new FormData();
-  fd.append('action', 'override_event');
-  fd.append('event_id', id);
-
-  fetch('../shared/admin_actions.php', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(res => {
-      if (res.success) {
-        showAlert(res.message, 'success');
-        if (typeof loadStuckItemsLive === 'function') loadStuckItemsLive();
-        setTimeout(() => location.reload(), 1200);
-      } else {
-        showAlert(res.message, 'error');
-      }
-    })
-    .catch(() => showAlert('Network error.', 'error'));
-}
-
-// Initial stuck items load if present
-if (document.getElementById('stuckBudgetsContainer')) {
-  loadStuckItemsLive();
-}
 </script>
 </body>
 </html>

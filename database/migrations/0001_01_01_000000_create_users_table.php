@@ -18,10 +18,12 @@ return new class extends Migration
                 $table->string('email', 100)->unique();
                 $table->string('first_name', 50);
                 $table->string('last_name', 50);
-                $table->string('password', 255);
+                $table->string('password_hash', 255);
                 $table->enum('role', ['student', 'club_adviser', 'ssc', 'admin'])->default('student');
                 $table->string('status', 20)->default('Active');
                 $table->string('profile_pic', 255)->nullable();
+                $table->dateTime('last_login')->nullable();
+                $table->dateTime('last_password_change')->nullable();
                 $table->rememberToken();
                 $table->timestamps();
             });

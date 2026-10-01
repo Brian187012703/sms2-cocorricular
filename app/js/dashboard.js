@@ -344,13 +344,31 @@ const notifClose   = document.getElementById('notifClose');
 const notifMarkAll = document.getElementById('notifMarkAll');
 
 function openNotifPanel() {
-    notifPanel.classList.add('active');
-    notifOverlay.classList.add('active');
+    if (typeof window.openNotifPanel === 'function') {
+        window.openNotifPanel();
+        return;
+    }
+    if (notifPanel) {
+        notifPanel.style.display = '';
+        notifPanel.classList.add('active', 'open');
+    }
+    if (notifOverlay) {
+        notifOverlay.style.display = '';
+        notifOverlay.classList.add('active', 'open');
+    }
 }
 
 function closeNotifPanel() {
-    notifPanel.classList.remove('active');
-    notifOverlay.classList.remove('active');
+    if (typeof window.closeNotifPanel === 'function') {
+        window.closeNotifPanel();
+        return;
+    }
+    if (notifPanel) {
+        notifPanel.classList.remove('active', 'open');
+    }
+    if (notifOverlay) {
+        notifOverlay.classList.remove('active', 'open');
+    }
 }
 
 function updateBellBadge() {
@@ -361,15 +379,16 @@ function updateBellBadge() {
 // Set initial badge state on page load
 updateBellBadge();
 
-bellBtn?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = notifPanel.classList.contains('active');
-    isOpen ? closeNotifPanel() : openNotifPanel();
-});
-
-// Close when clicking the × button or the overlay
-notifClose?.addEventListener('click', closeNotifPanel);
-notifOverlay?.addEventListener('click', closeNotifPanel);
+// If window.openNotifPanel is not already attached to bellBtn by sidebar.php
+if (!window.openNotifPanel) {
+    bellBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = notifPanel?.classList.contains('active') || notifPanel?.classList.contains('open');
+        isOpen ? closeNotifPanel() : openNotifPanel();
+    });
+    notifClose?.addEventListener('click', closeNotifPanel);
+    notifOverlay?.addEventListener('click', closeNotifPanel);
+}
 
 // Mark individual item as read on click
 document.getElementById('notifList')?.addEventListener('click', (e) => {
@@ -395,6 +414,378 @@ if (!window.openGlobalSpotlight) {
     searchScript.src = '../js/global-search.js';
     document.head.appendChild(searchScript);
 }
+
+// ============================================================
+//  8. RESPONSIVE TABLES AUTO-LABELER
+//  Automatically binds column headers to data-label attributes
+//  allowing mobile tables to render as stacked cards with no 
+//  horizontal/landscape scrollbar and without cut off text.
+// ============================================================
+function initResponsiveTables() {
+    const tableSelectors = [
+        '.table-wrap table',
+        '.table-responsive table',
+        '.resp-table-wrap table',
+        '.ledger-table-wrap table',
+        'table.table-wide',
+        'table.responsive-table',
+        'table.mobile-card-table',
+        'table.data-table',
+        'table.catalog-table',
+        'table.custom-table'
+    ];
+    
+    document.querySelectorAll(tableSelectors.join(', ')).forEach(table => {
+        // Skip tables explicitly opted out (like print layouts or matrix grids)
+        if (table.classList.contains('no-card-resp') || table.classList.contains('matrix-table') || table.classList.contains('meta-table') || table.classList.contains('export-table')) {
+            return;
+        }
+
+        let thElements = Array.from(table.querySelectorAll('thead th'));
+        if (thElements.length === 0) {
+            thElements = Array.from(table.querySelectorAll('tr:first-child th'));
+        }
+        if (thElements.length === 0) return;
+
+        const headers = thElements.map((th, colIdx) => {
+            let txt = th.textContent.replace(/\s+/g, ' ').trim();
+            // If header is empty or generic, detect if it's the action column
+            if (!txt) {
+                if (colIdx === thElements.length - 1 || th.classList.contains('actions-col') || th.querySelector('i, svg')) {
+                    txt = 'Action';
+                }
+            }
+            return txt;
+        });
+
+        table.classList.add('mobile-card-table');
+        const wrap = table.closest('.table-wrap, .table-responsive, .resp-table-wrap, .ledger-table-wrap');
+        if (wrap) {
+            wrap.classList.add('mobile-cards-wrap');
+        }
+
+        table.querySelectorAll('tbody tr').forEach(tr => {
+            // Skip header tr if accidentally inside tbody
+            if (tr.querySelector('th')) return;
+
+            const cells = tr.querySelectorAll('td');
+            if (cells.length === 1 && (cells[0].hasAttribute('colspan') || cells[0].classList.contains('empty-state-cell') || cells[0].classList.contains('table-empty-cell'))) {
+                cells[0].classList.add('table-empty-cell');
+                tr.classList.add('empty-card-row');
+                return;
+            }
+
+            cells.forEach((td, idx) => {
+                const headerText = headers[idx] || (idx === cells.length - 1 ? 'Action' : '');
+                if (headerText && !td.getAttribute('data-label')) {
+                    td.setAttribute('data-label', headerText);
+                }
+
+                // Detect action cells
+                const isActionCol = (headerText.toLowerCase().includes('action') || idx === cells.length - 1);
+                const hasActionBtn = td.querySelector('button, .card-btn, .act-btn, a.btn, .actions-group, .action-btn-group, .act-btns, .btn-group');
+                if (isActionCol && hasActionBtn) {
+                    td.classList.add('actions-cell');
+                }
+            });
+        });
+    });
+}
+
+window.initResponsiveTables = initResponsiveTables;
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initResponsiveTables);
+} else {
+    initResponsiveTables();
+}
+
+// Auto-reapply when DOM mutations add new rows or switch views
+if (typeof MutationObserver !== 'undefined' && document.body) {
+    const tableObserver = new MutationObserver((mutations) => {
+        let shouldRefresh = false;
+        for (const m of mutations) {
+            if (m.addedNodes.length > 0) {
+                for (let i = 0; i < m.addedNodes.length; i++) {
+                    const node = m.addedNodes[i];
+                    if (node.nodeType === 1 && (node.tagName === 'TR' || node.querySelector?.('tr, table'))) {
+                        shouldRefresh = true;
+                        break;
+                    }
+                }
+            }
+            if (shouldRefresh) break;
+        }
+        if (shouldRefresh) {
+            initResponsiveTables();
+        }
+    });
+    tableObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+// ============================================================
+//  8. MODERN CENTERED SYSTEM NOTIFICATION & DECISION MODAL
+//  Replaces primitive browser alerts with elegant, centered,
+//  accessible system dialogs for all notices and decision making.
+// ============================================================
+(function () {
+    let _activeModalResolve = null;
+
+    function ensureSysNotificationModal() {
+        let overlay = document.getElementById('sysNotificationModal');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'sysNotificationModal';
+            overlay.className = 'sys-notification-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.innerHTML = `
+                <div class="sys-notification-card" id="sysNotifCard">
+                    <button type="button" class="sys-notification-close" id="sysNotifCloseBtn" aria-label="Close" onclick="window.closeSysNotification(false)">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                    <div class="sys-notification-icon-wrap type-warning" id="sysNotifIconWrap">
+                        <i id="sysNotifIcon" class="fa-solid fa-triangle-exclamation"></i>
+                    </div>
+                    <div class="sys-notification-content">
+                        <h3 class="sys-notification-title" id="sysNotifTitle">Action Required</h3>
+                        <p class="sys-notification-message" id="sysNotifMessage"></p>
+                        <div id="sysNotifInputWrap" class="sys-notif-input-wrap" style="display:none;">
+                            <textarea id="sysNotifInput" class="sys-notif-textarea" rows="3" placeholder="Enter remarks or justification..."></textarea>
+                        </div>
+                    </div>
+                    <div class="sys-notification-actions" id="sysNotifActions">
+                        <button type="button" class="btn-sys-notif btn-sys-secondary" id="sysNotifCancelBtn" style="display:none;" onclick="window.closeSysNotification(false)">Cancel</button>
+                        <button type="button" class="btn-sys-notif btn-sys-primary" id="sysNotifConfirmBtn" onclick="window.handleSysNotificationConfirm()">Understood</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            // Backdrop click closes
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    window.closeSysNotification(false);
+                }
+            });
+        }
+        return overlay;
+    }
+
+    /**
+     * Show centered modern system notification or decision dialog
+     */
+    window.showSystemModal = function (options = {}) {
+        return new Promise((resolve) => {
+            _activeModalResolve = resolve;
+
+            const overlay = ensureSysNotificationModal();
+            const iconWrap = document.getElementById('sysNotifIconWrap');
+            const icon = document.getElementById('sysNotifIcon');
+            const titleEl = document.getElementById('sysNotifTitle');
+            const msgEl = document.getElementById('sysNotifMessage');
+            const inputWrap = document.getElementById('sysNotifInputWrap');
+            const inputEl = document.getElementById('sysNotifInput');
+            const cancelBtn = document.getElementById('sysNotifCancelBtn');
+            const confirmBtn = document.getElementById('sysNotifConfirmBtn');
+
+            // Format message & clean crude symbols
+            let cleanMsg = String(options.message ?? '');
+            if (cleanMsg.startsWith('✓ ') || cleanMsg.startsWith('✗ ')) {
+                cleanMsg = cleanMsg.slice(2);
+            }
+
+            // Determine type
+            let type = (options.type || 'info').toLowerCase();
+            const lower = cleanMsg.toLowerCase();
+            if (!options.type) {
+                if (lower.includes('please') || lower.includes('required') || lower.includes('must') || lower.includes('enter') || lower.includes('select') || lower.includes('remarks') || lower.includes('instruction')) {
+                    type = 'warning';
+                } else if (lower.includes('error') || lower.includes('failed') || lower.includes('invalid') || lower.includes('denied') || lower.includes('cannot') || lower.includes('reject')) {
+                    type = 'error';
+                } else if (lower.includes('success') || lower.includes('approved') || lower.includes('endorsed') || lower.includes('saved') || lower.includes('completed')) {
+                    type = 'success';
+                }
+            }
+
+            // Set Title
+            let title = options.title;
+            if (!title) {
+                if (type === 'warning') title = 'Action Required';
+                else if (type === 'error') title = 'Attention Required';
+                else if (type === 'success') title = 'Operation Successful';
+                else if (type === 'decision') title = 'Please Confirm Decision';
+                else title = 'System Notification';
+            }
+            titleEl.textContent = title;
+            msgEl.textContent = cleanMsg;
+
+            // Set Icon
+            iconWrap.className = 'sys-notification-icon-wrap type-' + type;
+            if (type === 'warning') {
+                icon.className = 'fa-solid fa-triangle-exclamation';
+            } else if (type === 'error') {
+                icon.className = 'fa-solid fa-circle-xmark';
+            } else if (type === 'success') {
+                icon.className = 'fa-solid fa-circle-check';
+            } else if (type === 'decision') {
+                icon.className = 'fa-solid fa-shield-halved';
+            } else {
+                icon.className = 'fa-solid fa-circle-info';
+            }
+
+            // Buttons & Inputs
+            const isDecision = Boolean(options.cancelText || options.isDecision || options.input);
+            cancelBtn.style.display = isDecision ? 'inline-flex' : 'none';
+            cancelBtn.textContent = options.cancelText || 'Cancel';
+
+            confirmBtn.textContent = options.confirmText || (isDecision ? 'Confirm' : 'Understood');
+
+            // Button variant
+            confirmBtn.className = 'btn-sys-notif ' + (options.danger ? 'btn-sys-danger' : (options.warning ? 'btn-sys-warning' : 'btn-sys-primary'));
+
+            // Optional Text Input
+            if (options.input) {
+                inputWrap.style.display = 'block';
+                inputEl.value = options.defaultValue || '';
+                inputEl.placeholder = options.placeholder || 'Enter instructions or reason...';
+                inputEl.dataset.required = options.requireInput ? 'true' : 'false';
+            } else {
+                inputWrap.style.display = 'none';
+                inputEl.value = '';
+                delete inputEl.dataset.required;
+            }
+
+            // Show Modal Centered
+            overlay.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+            void overlay.offsetWidth;
+            overlay.classList.add('active');
+
+            // Auto-focus
+            setTimeout(() => {
+                if (options.input) {
+                    inputEl.focus();
+                } else {
+                    confirmBtn.focus();
+                }
+            }, 50);
+        });
+    };
+
+    /**
+     * Confirm handler supporting input validation
+     */
+    window.handleSysNotificationConfirm = function () {
+        const inputWrap = document.getElementById('sysNotifInputWrap');
+        const inputEl = document.getElementById('sysNotifInput');
+        if (inputWrap && inputWrap.style.display !== 'none') {
+            const val = inputEl.value.trim();
+            if (inputEl.dataset.required === 'true' && !val) {
+                inputEl.style.borderColor = '#dc2626';
+                inputEl.focus();
+                return;
+            }
+            window.closeSysNotification(val || true);
+            return;
+        }
+        window.closeSysNotification(true);
+    };
+
+    /**
+     * Close centered system notification and resolve active promise
+     */
+    window.closeSysNotification = function (result) {
+        const overlay = document.getElementById('sysNotificationModal');
+        if (overlay) {
+            overlay.classList.remove('active');
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                document.body.style.overflow = '';
+            }, 200);
+        }
+        if (typeof _activeModalResolve === 'function') {
+            const cb = _activeModalResolve;
+            _activeModalResolve = null;
+            cb(result);
+        }
+    };
+
+    // Keyboard handling for centered system notifications
+    document.addEventListener('keydown', (e) => {
+        const overlay = document.getElementById('sysNotificationModal');
+        if (overlay && overlay.classList.contains('active')) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                window.closeSysNotification(false);
+            } else if (e.key === 'Enter' && !e.shiftKey) {
+                const inputEl = document.getElementById('sysNotifInput');
+                // Allow enter key to submit if active button or in single-line
+                if (document.activeElement !== inputEl) {
+                    e.preventDefault();
+                    window.handleSysNotificationConfirm();
+                }
+            }
+        }
+    });
+
+    /**
+     * MODERN CENTERED DECISION CONFIRM MODAL
+     * Returns Promise<boolean>
+     */
+    window.showConfirmModal = function (title, message, options = {}) {
+        return window.showSystemModal({
+            title: title || 'Please Confirm Decision',
+            message: message,
+            type: options.type || (options.danger ? 'error' : (options.warning ? 'warning' : 'decision')),
+            confirmText: options.confirmText || 'Confirm & Proceed',
+            cancelText: options.cancelText || 'Cancel',
+            danger: options.danger || false,
+            warning: options.warning || false,
+            isDecision: true
+        });
+    };
+
+    /**
+     * MODERN CENTERED DECISION INPUT MODAL
+     * Returns Promise<string|false>
+     */
+    window.showDecisionModal = function (title, message, options = {}) {
+        return window.showSystemModal({
+            title: title || 'Decision & Instructions',
+            message: message,
+            type: options.type || 'decision',
+            confirmText: options.confirmText || 'Submit Decision',
+            cancelText: options.cancelText || 'Cancel',
+            input: true,
+            placeholder: options.placeholder || 'Enter remarks or instructions...',
+            defaultValue: options.defaultValue || '',
+            requireInput: options.requireInput !== false,
+            danger: options.danger || false,
+            warning: options.warning || false,
+            isDecision: true
+        });
+    };
+
+    // ── Universal Replacement for Native Browser Alert ────────────
+    // Directly intercepts alert(...) calls across all application scripts
+    // and seamlessly renders the centered modern system dialog.
+    window.alert = function (message, titleOrType) {
+        return window.showSystemModal({
+            message: message,
+            type: typeof titleOrType === 'string' && ['warning', 'error', 'success', 'info', 'decision'].includes(titleOrType.toLowerCase())
+                ? titleOrType.toLowerCase()
+                : null,
+            title: typeof titleOrType === 'string' && !['warning', 'error', 'success', 'info', 'decision'].includes(titleOrType.toLowerCase())
+                ? titleOrType
+                : null,
+            confirmText: 'Understood'
+        });
+    };
+
+})();
+
 
 
 

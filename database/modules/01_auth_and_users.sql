@@ -13,7 +13,11 @@ CREATE TABLE IF NOT EXISTS `users` (
   `last_name` VARCHAR(100) NOT NULL,
   `password_hash` VARCHAR(255) NOT NULL,
   `role` ENUM('admin', 'student', 'club_adviser', 'ssc') NOT NULL DEFAULT 'student',
+  `status` ENUM('Active', 'Inactive') NOT NULL DEFAULT 'Active',
   `profile_pic` VARCHAR(255) DEFAULT NULL,
+  `last_login` DATETIME DEFAULT NULL,
+  `last_password_change` DATETIME DEFAULT NULL,
+  `last_mfa_verified_at` DATETIME DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -84,3 +88,38 @@ INSERT INTO `users` (`id`, `username`, `email`, `first_name`, `last_name`, `pass
 (58, 'ssc.officer', 'ssc@bcp.edu.ph', 'SSC', 'Officer', '$2y$10$IglOXnR9y1VmIwFNgiKNROrb4LlUsTexydSjISeGKHx1Fp.nJC/hq', 'ssc'),
 (59, 'scc.admin', 'admin@bcp.edu.ph', 'System', 'Admin', '$2y$10$v5YfjzzK2ZuRD88Sp9.Xp.I/vAFHzXIIR4WPZ2bU5HWchSYY2vCT6', 'admin')
 ON DUPLICATE KEY UPDATE `first_name`=VALUES(`first_name`), `last_name`=VALUES(`last_name`), `password_hash`=VALUES(`password_hash`), `role`=VALUES(`role`);
+
+CREATE TABLE IF NOT EXISTS `personal_access_tokens` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `tokenable_type` VARCHAR(255) NOT NULL,
+  `tokenable_id` BIGINT UNSIGNED NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `token` VARCHAR(64) NOT NULL,
+  `abilities` TEXT NULL,
+  `last_used_at` TIMESTAMP NULL DEFAULT NULL,
+  `expires_at` TIMESTAMP NULL DEFAULT NULL,
+  `created_at` TIMESTAMP NULL DEFAULT NULL,
+  `updated_at` TIMESTAMP NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `personal_access_tokens_token_unique` (`token`),
+  KEY `personal_access_tokens_tokenable_type_tokenable_id_index` (`tokenable_type`, `tokenable_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `mfa_codes` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT(10) UNSIGNED NOT NULL,
+  `email` VARCHAR(150) NOT NULL,
+  `code` VARCHAR(10) NOT NULL,
+  `purpose` ENUM('login', 'password_reset', 'account_update') NOT NULL DEFAULT 'login',
+  `expires_at` DATETIME NOT NULL,
+  `is_used` TINYINT(1) NOT NULL DEFAULT 0,
+  `attempts` INT NOT NULL DEFAULT 0,
+  `max_attempts` INT NOT NULL DEFAULT 5,
+  `ip_address` VARCHAR(45) NULL,
+  `user_agent` VARCHAR(255) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_mfa_user_purpose` (`user_id`, `purpose`, `is_used`, `expires_at`),
+  KEY `idx_mfa_code` (`code`),
+  CONSTRAINT `fk_mfa_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

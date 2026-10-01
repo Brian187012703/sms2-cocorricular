@@ -24,3 +24,5 @@ Homestead.yaml
 Thumbs.db
 /scratch
 implementation_plan123
+app/shared/install.lock
+database/backup_*.sql

@@ -1,7 +1,7 @@
 // ============================================================
 //  GLOBAL-SEARCH.JS
-//  Role-Based Access Control (RBAC) Search Panel
-//  Strictly searches authorized pages, modules, and events.
+//  Role-Based Access Control (RBAC) System Spotlight Search
+//  Provides instant search for authorized pages, events & orgs.
 // ============================================================
 
 (function () {
@@ -15,11 +15,38 @@
 
   function initSearchInputs() {
     document.querySelectorAll('.search-wrap').forEach(wrap => {
-      const input = wrap.querySelector('input');
-      if (!input || wrap.dataset.searchBound) return;
+      if (wrap.dataset.searchBound) return;
       wrap.dataset.searchBound = 'true';
 
-      // Create dropdown container for this search wrap
+      const input = wrap.querySelector('input');
+      if (!input) return;
+
+      // 1. Normalize DOM structure: ensure search icon is first child
+      let icon = wrap.querySelector('i.fa-magnifying-glass, .search-icon');
+      if (!icon) {
+        icon = document.createElement('i');
+        icon.className = 'fa-solid fa-magnifying-glass search-icon';
+        wrap.insertBefore(icon, input);
+      } else {
+        icon.classList.add('search-icon');
+        if (input.nextElementSibling === icon) {
+          wrap.insertBefore(icon, input);
+        }
+      }
+
+      // 2. Clear button (✕)
+      let clearBtn = wrap.querySelector('.search-clear-btn');
+      if (!clearBtn) {
+        clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'search-clear-btn';
+        clearBtn.title = 'Clear search';
+        clearBtn.setAttribute('aria-label', 'Clear search');
+        clearBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        wrap.appendChild(clearBtn);
+      }
+
+      // 3. Dropdown results menu
       let dropdown = wrap.querySelector('.search-dropdown-menu');
       if (!dropdown) {
         dropdown = document.createElement('div');
@@ -28,30 +55,85 @@
         wrap.appendChild(dropdown);
       }
 
-      input.addEventListener('focus', function () {
+      function updateHasText() {
+        if (input.value.trim().length > 0) {
+          wrap.classList.add('has-text');
+        } else {
+          wrap.classList.remove('has-text');
+        }
+      }
+
+      // Expand and focus
+      function activateSearch() {
+        wrap.classList.add('active');
         activeWrap = wrap;
         activeDropdown = dropdown;
+        updateHasText();
+        input.focus();
+      }
+
+      // Click icon / wrapper to expand
+      wrap.addEventListener('click', function (e) {
+        if (e.target.closest('.search-clear-btn') || e.target.closest('.search-dropdown-menu')) {
+          return;
+        }
+        if (!wrap.classList.contains('active')) {
+          e.preventDefault();
+          activateSearch();
+          openDropdown(wrap, dropdown, input.value.trim());
+        }
+      });
+
+      // Clear button click
+      clearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        input.value = '';
+        updateHasText();
+        input.focus();
+        openDropdown(wrap, dropdown, '');
+      });
+
+      // Focus
+      input.addEventListener('focus', function () {
+        activateSearch();
         openDropdown(wrap, dropdown, input.value.trim());
       });
 
+      // Input changes with debounce
       input.addEventListener('input', function (e) {
-        activeWrap = wrap;
-        activeDropdown = dropdown;
+        activateSearch();
         const q = e.target.value.trim();
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
           openDropdown(wrap, dropdown, q);
-        }, 120);
+        }, 130);
       });
 
+      // Keyboard navigation
       input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          input.value = '';
+          updateHasText();
+          wrap.classList.remove('active');
+          input.blur();
+          closeAllDropdowns();
+          return;
+        }
         handleKeyboardNav(e, dropdown);
       });
     });
 
-    // Close on click outside
+    // Close on outside click
     document.addEventListener('click', function (e) {
       if (!e.target.closest('.search-wrap')) {
+        document.querySelectorAll('.search-wrap.active').forEach(w => {
+          const inp = w.querySelector('input');
+          if (!inp || inp.value.trim() === '') {
+            w.classList.remove('active');
+            w.classList.remove('has-text');
+          }
+        });
         closeAllDropdowns();
       }
     });
@@ -64,8 +146,8 @@
 
     body.innerHTML = `
       <div class="search-dropdown-empty">
-        <i class="fa-solid fa-spinner fa-spin" style="color:#2563eb;"></i>
-        Searching...
+        <i class="fa-solid fa-spinner fa-spin" style="color:#2563eb; margin-right:6px;"></i>
+        Searching system...
       </div>
     `;
 
@@ -73,13 +155,17 @@
       .then(r => r.json())
       .then(data => {
         if (!data.success) {
-          body.innerHTML = '<div class="search-dropdown-empty">No results available.</div>';
+          body.innerHTML = '<div class="search-dropdown-empty">No results found.</div>';
+          visibleItems = [];
+          selectedIndex = -1;
           return;
         }
         renderDropdownResults(body, data.results, query);
       })
       .catch(() => {
-        body.innerHTML = '<div class="search-dropdown-empty">Error searching.</div>';
+        body.innerHTML = '<div class="search-dropdown-empty">Unable to complete search request.</div>';
+        visibleItems = [];
+        selectedIndex = -1;
       });
   }
 
@@ -90,8 +176,8 @@
     if (total === 0) {
       body.innerHTML = `
         <div class="search-dropdown-empty">
-          <i class="fa-solid fa-folder-open"></i>
-          <div>No authorized pages or events found for "<strong>${escapeHtml(query)}</strong>"</div>
+          <i class="fa-solid fa-folder-open" style="font-size:1.4rem; color:#94a3b8; display:block; margin-bottom:6px;"></i>
+          <div>No results found for "<strong>${escapeHtml(query)}</strong>"</div>
         </div>
       `;
       visibleItems = [];
@@ -101,9 +187,9 @@
 
     let html = '';
 
-    // 1. Pages & Modules (RBAC filtered)
+    // 1. Pages & Modules
     if (modules.length > 0) {
-      html += `<div class="search-dropdown-group-title"><i class="fa-solid fa-layer-group" style="color:#2563eb;"></i> Pages &amp; Modules</div>`;
+      html += `<div class="search-dropdown-group-title"><i class="fa-solid fa-layer-group" style="color:#2563eb;"></i> Modules &amp; Pages</div>`;
       modules.forEach(item => {
         html += `
           <a href="${item.url}" class="search-dropdown-item">
@@ -114,7 +200,7 @@
               <div class="search-dropdown-title">${escapeHtml(item.title)}</div>
               <div class="search-dropdown-desc">${escapeHtml(item.description || '')}</div>
             </div>
-            <span class="search-dropdown-badge">Page</span>
+            <span class="search-dropdown-badge">Module</span>
           </a>
         `;
       });
@@ -139,9 +225,9 @@
       });
     }
 
-    // 3. Organizations (If authorized)
+    // 3. Recognized Organizations
     if (clubs.length > 0) {
-      html += `<div class="search-dropdown-group-title"><i class="fa-solid fa-sitemap" style="color:#9333ea;"></i> Organizations</div>`;
+      html += `<div class="search-dropdown-group-title"><i class="fa-solid fa-sitemap" style="color:#9333ea;"></i> Student Organizations</div>`;
       clubs.forEach(item => {
         html += `
           <a href="${item.url}" class="search-dropdown-item">
@@ -163,34 +249,47 @@
     visibleItems = Array.from(body.querySelectorAll('.search-dropdown-item'));
     selectedIndex = visibleItems.length > 0 ? 0 : -1;
     updateSelection();
+
+    // Click handler for search items
+    visibleItems.forEach(item => {
+      item.addEventListener('click', function (e) {
+        e.preventDefault();
+        const dest = item.getAttribute('href');
+        if (dest) {
+          window.location.href = dest;
+        }
+      });
+    });
   }
 
   function handleKeyboardNav(e, dropdown) {
-    if (!dropdown.classList.contains('active')) return;
+    if (!dropdown.classList.contains('active') || !visibleItems.length) return;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (!visibleItems.length) return;
       selectedIndex = (selectedIndex + 1) % visibleItems.length;
       updateSelection();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (!visibleItems.length) return;
       selectedIndex = (selectedIndex - 1 + visibleItems.length) % visibleItems.length;
       updateSelection();
     } else if (e.key === 'Enter') {
+      e.preventDefault();
       if (selectedIndex >= 0 && visibleItems[selectedIndex]) {
-        e.preventDefault();
         visibleItems[selectedIndex].click();
+      } else if (visibleItems.length > 0) {
+        visibleItems[0].click();
       }
-    } else if (e.key === 'Escape') {
-      closeAllDropdowns();
     }
   }
 
   function updateSelection() {
     visibleItems.forEach((el, idx) => {
-      el.classList.toggle('selected', idx === selectedIndex);
+      const isSel = (idx === selectedIndex);
+      el.classList.toggle('selected', isSel);
+      if (isSel) {
+        el.scrollIntoView({ block: 'nearest' });
+      }
     });
   }
 
@@ -211,6 +310,9 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+
+  // Export to global scope if needed
+  window.initGlobalSearch = initSearchInputs;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initSearchInputs);

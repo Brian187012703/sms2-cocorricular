@@ -106,8 +106,19 @@ switch ($action) {
         $code         = strtoupper(trim($_POST['code'] ?? ''));
         $name         = trim($_POST['name'] ?? '');
         $category     = trim($_POST['category'] ?? 'Academic');
+        $sub_category = trim($_POST['sub_category'] ?? '');
         $description  = trim($_POST['description'] ?? '');
         $adviser_name = trim($_POST['adviser_name'] ?? 'Unassigned');
+
+        if (empty($sub_category)) {
+            if ($category === 'Cultural' || $category === 'Sports') {
+                $sub_category = 'Talent Center';
+            } elseif ($category === 'Advocacy') {
+                $sub_category = 'Campus-Wide Independent Bodies';
+            } else {
+                $sub_category = 'Academic Organization';
+            }
+        }
 
         $valid_categories = ['Academic', 'Cultural', 'Sports', 'Advocacy', 'Religious'];
         if (!$code || !$name || !in_array($category, $valid_categories)) {
@@ -123,8 +134,8 @@ switch ($action) {
         }
         $chk->close();
 
-        $stmt = $conn->prepare("INSERT INTO clubs (code, name, category, description, adviser_name, status) VALUES (?, ?, ?, ?, ?, 'Active')");
-        $stmt->bind_param('sssss', $code, $name, $category, $description, $adviser_name);
+        $stmt = $conn->prepare("INSERT INTO clubs (code, name, category, sub_category, description, adviser_name, status) VALUES (?, ?, ?, ?, ?, ?, 'Active')");
+        $stmt->bind_param('ssssss', $code, $name, $category, $sub_category, $description, $adviser_name);
         if (!$stmt->execute()) {
             cRespond(false, 'Failed to create organization: ' . $stmt->error);
         }

@@ -14,8 +14,10 @@ return new class extends Migration
                 $table->foreignId('event_id')->constrained('events')->cascadeOnDelete();
                 $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
                 $table->dateTime('check_in')->useCurrent();
-                $table->enum('method', ['QR', 'RFID', 'Manual'])->default('QR');
+                $table->enum('method', ['QR', 'RFID', 'Manual', 'QR_SELF'])->default('QR');
                 $table->foreignId('logged_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->text('override_reason')->nullable();
+                $table->string('status', 50)->default('Valid');
 
                 $table->unique(['event_id', 'user_id']);
             });

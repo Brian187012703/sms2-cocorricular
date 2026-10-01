@@ -1,9 +1,6 @@
 <?php
-session_start();
-if (empty($_SESSION['user_id'])) {
-    header('Location: ../auth/signin.php');
-    exit;
-}
+require_once __DIR__ . '/../shared/security.php';
+require_auth();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -21,9 +18,13 @@ if (empty($_SESSION['user_id'])) {
     <span class="dots"><span></span><span></span><span></span></span>
   </p>
   <script>
+    try {
+      localStorage.removeItem('bcp_sms_session_expired');
+      localStorage.setItem('bcp_sms_session_active', Date.now().toString());
+    } catch (e) {}
     setTimeout(function () {
       window.location.href = 'dashboard.php';
-    }, 2500);
+    }, 1200);
   </script>
 </body>
 </html>

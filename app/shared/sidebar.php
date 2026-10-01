@@ -10,9 +10,10 @@ require_once __DIR__ . '/security.php';
 $APP_ROOT   = $APP_ROOT   ?? '../';
 $ACTIVE_NAV = $ACTIVE_NAV ?? '';
 $user_role  = $_SESSION['role'] ?? 'student';
-$real_role  = $_SESSION['real_role'] ?? $user_role;
-$is_impersonating = ($user_role !== $real_role && $real_role === 'admin');
 ?>
+
+<!-- Global Screen-Centered Modern Notification & Decision Engine -->
+<script src="<?= $APP_ROOT ?>js/system-notifications.js?v=<?= filemtime(__DIR__ . '/../js/system-notifications.js') ?>"></script>
 
 <!-- Global CSRF Token Meta Tag -->
 <meta name="csrf-token" content="<?= csrf_token() ?>">
@@ -39,26 +40,6 @@ window.CSRF_TOKEN = "<?= csrf_token() ?>";
 })();
 </script>
 
-<?php if ($is_impersonating): ?>
-<!-- ══════════════════════════════════════════════════════════════
-     ADMIN IMPERSONATION AMBER BANNER
-══════════════════════════════════════════════════════════════ -->
-<div class="impersonation-amber-banner" style="position:fixed; top:0; left:0; right:0; z-index:99999; background:#fef3c7; border-bottom:2px solid #f59e0b; color:#92400e; padding:8px 20px; font-size:0.84rem; font-weight:700; display:flex; align-items:center; justify-content:space-between; box-shadow:0 4px 12px rgba(0,0,0,0.08);">
-  <div style="display:flex; align-items:center; gap:10px;">
-    <i class="fa-solid fa-triangle-exclamation" style="color:#d97706; font-size:1.05rem;"></i>
-    <span>Admin Sandbox: Viewing system as <strong><?= htmlspecialchars(ucwords(str_replace('_',' ',$user_role))) ?></strong></span>
-  </div>
-  <a href="<?= $APP_ROOT ?>dashboard/dashboard.php?switch_role=admin" style="background:#d97706; color:#fff; text-decoration:none; padding:5px 14px; border-radius:6px; font-size:0.76rem; font-weight:800; display:inline-flex; align-items:center; gap:6px; transition:background 0.2s;">
-    <i class="fa-solid fa-arrow-rotate-left"></i> Revert to System Admin
-  </a>
-</div>
-<style>
-  body { padding-top: 38px !important; }
-  .sidebar { top: 38px !important; height: calc(100vh - 38px) !important; }
-  .topbar { top: 38px !important; }
-</style>
-<?php endif; ?>
-
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <div class="sidebar-logo">
@@ -75,232 +56,373 @@ window.CSRF_TOKEN = "<?= csrf_token() ?>";
   <div class="sidebar-nav">
 
     <!-- ══════════════════════════════════════════════════════════
-         CORE NAVIGATION (All Roles)
+         PERMISSION-DRIVEN DYNAMIC NAVIGATION
+         Enforces granular RBAC keys loaded from MySQL
     ══════════════════════════════════════════════════════════ -->
-    <div class="sidebar-brand sidebar-brand-2">
-      <div class="brand-title">Core Navigation</div>
-      <div class="brand-sub">General &amp; Overview</div>
-    </div>
 
-    <!-- 1. Dashboard -->
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/dashboard.php" class="sidebar-item <?= $ACTIVE_NAV==='dashboard'?'active':'' ?>">
-        <i class="fa-solid fa-gauge"></i>
-        <span>Dashboard</span>
-      </a>
-    </div>
-
-    <!-- 2. Organization Directory (Hidden for Adviser) -->
-    <?php if ($user_role !== 'club_adviser'): ?>
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/club_directory.php" class="sidebar-item <?= $ACTIVE_NAV==='clubs'?'active':'' ?>">
-        <i class="fa-solid fa-sitemap"></i>
-        <span>Organization Directory</span>
-      </a>
-    </div>
-    <?php endif; ?>
-
-    <!-- ══════════════════════════════════════════════════════════
-         GOVERNANCE & LIFECYCLE
-    ══════════════════════════════════════════════════════════ -->
-    <div class="sidebar-divider"></div>
-    <div class="sidebar-brand sidebar-brand-2">
-      <div class="brand-title">Governance</div>
-      <div class="brand-sub">Roster &amp; Elections</div>
-    </div>
-
-    <!-- 3. Roster Management (Sidepanel Dropdown for Adviser & Officers) -->
-    <?php if ($user_role === 'student'): ?>
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/roster.php" class="sidebar-item <?= $ACTIVE_NAV==='roster'?'active':'' ?>">
-        <i class="fa-solid fa-users"></i>
-        <span>Membership Roster</span>
-      </a>
-    </div>
-    <?php else: ?>
-      <?php
-        $is_roster_active = ($ACTIVE_NAV === 'roster');
-        $roster_sub = $ACTIVE_SUB ?? ($_GET['view'] ?? 'queue');
-      ?>
-      <div class="nav-group">
-        <button class="sidebar-item <?= $is_roster_active ? 'active open' : '' ?> dropdown-trigger" data-target="dropRoster">
-          <i class="fa-solid fa-users"></i>
-          <span>Roster Management</span>
-          <i class="fa-solid fa-chevron-down arrow"></i>
-        </button>
-        <div class="dropdown-menu <?= $is_roster_active ? 'open' : '' ?>" id="dropRoster">
-          <a href="<?= $APP_ROOT ?>dashboard/roster.php?view=queue" class="dropdown-item <?= ($is_roster_active && $roster_sub === 'queue') ? 'active' : '' ?>">Application Queue</a>
-          <a href="<?= $APP_ROOT ?>dashboard/roster.php?view=roster" class="dropdown-item <?= ($is_roster_active && $roster_sub === 'roster') ? 'active' : '' ?>">Member Roster</a>
-        </div>
+    <!-- SECTION 1: DASHBOARD / OVERVIEW -->
+    <?php if (can_any(['dashboard.view.system', 'dashboard.view.institutional', 'dashboard.view.org', 'dashboard.view.own'])): ?>
+      <div class="sidebar-brand sidebar-brand-2">
+        <?php if (can('dashboard.view.system')): ?>
+          <div class="brand-title">Control Center</div>
+          <div class="brand-sub">Identity &amp; Master Data</div>
+        <?php elseif (can('dashboard.view.institutional')): ?>
+          <div class="brand-title">Executive Core</div>
+          <div class="brand-sub">Council Oversight</div>
+        <?php else: ?>
+          <div class="brand-title">Core Navigation</div>
+          <div class="brand-sub">General &amp; Overview</div>
+        <?php endif; ?>
       </div>
-    <?php endif; ?>
 
-    <!-- 4. Events & Activities (Sidepanel Dropdown for Adviser & Officers) -->
-    <?php if ($user_role === 'student'): ?>
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/events.php" class="sidebar-item <?= $ACTIVE_NAV==='events'?'active':'' ?>">
-        <i class="fa-solid fa-calendar-days"></i>
-        <span>Events &amp; Activities</span>
-      </a>
-    </div>
-    <?php else: ?>
-      <?php
-        $is_events_active = ($ACTIVE_NAV === 'events');
-        $events_sub = $ACTIVE_SUB ?? ($_GET['view'] ?? 'calendar');
-      ?>
       <div class="nav-group">
-        <button class="sidebar-item <?= $is_events_active ? 'active open' : '' ?> dropdown-trigger" data-target="dropEvents">
-          <i class="fa-solid fa-calendar-days"></i>
-          <span>Events &amp; Activities</span>
-          <i class="fa-solid fa-chevron-down arrow"></i>
-        </button>
-        <div class="dropdown-menu <?= $is_events_active ? 'open' : '' ?>" id="dropEvents">
-          <a href="<?= $APP_ROOT ?>dashboard/events.php?view=calendar" class="dropdown-item <?= ($is_events_active && $events_sub === 'calendar') ? 'active' : '' ?>">Active Calendar</a>
-          <a href="<?= $APP_ROOT ?>dashboard/events.php?view=pipeline" class="dropdown-item <?= ($is_events_active && $events_sub === 'pipeline') ? 'active' : '' ?>">Campus Event Calendar &amp; Approval Pipeline</a>
-        </div>
-      </div>
-    <?php endif; ?>
-
-    <!-- 5. Budget & Finance (Adviser, SSC, Admin ONLY - Student Access Terminated) -->
-    <?php if (in_array($user_role, ['club_adviser', 'ssc', 'admin'])): ?>
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/budget.php" class="sidebar-item <?= $ACTIVE_NAV==='budget'?'active':'' ?>">
-        <i class="fa-solid fa-hand-holding-dollar"></i>
-        <span>Budget &amp; Finance</span>
-      </a>
-    </div>
-    <?php endif; ?>
-
-    <!-- 6. Elections & Voting -->
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/elections.php" class="sidebar-item <?= $ACTIVE_NAV==='elections'?'active':'' ?>">
-        <i class="fa-solid fa-check-to-slot"></i>
-        <span>Elections &amp; Voting</span>
-      </a>
-    </div>
-
-    <!-- ══════════════════════════════════════════════════════════
-         ACTIVITIES & RECORDS
-    ══════════════════════════════════════════════════════════ -->
-    <div class="sidebar-divider"></div>
-    <div class="sidebar-brand sidebar-brand-2">
-      <div class="brand-title">Records &amp; Media</div>
-      <div class="brand-sub">Achievements &amp; Tracking</div>
-    </div>
-
-    <!-- 7. Achievements & Awards (Reactivated for all roles) -->
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/achievements.php" class="sidebar-item <?= $ACTIVE_NAV==='achievements'?'active':'' ?>">
-        <i class="fa-solid fa-award"></i>
-        <span>Achievements &amp; Awards</span>
-      </a>
-    </div>
-
-    <!-- 8. Tracking Portal / My Attendance History -->
-    <?php if ($user_role === 'student'): ?>
-      <div class="nav-group">
-        <a href="<?= $APP_ROOT ?>dashboard/tracking_history.php" class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active':'' ?>">
-          <i class="fa-solid fa-clipboard-user"></i>
-          <span>My Attendance History</span>
+        <a href="<?= $APP_ROOT ?>dashboard/dashboard.php" class="sidebar-item <?= $ACTIVE_NAV==='dashboard'?'active':'' ?>">
+          <i class="fa-solid <?= can('dashboard.view.system') ? 'fa-gauge-high' : 'fa-gauge' ?>"></i>
+          <span>
+            <?= can('dashboard.view.system') ? 'Dashboard' : (can('dashboard.view.institutional') ? 'Executive Dashboard' : 'Dashboard') ?>
+          </span>
         </a>
       </div>
-    <?php else: ?>
-      <?php
-        $attendance_items = [
-            ['url' => $APP_ROOT . 'dashboard/tracking_qr_generator.php', 'label' => 'Event QR Generator', 'id' => 'generator'],
-            ['url' => $APP_ROOT . 'dashboard/tracking_scanner.php', 'label' => 'On-Site Scanner Terminal', 'id' => 'scanner'],
-            ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php', 'label' => 'Attendance List per Event', 'id' => 'attendance_list'],
-        ];
-        if (in_array($user_role, ['ssc', 'admin'])) {
-            $attendance_items[] = ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php#analytics', 'label' => 'Absentee Analytics & Overrides', 'id' => 'analytics'];
-        }
-      ?>
-      <div class="nav-group">
-        <button class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active':'' ?> dropdown-trigger" data-target="dropTracking">
-          <i class="fa-solid fa-qrcode"></i>
-          <span>Tracking Portal</span>
-          <i class="fa-solid fa-chevron-down arrow"></i>
-        </button>
-        <div class="dropdown-menu" id="dropTracking">
-          <?php foreach ($attendance_items as $item): ?>
-            <a href="<?= $item['url'] ?>" class="dropdown-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') === ($item['id'] ?? '')) ? 'active' : '' ?>"><?= $item['label'] ?></a>
-          <?php endforeach; ?>
+    <?php endif; ?>
+
+    <!-- SECTION 2: MASTER DATA & DIRECTORY -->
+    <?php if (can_any(['users.manage.all', 'organization.crud', 'master_data.academic', 'organization.review.all', 'organization.view'])): ?>
+      <!-- User & Access Management -->
+      <?php if (can('users.manage.all')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/admin_system.php" class="sidebar-item <?= in_array($ACTIVE_NAV, ['admin', 'admin_users']) ? 'active' : '' ?>">
+            <i class="fa-solid fa-users-gear"></i>
+            <span>User &amp; Access Management</span>
+          </a>
         </div>
-      </div>
+      <?php endif; ?>
+
+      <!-- Organization Master Data (Admin) -->
+      <?php if (can('organization.crud')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/admin_org_master.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_org_master') ? 'active' : '' ?>">
+            <i class="fa-solid fa-sitemap"></i>
+            <span>Organization Master Data</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- Academic Master Data (Admin) -->
+      <?php if (can('master_data.academic')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/admin_academics.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_academics') ? 'active' : '' ?>">
+            <i class="fa-solid fa-graduation-cap"></i>
+            <span>Academic Master Data</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- Organization Directory / Governance (SSC / Student) -->
+      <?php if (!can('organization.crud') && can('organization.view')): ?>
+        <?php if (can('organization.review.all')): ?>
+          <!-- SSC Governance -->
+          <div class="nav-group">
+            <a href="<?= $APP_ROOT ?>dashboard/club_directory.php" class="sidebar-item <?= $ACTIVE_NAV==='clubs'?'active':'' ?>">
+              <i class="fa-solid fa-sitemap"></i>
+              <span>Organization Governance</span>
+            </a>
+          </div>
+        <?php elseif (!can('organization.manage.own')): ?>
+          <!-- Student Directory -->
+          <div class="nav-group">
+            <a href="<?= $APP_ROOT ?>dashboard/club_directory.php" class="sidebar-item <?= $ACTIVE_NAV==='clubs'?'active':'' ?>">
+              <i class="fa-solid fa-sitemap"></i>
+              <span>Organization Directory</span>
+            </a>
+          </div>
+        <?php endif; ?>
+      <?php endif; ?>
     <?php endif; ?>
 
-    <!-- 9. Announcements (Campus-wide & Org) -->
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/announcements.php" class="sidebar-item <?= $ACTIVE_NAV==='announcements'?'active':'' ?>">
-        <i class="fa-solid fa-bullhorn"></i>
-        <span>Announcements</span>
-      </a>
-    </div>
-
-    <!-- ══════════════════════════════════════════════════════════
-         INTELLIGENCE & REPORTS (Adviser, SSC, Admin)
-    ══════════════════════════════════════════════════════════ -->
-    <?php if ($user_role !== 'student'): ?>
-    <div class="sidebar-divider"></div>
-    <div class="sidebar-brand sidebar-brand-2">
-      <div class="brand-title"><?= $user_role === 'club_adviser' ? 'Reports & Analytics' : 'Analytics & Reports' ?></div>
-      <div class="brand-sub"><?= $user_role === 'club_adviser' ? 'Organizational Insights' : 'Performance Insights' ?></div>
-    </div>
-
-    <!-- 10. Reports & Analytics -->
-    <div class="nav-group">
-      <a href="<?= $APP_ROOT ?>dashboard/reports.php" class="sidebar-item <?= $ACTIVE_NAV==='reports'?'active':'' ?>">
-        <i class="fa-solid fa-chart-column"></i>
-        <span><?= $user_role === 'club_adviser' ? 'Organization Reports' : 'Reports & Analytics' ?></span>
-      </a>
-    </div>
-    <?php endif; ?>
-
-    <!-- ══════════════════════════════════════════════════════════
-         ADMINISTRATION & AUDIT
-    ══════════════════════════════════════════════════════════ -->
-    <?php if ($user_role === 'ssc'): ?>
-      <!-- SSC Officer Item 11: System Audit Logs (read-only) -->
+    <!-- SECTION 3: WORKFLOW ADMINISTRATION & GOVERNANCE -->
+    <?php if (can_any([
+        'membership.review.all', 'membership.review.own',
+        'events.approve.admin', 'events.review.ssc', 'events.create.own', 'events.create.institutional', 'events.view',
+        'budget.disburse.admin', 'budget.review.ssc', 'budget.endorse.adviser', 'budget.create.own', 'budget.view.all',
+        'elections.admin', 'elections.oversight', 'elections.manage.org', 'elections.vote'
+    ])): ?>
       <div class="sidebar-divider"></div>
       <div class="sidebar-brand sidebar-brand-2">
-        <div class="brand-title">Oversight</div>
-        <div class="brand-sub">Audit Trail</div>
+        <?php if (can('events.approve.admin')): ?>
+          <div class="brand-title">Workflow Administration</div>
+          <div class="brand-sub">Approvals &amp; Pipeline</div>
+        <?php elseif (can('events.review.ssc')): ?>
+          <div class="brand-title">Governance</div>
+          <div class="brand-sub">Endorsements &amp; Voting</div>
+        <?php elseif (can('events.create.own')): ?>
+          <div class="brand-title">Governance</div>
+          <div class="brand-sub">Roster &amp; Elections</div>
+        <?php else: ?>
+          <div class="brand-title">Governance</div>
+          <div class="brand-sub">Events &amp; Elections</div>
+        <?php endif; ?>
       </div>
-      <div class="nav-group">
-        <a href="<?= $APP_ROOT ?>dashboard/admin_system.php?tab=auditTab" class="sidebar-item <?= ($ACTIVE_NAV==='admin'||($ACTIVE_TAB??'')==='auditTab')?'active':'' ?>">
-          <i class="fa-solid fa-list-check"></i>
-          <span>System Audit Logs (Read-Only)</span>
-        </a>
-      </div>
-    <?php elseif ($user_role === 'admin'): ?>
-      <!-- System Admin Exclusive Items 10, 11, 12 -->
+
+      <!-- Roster Management / Oversight -->
+      <?php if (can_any(['membership.review.all', 'membership.review.own'])): ?>
+        <?php
+          $is_roster_active = ($ACTIVE_NAV === 'roster');
+          $roster_sub = $ACTIVE_SUB ?? ($_GET['view'] ?? 'queue');
+          $roster_label = can('membership.review.all') ? 'Roster Oversight' : 'Roster Management';
+        ?>
+        <div class="nav-group">
+          <button class="sidebar-item <?= $is_roster_active ? 'active open' : '' ?> dropdown-trigger" data-target="dropRoster">
+            <i class="fa-solid fa-users"></i>
+            <span><?= $roster_label ?></span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="dropdown-menu <?= $is_roster_active ? 'open' : '' ?>" id="dropRoster">
+            <a href="<?= $APP_ROOT ?>dashboard/roster.php?view=queue" class="dropdown-item <?= ($is_roster_active && $roster_sub === 'queue') ? 'active' : '' ?>">Application Queue</a>
+            <a href="<?= $APP_ROOT ?>dashboard/roster.php?view=roster" class="dropdown-item <?= ($is_roster_active && $roster_sub === 'roster') ? 'active' : '' ?>">Member Roster</a>
+          </div>
+        </div>
+      <?php endif; ?>
+
+      <!-- Events -->
+      <?php if ($user_role === 'student'): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/events.php?view=calendar" class="sidebar-item <?= ($ACTIVE_NAV === 'events') ? 'active' : '' ?>">
+            <i class="fa-solid fa-calendar-days"></i>
+            <span>Events</span>
+          </a>
+        </div>
+      <?php elseif (can_any(['events.approve.admin', 'events.review.ssc', 'events.create.institutional', 'events.create.own', 'events.view'])): ?>
+        <?php
+          $is_events_active = ($ACTIVE_NAV === 'events');
+          $events_sub = $ACTIVE_SUB ?? ($_GET['view'] ?? 'calendar');
+        ?>
+        <div class="nav-group">
+          <button class="sidebar-item <?= $is_events_active ? 'active open' : '' ?> dropdown-trigger" data-target="dropEvents">
+            <i class="fa-solid fa-calendar-days"></i>
+            <span>Events</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="dropdown-menu <?= $is_events_active ? 'open' : '' ?>" id="dropEvents">
+            <a href="<?= $APP_ROOT ?>dashboard/events.php?view=calendar" class="dropdown-item <?= ($is_events_active && $events_sub === 'calendar') ? 'active' : '' ?>">Active Calendar</a>
+            <a href="<?= $APP_ROOT ?>dashboard/events.php?view=pipeline" class="dropdown-item <?= ($is_events_active && $events_sub === 'pipeline') ? 'active' : '' ?>">Event Proposals &amp; Pipeline</a>
+          </div>
+        </div>
+      <?php endif; ?>
+
+      <!-- Budget & Finance / Disbursement -->
+      <?php if (can('budget.disburse.admin')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/budget.php" class="sidebar-item <?= ($ACTIVE_NAV==='budget')?'active':'' ?>">
+            <i class="fa-solid fa-money-bill-transfer"></i>
+            <span>Budget &amp; Disbursement</span>
+          </a>
+        </div>
+      <?php elseif (can_any(['budget.review.ssc', 'budget.endorse.adviser', 'budget.create.own', 'budget.view.all'])): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/budget.php" class="sidebar-item <?= ($ACTIVE_NAV==='budget')?'active':'' ?>">
+            <i class="fa-solid fa-hand-holding-dollar"></i>
+            <span>Budget &amp; Finance</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- Elections -->
+      <?php if (can('elections.admin')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/elections.php" class="sidebar-item <?= ($ACTIVE_NAV==='elections')?'active':'' ?>">
+            <i class="fa-solid fa-check-to-slot"></i>
+            <span>Election Administration</span>
+          </a>
+        </div>
+      <?php elseif (can('elections.oversight')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/elections.php" class="sidebar-item <?= ($ACTIVE_NAV==='elections')?'active':'' ?>">
+            <i class="fa-solid fa-check-to-slot"></i>
+            <span>Elections &amp; Governance</span>
+          </a>
+        </div>
+      <?php elseif (can_any(['elections.manage.org', 'elections.vote'])): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/elections.php" class="sidebar-item <?= ($ACTIVE_NAV==='elections')?'active':'' ?>">
+            <i class="fa-solid fa-check-to-slot"></i>
+            <span>Elections &amp; Voting</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- Attendance for Students -->
+      <?php if ($user_role === 'student'): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/tracking_history.php" class="sidebar-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') !== 'scanner')?'active':'' ?>">
+            <i class="fa-solid fa-clipboard-user"></i>
+            <span>My Attendance</span>
+          </a>
+        </div>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/tracking_scanner.php" class="sidebar-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') === 'scanner')?'active':'' ?>">
+            <i class="fa-solid fa-qrcode"></i>
+            <span>Scan Attendance</span>
+          </a>
+        </div>
+      <?php endif; ?>
+    <?php endif; ?>
+
+    <!-- SECTION 4: RECORDS & TRACKING -->
+    <?php if (can_any(['achievements.view', 'achievements.submit', 'achievements.verify.ssc', 'attendance.view.analytics', 'attendance.track.org', 'attendance.override'])): ?>
       <div class="sidebar-divider"></div>
       <div class="sidebar-brand sidebar-brand-2">
-        <div class="brand-title">Administration</div>
-        <div class="brand-sub">System &amp; Security</div>
+        <div class="brand-title">Records &amp; Media</div>
+        <div class="brand-sub">Validation &amp; Attendance</div>
       </div>
 
-      <!-- 10. User & Access Management (Admin-exclusive) -->
+      <!-- Achievements & Awards -->
+      <?php if (can_any(['achievements.view', 'achievements.submit', 'achievements.verify.ssc'])): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/achievements.php" class="sidebar-item <?= $ACTIVE_NAV==='achievements'?'active':'' ?>">
+            <i class="fa-solid fa-award"></i>
+            <span>Achievements &amp; Awards</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- Attendance Portal for Admin, SSC, Club Adviser -->
+      <?php if ($user_role !== 'student'): ?>
+        <?php
+          if ($user_role === 'admin') {
+              $attendance_items = [
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php', 'label' => 'All Attendance', 'id' => 'all'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php#sessions', 'label' => 'QR Sessions', 'id' => 'sessions'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_qr_generator.php', 'label' => 'Live QR Sessions', 'id' => 'generator'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php#attempts', 'label' => 'Scan Attempts &amp; Audit', 'id' => 'attempts'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_scanner.php', 'label' => 'Scanner Terminal', 'id' => 'scanner'],
+              ];
+          } elseif ($user_role === 'ssc') {
+              $attendance_items = [
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php', 'label' => 'Attendance Monitor', 'id' => 'monitor'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_qr_generator.php', 'label' => 'Live QR Sessions', 'id' => 'generator'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php#attempts', 'label' => 'Scan Attempts', 'id' => 'attempts'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php#records', 'label' => 'Verification Records', 'id' => 'records']
+              ];
+          } else {
+              // Club Adviser
+              $attendance_items = [
+                  ['url' => $APP_ROOT . 'dashboard/tracking_qr_generator.php', 'label' => 'Live Attendance &amp; QR', 'id' => 'generator'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_attendance_list.php', 'label' => 'Attendance Records', 'id' => 'attendance_list'],
+                  ['url' => $APP_ROOT . 'dashboard/tracking_scanner.php', 'label' => 'Scanner Terminal', 'id' => 'scanner'],
+              ];
+          }
+        ?>
+        <div class="nav-group">
+          <button class="sidebar-item <?= $ACTIVE_NAV==='attendance'?'active':'' ?> dropdown-trigger" data-target="dropTracking">
+            <i class="fa-solid fa-qrcode"></i>
+            <span>Attendance Portal</span>
+            <i class="fa-solid fa-chevron-down arrow"></i>
+          </button>
+          <div class="dropdown-menu" id="dropTracking">
+            <?php foreach ($attendance_items as $item): ?>
+              <a href="<?= $item['url'] ?>" class="dropdown-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') === ($item['id'] ?? '')) ? 'active' : '' ?>"><?= $item['label'] ?></a>
+            <?php endforeach; ?>
+          </div>
+        </div>
+      <?php endif; ?>
+    <?php endif; ?>
+
+    <!-- SECTION 5: COMMUNICATION -->
+    <?php if (can_any(['announcements.manage.all', 'announcements.create.council', 'announcements.create.org'])): ?>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-brand sidebar-brand-2">
+        <div class="brand-title">Communication</div>
+        <div class="brand-sub">Broadcasts &amp; Notices</div>
+      </div>
+
       <div class="nav-group">
-        <a href="<?= $APP_ROOT ?>dashboard/admin_system.php?tab=usersTab" class="sidebar-item <?= ($ACTIVE_NAV==='admin'&&($ACTIVE_TAB??'')==='usersTab')?'active':'' ?>">
-          <i class="fa-solid fa-users-gear"></i>
-          <span>User &amp; Access Control</span>
+        <a href="<?= $APP_ROOT ?>dashboard/announcements.php" class="sidebar-item <?= ($ACTIVE_NAV==='announcements')?'active':'' ?>">
+          <i class="fa-solid fa-bullhorn"></i>
+          <span>
+            <?= can('announcements.manage.all') ? 'Announcement Administration' : (can('announcements.create.council') ? 'Council Announcements' : 'Announcements') ?>
+          </span>
+        </a>
+      </div>
+    <?php endif; ?>
+
+    <!-- SECTION 6: ANALYTICS & REPORTS -->
+    <?php if (can_any(['reports.view.system', 'reports.view.institutional', 'reports.view.org'])): ?>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-brand sidebar-brand-2">
+        <div class="brand-title">Analytics</div>
+        <div class="brand-sub">Intelligence &amp; Data</div>
+      </div>
+
+      <div class="nav-group">
+        <a href="<?= $APP_ROOT ?>dashboard/reports.php" class="sidebar-item <?= ($ACTIVE_NAV==='reports')?'active':'' ?>">
+          <i class="fa-solid fa-chart-column"></i>
+          <span>
+            <?= can('reports.view.system') ? 'System Reports' : (can('reports.view.institutional') ? 'Reports &amp; Analytics' : 'Organization Reports') ?>
+          </span>
+        </a>
+      </div>
+    <?php endif; ?>
+
+    <!-- SECTION 7: SECURITY & AUDIT (Admin only) -->
+    <?php if ($sess_role === 'admin'): ?>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-brand sidebar-brand-2">
+        <div class="brand-title">Security</div>
+        <div class="brand-sub">Logs &amp; Monitoring</div>
+      </div>
+
+      <!-- Audit Logs -->
+      <?php if (can('audit.manage.full')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/admin_audit.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_audit') ? 'active' : '' ?>">
+            <i class="fa-solid fa-list-check"></i>
+            <span>Audit Logs</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- Security Monitoring -->
+      <?php if (can('audit.manage.full')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/admin_security.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_security') ? 'active' : '' ?>">
+            <i class="fa-solid fa-shield-halved"></i>
+            <span>Security Monitoring</span>
+          </a>
+        </div>
+      <?php endif; ?>
+
+      <!-- System Health -->
+      <?php if (can('system.health')): ?>
+        <div class="nav-group">
+          <a href="<?= $APP_ROOT ?>dashboard/admin_health.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_health') ? 'active' : '' ?>">
+            <i class="fa-solid fa-heart-pulse"></i>
+            <span>System Health</span>
+          </a>
+        </div>
+      <?php endif; ?>
+    <?php endif; ?>
+
+    <!-- SECTION 8: CONFIGURATION -->
+    <?php if (can('settings.manage')): ?>
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-brand sidebar-brand-2">
+        <div class="brand-title">Configuration</div>
+        <div class="brand-sub">System Setup</div>
+      </div>
+
+      <!-- System Settings -->
+      <div class="nav-group">
+        <a href="<?= $APP_ROOT ?>dashboard/admin_settings.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_settings') ? 'active' : '' ?>">
+          <i class="fa-solid fa-sliders"></i>
+          <span>System Settings</span>
         </a>
       </div>
 
-      <!-- 11. System Administration (Admin-exclusive) -->
+      <!-- Notification Settings -->
       <div class="nav-group">
-        <a href="<?= $APP_ROOT ?>dashboard/admin_system.php?tab=opsTab" class="sidebar-item <?= ($ACTIVE_NAV==='admin'&&($ACTIVE_TAB??'')==='opsTab')?'active':'' ?>">
-          <i class="fa-solid fa-server"></i>
-          <span>System Administration</span>
-        </a>
-      </div>
-
-      <!-- 12. System Audit Logs (Full Access) -->
-      <div class="nav-group">
-        <a href="<?= $APP_ROOT ?>dashboard/admin_system.php?tab=auditTab" class="sidebar-item <?= ($ACTIVE_NAV==='admin'&&($ACTIVE_TAB??'')==='auditTab')?'active':'' ?>">
-          <i class="fa-solid fa-list-check"></i>
-          <span>System Audit Logs</span>
+        <a href="<?= $APP_ROOT ?>dashboard/admin_notifications.php" class="sidebar-item <?= ($ACTIVE_NAV === 'admin_notifications') ? 'active' : '' ?>">
+          <i class="fa-solid fa-bell"></i>
+          <span>Notification Settings</span>
         </a>
       </div>
     <?php endif; ?>
@@ -373,10 +495,36 @@ window.CSRF_TOKEN = "<?= csrf_token() ?>";
       .catch(() => {});
   }
 
-  function openPanel() { panel.classList.add('open'); overlay.classList.add('active'); loadNotifs(); }
-  function closePanel() { panel.classList.remove('open'); overlay.classList.remove('active'); }
+  function openPanel() { 
+    panel.style.display = '';
+    overlay.style.display = '';
+    panel.classList.add('open', 'active'); 
+    overlay.classList.add('active', 'open'); 
+    loadNotifs(); 
+  }
+  function closePanel() { 
+    panel.classList.remove('open', 'active'); 
+    overlay.classList.remove('active', 'open'); 
+  }
 
-  bellBtn?.addEventListener('click', openPanel);
+  function togglePanel(e) {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    const isOpen = panel.classList.contains('open') || panel.classList.contains('active');
+    if (isOpen) {
+      closePanel();
+    } else {
+      openPanel();
+    }
+  }
+
+  window.openNotifPanel  = openPanel;
+  window.closeNotifPanel = closePanel;
+  window.loadLiveNotifs  = loadNotifs;
+
+  bellBtn?.addEventListener('click', togglePanel);
   closeBtn?.addEventListener('click', closePanel);
   overlay?.addEventListener('click', closePanel);
 
@@ -403,4 +551,6 @@ window.CSRF_TOKEN = "<?= csrf_token() ?>";
 </script>
 
 <?php require_once __DIR__ . '/qr_modal.php'; ?>
+<?php require_once __DIR__ . '/session_timeout_modal.php'; ?>
+<script src="<?= $APP_ROOT ?>js/global-search.js?v=<?= filemtime(__DIR__ . '/../js/global-search.js') ?>" defer></script>
 

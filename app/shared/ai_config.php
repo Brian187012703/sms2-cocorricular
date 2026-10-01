@@ -1,7 +1,7 @@
 <?php
 // ============================================================
 //  AI_CONFIG.PHP — Centralized AI Configuration
-//  Google Gemini 2.0 Flash / 1.5 Flash (Free Tier)
+//  Google Gemini Free Tier (gemini-3.5-flash-lite)
 //  Get your free key at: https://aistudio.google.com/apikey
 // ============================================================
 
@@ -9,7 +9,7 @@ if (!defined('GEMINI_DEFAULT_KEY')) {
     define('GEMINI_DEFAULT_KEY', '');
 }
 if (!defined('GEMINI_MODEL')) {
-    define('GEMINI_MODEL', 'gemini-2.0-flash');
+    define('GEMINI_MODEL', 'gemini-3.5-flash-lite');
 }
 if (!defined('AI_MAX_TOKENS')) {
     define('AI_MAX_TOKENS', 2048);
@@ -19,33 +19,45 @@ if (!defined('AI_TEMPERATURE')) {
 }
 
 /**
- * Retrieve the active Gemini API key from session, database, or default config
+ * Retrieve the active Gemini API key from database, session, environment, or default config
  */
 function get_gemini_api_key(?mysqli $conn = null): string {
-    // 1. Check environment variable
-    $envKey = getenv('GEMINI_API_KEY') ?: ($_ENV['GEMINI_API_KEY'] ?? '');
-    if (!empty($envKey)) {
-        return trim($envKey);
+    // 1. Auto-resolve DB connection if not passed or closed
+    if (!$conn || !($conn instanceof mysqli) || !@$conn->ping()) {
+        global $conn;
+    }
+    if ((!$conn || !($conn instanceof mysqli) || !@$conn->ping()) && file_exists(__DIR__ . '/db.php')) {
+        require_once __DIR__ . '/db.php';
     }
 
-    // 2. Check session cache
-    if (!empty($_SESSION['gemini_api_key'])) {
-        return trim($_SESSION['gemini_api_key']);
-    }
-
-    // 3. Check database system_settings
-    if ($conn) {
+    // 2. Query database system_settings (authoritative persistent source)
+    if ($conn instanceof mysqli && @$conn->ping()) {
         $check = $conn->query("SHOW TABLES LIKE 'system_settings'");
         if ($check && $check->num_rows > 0) {
             $res = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'gemini_api_key' LIMIT 1");
             if ($res && $row = $res->fetch_assoc()) {
                 $k = trim($row['setting_value'] ?? '');
-                if (!empty($k)) {
+                // Ensure it is not a masked string or placeholder
+                if (!empty($k) && !str_contains($k, '••') && !preg_match('/^[•\*]+$/u', $k)) {
                     $_SESSION['gemini_api_key'] = $k;
                     return $k;
                 }
             }
         }
+    }
+
+    // 3. Check session cache (validate not placeholder)
+    if (!empty($_SESSION['gemini_api_key'])) {
+        $sessKey = trim($_SESSION['gemini_api_key']);
+        if (!empty($sessKey) && !str_contains($sessKey, '••') && !preg_match('/^[•\*]+$/u', $sessKey)) {
+            return $sessKey;
+        }
+    }
+
+    // 4. Check environment variable
+    $envKey = getenv('GEMINI_API_KEY') ?: ($_ENV['GEMINI_API_KEY'] ?? '');
+    if (!empty($envKey)) {
+        return trim($envKey);
     }
 
     return defined('GEMINI_DEFAULT_KEY') ? GEMINI_DEFAULT_KEY : '';
@@ -72,4 +84,22 @@ function save_gemini_api_key(string $key, mysqli $conn): bool {
         return $res;
     }
     return false;
+}
+
+/**
+ * Obfuscate sensitive API secrets to prevent plain-text exposure
+ * Displays first 4 and last 4 characters separated by bullet masks.
+ */
+function mask_api_key(string $key): string {
+    $trimmed = trim($key);
+    $len = strlen($trimmed);
+    if ($len === 0) {
+        return '';
+    }
+    if ($len <= 8) {
+        return str_repeat('•', $len);
+    }
+    $prefix = substr($trimmed, 0, 4);
+    $suffix = substr($trimmed, -4);
+    return $prefix . '••••••••••••••••' . $suffix;
 }

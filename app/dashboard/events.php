@@ -8,6 +8,7 @@ require_once __DIR__ . '/../shared/db.php';
 require_once __DIR__ . '/../shared/security.php';
 require_once __DIR__ . '/../shared/ph_holidays.php';
 require_auth();
+require_any_permission(['events.view', 'events.create.own', 'events.create.institutional', 'events.approve.admin']);
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -21,9 +22,11 @@ $ph_holidays_all = get_ph_holidays(2025) + get_ph_holidays(2026) + get_ph_holida
 // -- Fetch events from DB -------------------------------------
 $events = $conn->query(
     "SELECT e.id, e.club_id, e.event_type, e.title, e.description, e.event_date, e.venue,
+            e.expected_attendees, e.attachment, e.created_at,
             e.status, e.endorsement_notes, e.rejection_note, e.created_by,
             COALESCE(c.name, 'BCP Institutional / Campus-Wide') AS club_name,
             COALESCE(c.code, 'INSTITUTIONAL') AS club_code,
+            COALESCE(c.adviser_name, 'Prof. BCP Faculty Adviser') AS adviser_name,
             u.first_name, u.last_name, u.role AS creator_role
      FROM events e
      LEFT JOIN clubs c ON c.id = e.club_id
@@ -41,14 +44,60 @@ if ($sess_role === 'student') {
     }));
 }
 
-// -- Calculate event statistics --------------------------------
+// Map dates & venues to detect venue collisions
+$venue_date_map = [];
+foreach ($events as $ev) {
+    $dt = substr($ev['event_date'], 0, 10);
+    $v = strtolower(trim($ev['venue']));
+    if ($v && $ev['status'] !== 'Rejected') {
+        $venue_date_map[$dt . '|' . $v] = ($venue_date_map[$dt . '|' . $v] ?? 0) + 1;
+    }
+}
+
+// Statistics calculations
 $total_approved      = 0;
 $total_pending_ssc   = 0;
 $total_pending_admin = 0;
 $total_upcoming      = 0;
 $today_str           = date('Y-m-d');
+$now_ts              = time();
 
-foreach ($events as $ev) {
+// 6 SSC Specific KPI Metrics
+$ssc_pending_count        = 0;
+$ssc_endorsed_month_count = 0;
+$ssc_rejected_count       = 0;
+$ssc_upcoming_count       = 0;
+$ssc_institutional_count  = 0;
+$ssc_venue_conflicts      = 0;
+
+// 6 Admin Specific KPI Metrics (Matching exact prompt requirements)
+$admin_pending_approval_count = 0; // Events that passed SSC review
+$admin_approved_today_count   = 0; // Final approvals today
+$admin_rejected_count         = 0; // Final rejections
+$admin_upcoming_count         = 0; // Approved future events
+$admin_venue_conflicts_count  = 0; // Scheduling issues
+$admin_overdue_count          = 0; // Items exceeding configured review SLA (>= 7 days)
+
+// Database query for final approvals today from audit logs
+$r_appr_today = $conn->query("
+    SELECT COUNT(DISTINCT target_id) AS cnt 
+    FROM audit_logs 
+    WHERE action IN ('event_admin_approve', 'event_admin_override') 
+      AND DATE(created_at) = CURDATE()
+");
+$admin_approved_today_db = (int)($r_appr_today ? ($r_appr_today->fetch_assoc()['cnt'] ?? 0) : 0);
+$admin_approved_today_loop = 0;
+
+foreach ($events as &$ev) {
+    $dt = substr($ev['event_date'], 0, 10);
+    $v = strtolower(trim($ev['venue']));
+    $ev_ts = strtotime($ev['event_date']);
+    $sub_ts = !empty($ev['created_at']) ? strtotime($ev['created_at']) : $ev_ts;
+
+    $ev['has_venue_conflict'] = ($v && ($venue_date_map[$dt . '|' . $v] ?? 0) > 1);
+    $ev['days_pending'] = max(0, floor(($now_ts - $sub_ts) / 86400));
+    $ev['event_ref_id'] = 'EVT-' . date('Y', $ev_ts) . '-' . str_pad($ev['id'], 4, '0', STR_PAD_LEFT);
+
     if ($ev['status'] === 'Approved' || $ev['status'] === 'Completed') {
         $total_approved++;
     } elseif ($ev['status'] === 'Pending SSC' || $ev['status'] === 'Pending OSA') {
@@ -56,10 +105,52 @@ foreach ($events as $ev) {
     } elseif ($ev['status'] === 'Pending Admin') {
         $total_pending_admin++;
     }
-    if (substr($ev['event_date'], 0, 10) >= $today_str && $ev['status'] !== 'Rejected') {
+    if ($dt >= $today_str && $ev['status'] !== 'Rejected') {
         $total_upcoming++;
     }
+
+    // SSC 6 Metrics calculation
+    if (in_array($ev['status'], ['Pending SSC', 'Pending OSA'])) {
+        $ssc_pending_count++;
+    }
+    if (in_array($ev['status'], ['Pending Admin', 'Approved']) && (strpos($ev['endorsement_notes'] ?? '', 'Endorsed by SSC') !== false || $ev['status'] === 'Pending Admin')) {
+        $ssc_endorsed_month_count++;
+    }
+    if (in_array($ev['status'], ['Rejected', 'Returned'])) {
+        $ssc_rejected_count++;
+    }
+    if ($ev['status'] === 'Approved' && $ev_ts >= $now_ts) {
+        $ssc_upcoming_count++;
+    }
+    if ($ev['event_type'] === 'Institutional') {
+        $ssc_institutional_count++;
+    }
+    if ($ev['has_venue_conflict'] && in_array($ev['status'], ['Pending SSC', 'Pending Admin', 'Approved', 'Upcoming'])) {
+        $ssc_venue_conflicts++;
+    }
+
+    // Admin 6 Metrics calculation
+    if ($ev['status'] === 'Pending Admin') {
+        $admin_pending_approval_count++;
+    }
+    if ($ev['status'] === 'Approved' && substr($ev['created_at'] ?? '', 0, 10) === $today_str) {
+        $admin_approved_today_loop++;
+    }
+    if ($ev['status'] === 'Rejected') {
+        $admin_rejected_count++;
+    }
+    if ($ev['status'] === 'Approved' && $ev_ts >= $now_ts) {
+        $admin_upcoming_count++;
+    }
+    if ($ev['has_venue_conflict'] && in_array($ev['status'], ['Pending Admin', 'Pending SSC', 'Approved', 'Upcoming'])) {
+        $admin_venue_conflicts_count++;
+    }
+    if ($ev['days_pending'] >= 7 && in_array($ev['status'], ['Pending Admin', 'Pending SSC'])) {
+        $admin_overdue_count++;
+    }
 }
+unset($ev);
+$admin_approved_today_count = max($admin_approved_today_db, $admin_approved_today_loop);
 
 // -- Fetch user's registered events ----------------------------
 $user_id = (int)$_SESSION['user_id'];
@@ -78,6 +169,7 @@ $status_badges = [
     'Pending SSC'   => 'badge-warning',
     'Pending OSA'   => 'badge-warning',
     'Pending Admin' => 'badge-info',
+    'Returned'      => 'badge-warning',
     'Rejected'      => 'badge-inactive',
 ];
 ?>
@@ -86,15 +178,17 @@ $status_badges = [
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Events &amp; Activity Center ï¿½ BCP Co-Curricular Portal</title>
+  <title>Events — BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <meta name="loader-logo" content="../images/BCP_LOGO.png"/>
+  <script src="../js/system-notifications.js?v=<?= filemtime(__DIR__ . '/../js/system-notifications.js') ?>"></script>
   <script src="../js/page-loader.js"></script>
   <!-- jsPDF & AutoTable for direct client-side PDF downloads -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="../js/qrcode.min.js"></script>
   <style>
   /* ── Event Table Action Buttons ───────────────────────────── */
   .event-act-group {
@@ -187,6 +281,119 @@ $status_badges = [
     background: #b45309;
   }
 
+  /* ── Admin Clearance Pipeline Pagination Toolbar ───────────── */
+  #adminEventQueueCard .pagination-toolbar {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: wrap !important;
+    gap: 12px !important;
+    padding: 14px 6px 4px !important;
+    margin-top: 10px !important;
+    border-top: 1px solid #f1f5f9 !important;
+  }
+  #adminEventQueueCard .pagination-info {
+    display: none !important;
+  }
+  #adminEventQueueCard .pagination-controls {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 14px !important;
+    flex-wrap: wrap !important;
+    width: auto !important;
+  }
+
+  /* ── Admin Clearance Pipeline Table: Compact & Fluid (No Side-Scrolling) ── */
+  #adminEventQueueTable {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  #adminEventQueueTable th,
+  #adminEventQueueTable td {
+    padding: 7px 8px !important;
+    font-size: 0.77rem !important;
+    vertical-align: middle !important;
+    word-break: break-word;
+  }
+  #adminEventQueueTable th {
+    padding: 8px 8px !important;
+    font-size: 0.70rem !important;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #475569;
+    white-space: nowrap;
+    background: #f8fafc;
+    border-bottom: 2px solid #e2e8f0;
+  }
+  #adminEventQueueTable .club-badge {
+    font-size: 0.66rem !important;
+    padding: 1px 5px !important;
+    font-weight: 700;
+  }
+  #adminEventQueueTable .badge-active,
+  #adminEventQueueTable .badge-inactive,
+  #adminEventQueueTable .badge-warning,
+  #adminEventQueueTable .badge-info,
+  #adminEventQueueTable .badge-purple,
+  #adminEventQueueTable .badge-danger {
+    font-size: 0.66rem !important;
+    padding: 2px 5px !important;
+    line-height: 1.2 !important;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  #adminEventQueueTable .event-act-group {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 3px !important;
+    flex-wrap: nowrap !important;
+    width: 100%;
+  }
+  #adminEventQueueTable .admin-tbl-act-btn {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    text-decoration: none;
+    line-height: 1;
+  }
+  #adminEventQueueTable .admin-tbl-act-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    filter: brightness(1.1);
+  }
+  #adminEventQueueTable .admin-tbl-act-btn:disabled,
+  #adminEventQueueTable .admin-tbl-act-btn.btn-disabled {
+    background: #e2e8f0 !important;
+    color: #94a3b8 !important;
+    border: 1px solid #cbd5e1 !important;
+    cursor: not-allowed !important;
+    opacity: 0.65 !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  #adminEventQueueTable .admin-tbl-act-btn:disabled:hover,
+  #adminEventQueueTable .admin-tbl-act-btn.btn-disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+    filter: none !important;
+  }
+
   /* ── AI Event Planner & Schedule Conflict Analyzer ───────── */
   .ai-recommendations-section {
     background: #fff;
@@ -256,120 +463,93 @@ $status_badges = [
     color: #1e3a8a; margin-top: 8px;
     display: flex; align-items: center; justify-content: center; gap: 8px;
   }
-  /* AI Proposal Grid & Cards */
-  .ai-plans-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 14px; }
+  /* AI Proposal Grid & Cards - 3 Aligned in a Row, Perfectly Fitted */
+  .ai-plans-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+    width: 100%;
+    box-sizing: border-box;
+  }
   .ai-plan-card {
-    background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 14px;
-    padding: 18px; display: flex; flex-direction: column; justify-content: space-between;
-    transition: all 0.25s ease; box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+    background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 12px;
+    padding: 12px 14px; display: flex; flex-direction: column; justify-content: space-between;
+    transition: all 0.25s ease; box-shadow: 0 2px 6px rgba(0,0,0,0.03); min-height: 200px;
+    min-width: 0; width: 100%; box-sizing: border-box; overflow: hidden;
   }
-  .ai-plan-card:hover { border-color: #3b82f6; background: #ffffff; box-shadow: 0 8px 24px rgba(37,99,235,0.1); transform: translateY(-3px); }
-  .ai-plan-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-  .ai-plan-title { font-size: 0.95rem; font-weight: 800; color: #0f172a; line-height: 1.35; }
+  .ai-plan-card:hover { border-color: #3b82f6; background: #ffffff; box-shadow: 0 6px 20px rgba(37,99,235,0.1); transform: translateY(-2px); }
+  .ai-plan-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 6px; min-width: 0; }
+  .ai-plan-title {
+    font-size: 0.85rem; font-weight: 700; color: #0f172a; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-width: 0; word-break: break-word;
+  }
   .ai-score-pill {
-    padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 800;
-    background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; white-space: nowrap;
+    padding: 2px 6px; border-radius: 5px; font-size: 0.68rem; font-weight: 700;
+    background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; white-space: nowrap; flex-shrink: 0;
   }
-  .ai-plan-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .ai-plan-meta { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; min-width: 0; }
   .ai-meta-tag {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 3px 9px; border-radius: 6px; font-size: 0.72rem; font-weight: 600;
+    padding: 2px 7px; border-radius: 5px; font-size: 0.7rem; font-weight: 600;
     background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+    width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-sizing: border-box;
   }
-  .ai-plan-desc { font-size: 0.8rem; color: #475569; line-height: 1.5; margin-bottom: 14px; flex-grow: 1; }
+  .ai-plan-desc {
+    font-size: 0.73rem; color: #475569; line-height: 1.35; margin-bottom: 8px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word;
+  }
   .ai-conflict-box {
-    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
-    padding: 10px 12px; font-size: 0.74rem; color: #166534; margin-bottom: 14px; line-height: 1.4;
+    background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px;
+    padding: 5px 8px; font-size: 0.7rem; color: #166534; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px; overflow: hidden; box-sizing: border-box; min-width: 0;
+  }
+  .ai-conflict-box span {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
   }
   .ai-apply-plan-btn {
-    width: 100%; padding: 9px 16px; border-radius: 8px; font-size: 0.82rem; font-weight: 700;
+    width: 100%; padding: 7px 12px; border-radius: 7px; font-size: 0.78rem; font-weight: 700;
     background: #16a34a; color: #fff; border: none; cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    transition: all 0.2s;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    transition: all 0.2s; box-sizing: border-box;
   }
-  .ai-apply-plan-btn:hover { background: #15803d; box-shadow: 0 4px 12px rgba(22,163,74,0.3); }
+  .ai-apply-plan-btn:hover { background: #15803d; box-shadow: 0 3px 8px rgba(22,163,74,0.3); }
   .ai-error-msg {
-    padding: 16px; background: #fef2f2; border: 1px solid #fca5a5;
-    border-radius: 10px; color: #dc2626; font-size: 0.85rem; font-weight: 600;
-    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; background: #fef2f2; border: 1px solid #fca5a5;
+    border-radius: 8px; color: #dc2626; font-size: 0.82rem; font-weight: 600;
+    display: flex; align-items: center; gap: 8px; box-sizing: border-box;
   }
-  @media (max-width: 640px) {
-    .ai-rec-header { flex-direction: column; align-items: stretch; }
-    .ai-rec-generate-btn { justify-content: center; }
+  @media (max-width: 860px) {
+    .ai-plans-grid { grid-template-columns: 1fr; }
   }
 
-  /* ── AI Event Planner Floating Action Button (FAB) ────────── */
+  /* ── AI Event Planner Button (Normal Action Button) ────────── */
   .ai-fab-btn {
-    position: fixed;
-    bottom: 28px;
-    right: 28px;
-    z-index: 1050;
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 20px 10px 12px;
-    background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #2563eb 100%);
-    color: #ffffff;
-    border: 1.5px solid rgba(255, 255, 255, 0.28);
-    border-radius: 50px;
-    font-size: 0.88rem;
-    font-weight: 700;
-    cursor: pointer;
-    box-shadow: 0 10px 28px rgba(30, 58, 138, 0.42), 0 3px 10px rgba(0, 0, 0, 0.18);
-    backdrop-filter: blur(10px);
-    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-    outline: none;
-    user-select: none;
+    display: none !important;
   }
-  .ai-fab-btn:hover {
-    transform: translateY(-4px) scale(1.03);
-    box-shadow: 0 16px 36px rgba(37, 99, 235, 0.55), 0 6px 16px rgba(0, 0, 0, 0.22);
-    border-color: rgba(245, 158, 11, 0.7);
-    color: #ffffff;
+  .btn-ai-planner {
+    background: #2563eb !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    padding: 8px 14px !important;
+    border-radius: 8px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 7px !important;
+    font-size: 0.82rem !important;
+    border: none !important;
+    cursor: pointer !important;
+    transition: background 0.15s ease, transform 0.15s ease !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
   }
-  .ai-fab-btn:active {
-    transform: translateY(-1px) scale(0.98);
+  .btn-ai-planner:hover {
+    background: #1d4ed8 !important;
+    color: #ffffff !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 3px 8px rgba(37, 99, 235, 0.25) !important;
   }
-  .ai-fab-icon-wrap {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #f59e0b, #d97706);
-    color: #fff;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.95rem;
-    position: relative;
-    box-shadow: 0 2px 8px rgba(217, 119, 6, 0.4);
-    flex-shrink: 0;
-  }
-  .ai-fab-pulse {
-    position: absolute;
-    top: -1px;
-    right: -1px;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #22c55e;
-    border: 2px solid #0f172a;
-    animation: aiPulse 2s ease-in-out infinite;
-  }
-  .ai-fab-label {
-    letter-spacing: 0.2px;
-    white-space: nowrap;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-  }
-  @media (max-width: 640px) {
-    .ai-fab-btn {
-      bottom: 20px;
-      right: 20px;
-      padding: 10px;
-      border-radius: 50%;
-    }
-    .ai-fab-label {
-      display: none;
-    }
+  .btn-ai-planner:active {
+    transform: translateY(0) !important;
   }
 
   /* ── Modal & Form Layout System ── */
@@ -441,6 +621,56 @@ $status_badges = [
   .form-group textarea {
     resize: vertical; min-height: 80px; line-height: 1.45;
   }
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 16px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .form-grid-2 .form-group {
+    min-width: 0;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 580px) {
+    .form-grid-2 {
+      grid-template-columns: 1fr !important;
+      gap: 0 !important;
+    }
+  }
+
+  /* Events View Switcher Tabs */
+  .events-view-switcher {
+    display: inline-flex;
+    background: #e2e8f0;
+    padding: 4px;
+    border-radius: 10px;
+    gap: 4px;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.06);
+  }
+  .view-toggle-btn {
+    border: none;
+    background: transparent;
+    padding: 8px 16px;
+    border-radius: 7px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #475569;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .view-toggle-btn:hover {
+    color: #1e293b;
+    background: rgba(255, 255, 255, 0.6);
+  }
+  .view-toggle-btn.active {
+    background: #ffffff;
+    color: #1a3a8c;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
 
   /* -- Calendar Card -- */
   .calendar-section {
@@ -474,6 +704,141 @@ $status_badges = [
     color: rgba(255,255,255,0.75);
     margin: 0;
   }
+  .calendar-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .cal-search-box {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1.5px solid rgba(255, 255, 255, 0.32);
+    border-radius: 20px;
+    padding: 0 12px;
+    height: 36px;
+    width: 230px;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    box-sizing: border-box;
+  }
+  .cal-search-box:focus-within {
+    background: #ffffff;
+    border-color: #ffffff;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35), 0 4px 14px rgba(0, 0, 0, 0.15);
+    width: 270px;
+  }
+  .cal-search-box .cal-search-icon {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.82rem;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+  .cal-search-box:focus-within .cal-search-icon {
+    color: #1a3a8c;
+  }
+  .cal-search-box input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #ffffff;
+    font-size: 0.82rem;
+    font-weight: 500;
+    width: 100%;
+    font-family: inherit;
+    padding: 0;
+  }
+  .cal-search-box:focus-within input {
+    color: #0f172a;
+  }
+  .cal-search-box input::placeholder {
+    color: rgba(255, 255, 255, 0.7);
+  }
+  .cal-search-box:focus-within input::placeholder {
+    color: #94a3b8;
+  }
+  .cal-search-clear {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cal-search-box:focus-within .cal-search-clear {
+    color: #64748b;
+  }
+  .cal-search-clear:hover {
+    color: #ef4444 !important;
+  }
+  .cal-search-results-dropdown {
+    position: absolute;
+    top: 42px;
+    left: 0;
+    width: 320px;
+    max-width: 90vw;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    z-index: 100;
+    max-height: 260px;
+    overflow-y: auto;
+    display: none;
+  }
+  .cal-search-result-item {
+    padding: 9px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #1e293b;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    transition: background 0.15s;
+  }
+  .cal-search-result-item:last-child {
+    border-bottom: none;
+  }
+  .cal-search-result-item:hover {
+    background: #eff6ff;
+  }
+  .cal-search-result-title {
+    font-weight: 700;
+    color: #1a3a8c;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cal-search-result-date {
+    font-size: 0.72rem;
+    color: #64748b;
+    white-space: nowrap;
+  }
+
+  /* Search active highlights on calendar */
+  .cal-pill-dimmed {
+    opacity: 0.18 !important;
+    filter: grayscale(0.85) !important;
+  }
+  .cal-pill-matched {
+    box-shadow: 0 0 0 2px #facc15, 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+    transform: scale(1.05) !important;
+    font-weight: 900 !important;
+  }
+  .cal-cell-matched {
+    background: #eff6ff !important;
+    border: 2px solid #2563eb !important;
+  }
+  .cal-cell-dimmed {
+    opacity: 0.4;
+  }
+
   .calendar-nav {
     display: flex;
     align-items: center;
@@ -726,11 +1091,117 @@ $status_badges = [
     .calendar-grid { gap: 2px; }
     .cal-day-cell { min-height: 60px; padding: 4px; }
     .cal-day-header { font-size: 0.6rem; padding: 4px 2px; }
+    .event-act-group {
+      display: flex !important;
+      flex-wrap: wrap !important;
+      gap: 6px !important;
+      width: 100% !important;
+      justify-content: flex-end !important;
+    }
+    .event-act-btn {
+      flex: 1 1 auto !important;
+      justify-content: center !important;
+      min-height: 32px !important;
+    }
+  }
+  @media (max-width: 640px) {
+    .calendar-header-right {
+      width: 100%;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .cal-search-box {
+      width: 100%;
+      flex: 1 1 160px;
+      min-width: 130px;
+    }
+    .cal-search-box:focus-within {
+      width: 100%;
+    }
+    .cal-month-label {
+      min-width: 105px;
+      font-size: 0.84rem;
+    }
   }
   @media (max-width: 560px) {
     .calendar-body { padding: 12px; }
     .calendar-header { padding: 14px 16px; }
     .calendar-legend { padding: 10px 16px; gap: 10px; }
+  }
+
+  /* SSC Events & Activities Custom Styling */
+  .ssc-metric-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    border: 1px solid #e2e8f0;
+  }
+  .ssc-metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+    border-color: #93c5fd;
+  }
+  .ssc-metric-card.active-card-filter {
+    border: 2px solid #2563eb !important;
+    background: #f0f7ff !important;
+  }
+  .ssc-review-grid {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 22px;
+  }
+  @media (max-width: 860px) {
+    .ssc-review-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .ssc-checklist-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .ssc-checklist-item:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+  }
+  .ssc-checklist-item input[type="checkbox"] {
+    margin-top: 3px;
+    width: 17px;
+    height: 17px;
+    accent-color: #16a34a;
+    cursor: pointer;
+  }
+  .ssc-checklist-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #1e293b;
+    line-height: 1.35;
+  }
+  .ssc-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 8px 0;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 0.84rem;
+  }
+  .ssc-detail-label {
+    color: #64748b;
+    font-weight: 600;
+    width: 38%;
+    flex-shrink: 0;
+  }
+  .ssc-detail-val {
+    color: #1e293b;
+    font-weight: 600;
+    text-align: right;
+    width: 62%;
+    word-break: break-word;
   }
   </style>
 </head>
@@ -748,9 +1219,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
     <button class="hamburger" id="hamburgerBtn"><i class="fa-solid fa-bars"></i></button>
     <span class="topbar-spacer"></span>
     <div class="topbar-right">
-      <div class="search-wrap">
-        <input type="text" placeholder="Search pages, events..." autocomplete="off" />
-        <i class="fa-solid fa-magnifying-glass"></i>
+      <div class="search-wrap" id="topbarSearchWrap">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" placeholder="Search modules, events, clubs..." autocomplete="off" />
+        <button type="button" class="search-clear-btn" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code" type="button"><i class="fa-solid fa-qrcode"></i></button>
       <a href="account.php" class="avatar" id="avatarBtn" title="Account Settings">
@@ -764,41 +1236,14 @@ require_once __DIR__ . '/../shared/sidebar.php';
   </div>
 
   <div class="content">
-    <div class="page-title-bar">
-      <h2 class="page-title">
+    <div class="page-title-bar" style="margin-bottom:20px;">
+      <h2 class="page-title" style="margin:0;">
         <i class="fa-solid fa-calendar-days"></i>
-        <?php if ($sess_role === 'student'): ?>
-          Events &amp; Activity Center
-        <?php elseif ($events_view === 'pipeline'): ?>
-          Campus Event Calendar &amp; Approval Pipeline
-        <?php else: ?>
-          Active Calendar
-        <?php endif; ?>
+        Events
       </h2>
     </div>
 
     <div class="content-body">
-
-      <?php if ($sess_role !== 'student'): ?>
-      <!-- Stats Row -->
-      <div class="info-row">
-        <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-calendar-check"></i> Approved Events</div>
-          <div class="card-amount"><?= $total_approved ?></div>
-          <div class="card-detail">Active on Campus Calendar</div>
-        </div>
-        <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-clock"></i> Pending SSC Endorsement</div>
-          <div class="card-amount"><?= $total_pending_ssc ?></div>
-          <div class="card-detail">Awaiting SSC Review</div>
-        </div>
-        <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-stamp"></i> Pending Admin Approval</div>
-          <div class="card-amount"><?= $total_pending_admin ?></div>
-          <div class="card-detail">Awaiting Final Calendar Clearance</div>
-        </div>
-      </div><!-- /info-row -->
-      <?php endif; ?>
 
       <!-- ----------------------------------------------------------
            ACTIVE INTERACTIVE EVENT CALENDAR
@@ -810,14 +1255,22 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <h3><i class="fa-solid fa-calendar-days"></i> Active Campus Event Calendar</h3>
             <p>Click any highlighted date or event pill to view details &amp; register</p>
           </div>
-          <div class="calendar-nav">
-            <button class="cal-nav-btn" id="calPrevBtn" title="Previous month">
-              <i class="fa-solid fa-chevron-left"></i>
-            </button>
-            <span class="cal-month-label" id="calMonthTitle">August 2026</span>
-            <button class="cal-nav-btn" id="calNextBtn" title="Next month">
-              <i class="fa-solid fa-chevron-right"></i>
-            </button>
+          <div class="calendar-header-right">
+            <div class="cal-search-box" id="calSearchBox">
+              <i class="fa-solid fa-magnifying-glass cal-search-icon"></i>
+              <input type="text" id="calSearchInput" placeholder="Search calendar events..." autocomplete="off" />
+              <button type="button" id="calSearchClear" class="cal-search-clear" title="Clear search" style="display:none;"><i class="fa-solid fa-xmark"></i></button>
+              <div class="cal-search-results-dropdown" id="calSearchResults"></div>
+            </div>
+            <div class="calendar-nav">
+              <button class="cal-nav-btn" id="calPrevBtn" title="Previous month">
+                <i class="fa-solid fa-chevron-left"></i>
+              </button>
+              <span class="cal-month-label" id="calMonthTitle">August 2026</span>
+              <button class="cal-nav-btn" id="calNextBtn" title="Next month">
+                <i class="fa-solid fa-chevron-right"></i>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -841,9 +1294,629 @@ require_once __DIR__ . '/../shared/sidebar.php';
         </div>
       </div><!-- /calendar-section -->
 
+      <?php if ($sess_role === 'ssc'): ?>
+      <div id="sscPipelineSection" <?= ($events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
+        <!-- ──────────────────────────────────────────────────────────
+             1. SSC EVENT DASHBOARD CARDS (6 Metrics)
+        ────────────────────────────────────────────────────────── -->
+        <div class="info-row" style="grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px;">
+          <!-- 1. Pending SSC Review -->
+          <div class="info-card ssc-metric-card" id="cardPendingSsc" onclick="filterSscByCard('Pending SSC')" style="cursor:pointer;" title="Click to filter queue by Pending SSC Review">
+            <div class="card-label"><i class="fa-solid fa-clock-rotate-left" style="color:#d97706;"></i> Pending SSC Review</div>
+            <div class="card-amount" style="color:#d97706;"><?= $ssc_pending_count ?></div>
+            <div class="card-detail">Events waiting for SSC action.</div>
+          </div>
+          <!-- 2. Endorsed This Month -->
+          <div class="info-card ssc-metric-card" id="cardEndorsedMonth" onclick="filterSscByCard('Pending Admin')" style="cursor:pointer;" title="Click to filter queue by Endorsed events">
+            <div class="card-label"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> Endorsed This Month</div>
+            <div class="card-amount" style="color:#16a34a;"><?= $ssc_endorsed_month_count ?></div>
+            <div class="card-detail">Events endorsed by SSC in selected period.</div>
+          </div>
+          <!-- 3. Rejected Events -->
+          <div class="info-card ssc-metric-card" id="cardRejectedEvents" onclick="filterSscByCard('Rejected_Returned')" style="cursor:pointer;" title="Click to filter queue by Rejected / Returned events">
+            <div class="card-label"><i class="fa-solid fa-ban" style="color:#dc2626;"></i> Rejected Events</div>
+            <div class="card-amount" style="color:#dc2626;"><?= $ssc_rejected_count ?></div>
+            <div class="card-detail">Events rejected / returned for revision.</div>
+          </div>
+          <!-- 4. Upcoming Events -->
+          <div class="info-card ssc-metric-card" id="cardUpcomingEvents" onclick="filterSscByCard('Approved')" style="cursor:pointer;" title="Click to filter queue by Approved & Upcoming events">
+            <div class="card-label"><i class="fa-solid fa-calendar-check" style="color:#2563eb;"></i> Upcoming Events</div>
+            <div class="card-amount" style="color:#2563eb;"><?= $ssc_upcoming_count ?></div>
+            <div class="card-detail">Approved future activities.</div>
+          </div>
+          <!-- 5. Institutional Events -->
+          <div class="info-card ssc-metric-card" id="cardInstitutionalEvents" onclick="filterSscByCard('Institutional')" style="cursor:pointer;" title="Click to filter queue by Institutional events">
+            <div class="card-label"><i class="fa-solid fa-building-columns" style="color:#7c3aed;"></i> Institutional Events</div>
+            <div class="card-amount" style="color:#7c3aed;"><?= $ssc_institutional_count ?></div>
+            <div class="card-detail">School-wide or council-level activities.</div>
+          </div>
+          <!-- 6. Venue Conflicts -->
+          <div class="info-card ssc-metric-card" id="cardVenueConflicts" onclick="filterSscByCard('Conflict')" style="cursor:pointer;" title="Click to filter queue by Potential Venue Conflicts">
+            <div class="card-label"><i class="fa-solid fa-triangle-exclamation" style="color:#ea580c;"></i> Venue Conflicts</div>
+            <div class="card-amount" style="color:#ea580c;"><?= $ssc_venue_conflicts ?></div>
+            <div class="card-detail">Potential scheduling conflicts needing attention.</div>
+          </div>
+        </div>
+
+        <!-- ──────────────────────────────────────────────────────────
+             2. EVENT APPROVAL QUEUE (11 Columns, Search, Filter, 5 items/page Pagination)
+        ────────────────────────────────────────────────────────── -->
+        <div class="card" id="sscApprovalQueueCard">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+          <div>
+            <h3 style="margin:0; font-size:1.15rem; color:#1e293b; display:flex; align-items:center; gap:8px;">
+              <i class="fa-solid fa-list-check" style="color:#2563eb;"></i> Event Approval Queue
+              <?php if ($ssc_pending_count > 0): ?>
+                <span style="background:#fef3c7; color:#d97706; font-size:0.75rem; padding:3px 10px; border-radius:12px; font-weight:700;">
+                  <?= $ssc_pending_count ?> Pending SSC Review
+                </span>
+              <?php endif; ?>
+            </h3>
+          </div>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <?php if (can_any(['events.create.own', 'events.create.institutional'])): ?>
+              <button type="button" class="card-btn btn-sm btn-ai-planner" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> AI Event Planner
+              </button>
+            <?php endif; ?>
+            <button type="button" class="card-btn btn-sm" id="openCreateEventSsc" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 14px; border-radius:8px;" onclick="openCreateEventModal()" title="Create Institutional / Council Event Proposal">
+              <i class="fa-solid fa-calendar-plus"></i> Create Institutional Proposal
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter & Search Toolbar -->
+        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; align-items:center; background:#f8fafc; padding:12px 14px; border-radius:8px; border:1px solid #e2e8f0;">
+          <!-- Search Input -->
+          <div style="flex:1; min-width:220px; position:relative;">
+            <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:0.85rem;"></i>
+            <input type="text" id="sscQueueSearchInput" placeholder="Search event title, ID, organization, venue, submitted by..." onkeyup="filterSscApprovalQueue()" style="width:100%; padding:8px 12px 8px 34px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; box-sizing:border-box;" />
+          </div>
+
+          <!-- Status Filter -->
+          <div style="min-width:160px;">
+            <select id="sscQueueStatusFilter" onchange="filterSscApprovalQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
+              <option value="">All Statuses</option>
+              <option value="Pending SSC">Pending SSC Review</option>
+              <option value="Pending Admin">Endorsed to Admin</option>
+              <option value="Approved">Approved</option>
+              <option value="Returned">Returned for Revision</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+          </div>
+
+          <!-- Type Filter -->
+          <div style="min-width:140px;">
+            <select id="sscQueueTypeFilter" onchange="filterSscApprovalQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
+              <option value="">All Event Types</option>
+              <option value="Club">Club Event</option>
+              <option value="Institutional">Institutional</option>
+            </select>
+          </div>
+
+          <!-- Reset Filter Button -->
+          <div>
+            <button type="button" onclick="resetSscQueueFilter()" class="card-btn btn-sm" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-size:0.82rem; padding:7px 12px; border-radius:6px; cursor:pointer;">
+              <i class="fa-solid fa-rotate-left"></i> Reset
+            </button>
+          </div>
+        </div>
+
+        <!-- Active filter alert notice if filtering by conflicts -->
+        <div id="sscConflictNoticeBar" style="display:none; margin-bottom:14px; background:#fff7ed; border:1px solid #fdba74; color:#c2410c; padding:8px 14px; border-radius:8px; font-size:0.82rem; justify-content:space-between; align-items:center;">
+          <span><i class="fa-solid fa-triangle-exclamation"></i> Filtering by <strong>Venue Conflicts &amp; Overlaps</strong></span>
+          <button type="button" onclick="resetSscQueueFilter()" style="background:none; border:none; color:#c2410c; cursor:pointer; font-weight:700;"><i class="fa-solid fa-xmark"></i> Clear</button>
+        </div>
+
+        <!-- Table Wrap -->
+        <div class="table-wrap">
+          <table id="sscApprovalQueueTable" class="table-wide data-table resp-table mobile-card-table">
+            <thead>
+              <tr>
+                <th>Event ID</th>
+                <th>Event Title</th>
+                <th>Organization</th>
+                <th>Event Type</th>
+                <th>Date</th>
+                <th>Venue</th>
+                <th>Submitted By</th>
+                <th>Submitted Date</th>
+                <th>Status</th>
+                <th>Days Pending</th>
+                <th style="text-align:right; min-width:140px;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="sscApprovalQueueBody">
+              <?php if (empty($events)): ?>
+                <tr id="sscQueueEmptyRow">
+                  <td colspan="11" class="empty-state-cell" style="text-align:center; padding:36px 16px; color:#94a3b8;">
+                    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; width:100%; margin:0 auto;">
+                      <i class="fa-solid fa-calendar-xmark" style="font-size:2.2rem; margin-bottom:10px; display:inline-block; color:#94a3b8;"></i>
+                      <span style="font-weight:600; font-size:0.9rem; color:#475569; text-align:center;">No event proposals in queue.</span>
+                    </div>
+                  </td>
+                </tr>
+              <?php else: ?>
+                <tr id="sscQueueEmptyRow" style="display:none;">
+                  <td colspan="11" class="empty-state-cell" style="text-align:center; padding:36px 16px; color:#94a3b8;">
+                    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; width:100%; margin:0 auto;">
+                      <i class="fa-solid fa-magnifying-glass" style="font-size:2rem; margin-bottom:8px; display:inline-block; color:#94a3b8;"></i>
+                      <span style="font-weight:600; font-size:0.9rem; color:#475569; text-align:center;">No events match the current filter criteria.</span>
+                    </div>
+                  </td>
+                </tr>
+                <?php foreach ($events as $ev): 
+                  $ev_ts = strtotime($ev['event_date']);
+                  $sub_ts = !empty($ev['created_at']) ? strtotime($ev['created_at']) : $ev_ts;
+                  $dp = (int)$ev['days_pending'];
+                  $is_pending = in_array($ev['status'], ['Pending SSC', 'Pending OSA']);
+                ?>
+                  <tr class="queue-row ssc-queue-row" 
+                      id="ssc-event-row-<?= $ev['id'] ?>"
+                      data-id="<?= $ev['id'] ?>"
+                      data-status="<?= htmlspecialchars($ev['status']) ?>"
+                      data-type="<?= htmlspecialchars($ev['event_type']) ?>"
+                      data-conflict="<?= $ev['has_venue_conflict'] ? '1' : '0' ?>"
+                      data-date="<?= date('Y-m-d', $ev_ts) ?>">
+                    <!-- 1. Event ID -->
+                    <td data-label="Event ID">
+                      <span style="font-family:monospace; font-weight:700; color:#2563eb; font-size:0.82rem;"><?= htmlspecialchars($ev['event_ref_id']) ?></span>
+                    </td>
+                    <!-- 2. Event Title -->
+                    <td data-label="Event Title">
+                      <strong><?= htmlspecialchars($ev['title']) ?></strong>
+                      <?php if ($ev['has_venue_conflict']): ?>
+                        <div>
+                          <span class="badge-danger" style="display:inline-block; font-size:0.68rem; padding:2px 6px; border-radius:4px; margin-top:3px; background:#fef2f2; color:#b91c1c; border:1px solid #fca5a5;">
+                            <i class="fa-solid fa-triangle-exclamation"></i> Venue Conflict
+                          </span>
+                        </div>
+                      <?php endif; ?>
+                      <?php if ($ev['rejection_note']): ?>
+                        <div style="font-size:0.72rem; color:#dc2626; margin-top:2px;">
+                          <i class="fa-solid fa-comment-dots"></i> <?= htmlspecialchars($ev['rejection_note']) ?>
+                        </div>
+                      <?php endif; ?>
+                    </td>
+                    <!-- 3. Organization -->
+                    <td data-label="Organization">
+                      <span class="club-badge"><?= htmlspecialchars($ev['club_code']) ?></span>
+                      <span style="font-size:0.82rem; color:#334155;"><?= htmlspecialchars($ev['club_name']) ?></span>
+                    </td>
+                    <!-- 4. Event Type -->
+                    <td data-label="Event Type">
+                      <span class="badge-<?= $ev['event_type'] === 'Institutional' ? 'purple' : 'info' ?>" style="font-size:0.75rem; font-weight:700; padding:3px 8px; border-radius:4px;">
+                        <?= htmlspecialchars($ev['event_type']) ?>
+                      </span>
+                    </td>
+                    <!-- 5. Date -->
+                    <td data-label="Date" style="font-size:0.82rem;">
+                      <?= date('M d, Y', $ev_ts) ?><br>
+                      <span style="color:#64748b; font-size:0.76rem;"><?= date('h:i A', $ev_ts) ?></span>
+                    </td>
+                    <!-- 6. Venue -->
+                    <td data-label="Venue" style="font-size:0.82rem;">
+                      <?= htmlspecialchars($ev['venue']) ?>
+                      <?php if ($ev['has_venue_conflict']): ?>
+                        <div style="font-size:0.72rem; color:#ea580c; font-weight:700;">
+                          <i class="fa-solid fa-triangle-exclamation"></i> Overlapping Venue
+                        </div>
+                      <?php endif; ?>
+                    </td>
+                    <!-- 7. Submitted By -->
+                    <td data-label="Submitted By" style="font-size:0.82rem;">
+                      <?= htmlspecialchars(trim(($ev['first_name'] ?? '') . ' ' . ($ev['last_name'] ?? '')) ?: 'Adviser / Submitter') ?><br>
+                      <span style="font-size:0.72rem; color:#64748b;"><?= htmlspecialchars(ucwords(str_replace('_', ' ', $ev['creator_role'] ?? 'adviser'))) ?></span>
+                    </td>
+                    <!-- 8. Submitted Date -->
+                    <td data-label="Submitted Date" style="font-size:0.82rem; color:#475569;">
+                      <?= date('M d, Y', $sub_ts) ?>
+                    </td>
+                    <!-- 9. Status -->
+                    <td data-label="Status">
+                      <span class="<?= $status_badges[$ev['status']] ?? 'badge-info' ?>" style="font-size:0.75rem; font-weight:700;">
+                        <?= htmlspecialchars($ev['status']) ?>
+                      </span>
+                    </td>
+                    <!-- 10. Days Pending -->
+                    <td data-label="Days Pending">
+                      <?php if ($is_pending): ?>
+                        <?php if ($dp === 0): ?>
+                          <span style="font-weight:700; color:#16a34a; font-size:0.8rem;">Today</span>
+                        <?php else: ?>
+                          <span style="font-weight:700; color:<?= $dp > 5 ? '#dc2626' : '#d97706' ?>; font-size:0.8rem;">
+                            <?= $dp ?> <?= $dp === 1 ? 'day' : 'days' ?>
+                          </span>
+                        <?php endif; ?>
+                      <?php else: ?>
+                        <span style="color:#94a3b8; font-size:0.8rem;">—</span>
+                      <?php endif; ?>
+                    </td>
+                    <!-- 11. Action -->
+                    <td data-label="Action" style="text-align:right; white-space:nowrap;">
+                      <div style="display:inline-flex; gap:4px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                        <!-- SSC Review Button (Opens 3-in-1 Review Panel Modal) -->
+                        <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff; font-weight:700; padding:6px 10px; font-size:0.78rem; display:inline-flex; align-items:center; gap:5px;" onclick="openSscReviewPanel(<?= htmlspecialchars(json_encode($ev)) ?>)" title="Open SSC Event Review Panel">
+                          <i class="fa-solid fa-clipboard-check"></i> Review
+                        </button>
+                        <?php if ($is_pending): ?>
+                          <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff; font-weight:700; padding:6px 8px; font-size:0.78rem;" onclick="quickSscEndorse(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Quick Endorse to Admin">
+                            <i class="fa-solid fa-check"></i>
+                          </button>
+                          <button type="button" class="card-btn btn-sm" style="background:#f59e0b; color:#fff; font-weight:700; padding:6px 8px; font-size:0.78rem;" onclick="openReturnEventModal(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Return for Revision">
+                            <i class="fa-solid fa-rotate-left"></i>
+                          </button>
+                          <button type="button" class="card-btn btn-sm" style="background:#dc2626; color:#fff; font-weight:700; padding:6px 8px; font-size:0.78rem;" onclick="quickSscReject(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
+                            <i class="fa-solid fa-xmark"></i>
+                          </button>
+                        <?php else: ?>
+                          <button type="button" class="card-btn btn-sm btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; padding:6px 8px; font-size:0.78rem; cursor:not-allowed;" title="Endorse Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                            <i class="fa-solid fa-check"></i>
+                          </button>
+                          <button type="button" class="card-btn btn-sm btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; padding:6px 8px; font-size:0.78rem; cursor:not-allowed;" title="Return Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                            <i class="fa-solid fa-rotate-left"></i>
+                          </button>
+                          <button type="button" class="card-btn btn-sm btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; padding:6px 8px; font-size:0.78rem; cursor:not-allowed;" title="Reject Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                            <i class="fa-solid fa-xmark"></i>
+                          </button>
+                        <?php endif; ?>
+                      </div>
+                    </td>
+                  </tr>
+                <?php endforeach; ?>
+              <?php endif; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+      <?php endif; ?>
+
+      <?php if ($sess_role === 'admin'): ?>
+      <div id="adminPipelineSection" <?= ($events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
+        <!-- ──────────────────────────────────────────────────────────
+             ADMIN EVENT ADMINISTRATION CARDS (6 Metrics)
+             1. Pending Admin Approval: Events that passed SSC review.
+             2. Approved Today: Final approvals today.
+             3. Rejected: Final rejections.
+             4. Upcoming: Approved future events.
+             5. Venue Conflicts: Scheduling issues.
+             6. Overdue Proposals: Items exceeding configured review SLA.
+        ────────────────────────────────────────────────────────── -->
+        <div class="info-row" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 22px;">
+          <!-- 1. Pending Admin Approval -->
+          <div class="info-card admin-metric-card" id="cardAdminPendingApproval" onclick="filterAdminByCard('Pending Admin')" style="cursor:pointer; transition:all 0.2s ease;" title="Click to filter by Pending Admin Approval (Passed SSC review)">
+            <div class="card-label"><i class="fa-solid fa-hourglass-half" style="color:#d97706;"></i> Pending Admin Approval</div>
+            <div class="card-amount" style="color:#d97706;"><?= $admin_pending_approval_count ?></div>
+            <div class="card-detail">Events that passed SSC review.</div>
+          </div>
+          <!-- 2. Approved Today -->
+          <div class="info-card admin-metric-card" id="cardAdminApprovedToday" onclick="filterAdminByCard('Approved Today')" style="cursor:pointer; transition:all 0.2s ease;" title="Click to filter by Final approvals today">
+            <div class="card-label"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> Approved Today</div>
+            <div class="card-amount" style="color:#16a34a;"><?= $admin_approved_today_count ?></div>
+            <div class="card-detail">Final approvals today.</div>
+          </div>
+          <!-- 3. Rejected -->
+          <div class="info-card admin-metric-card" id="cardAdminRejected" onclick="filterAdminByCard('Rejected')" style="cursor:pointer; transition:all 0.2s ease;" title="Click to filter by Final rejections">
+            <div class="card-label"><i class="fa-solid fa-circle-xmark" style="color:#dc2626;"></i> Rejected</div>
+            <div class="card-amount" style="color:#dc2626;"><?= $admin_rejected_count ?></div>
+            <div class="card-detail">Final rejections.</div>
+          </div>
+          <!-- 4. Upcoming -->
+          <div class="info-card admin-metric-card" id="cardAdminUpcoming" onclick="filterAdminByCard('Upcoming')" style="cursor:pointer; transition:all 0.2s ease;" title="Click to filter by Approved future events">
+            <div class="card-label"><i class="fa-solid fa-calendar-check" style="color:#2563eb;"></i> Upcoming</div>
+            <div class="card-amount" style="color:#2563eb;"><?= $admin_upcoming_count ?></div>
+            <div class="card-detail">Approved future events.</div>
+          </div>
+          <!-- 5. Venue Conflicts -->
+          <div class="info-card admin-metric-card" id="cardAdminVenueConflicts" onclick="filterAdminByCard('Venue Conflicts')" style="cursor:pointer; transition:all 0.2s ease;" title="Click to filter by Scheduling issues">
+            <div class="card-label"><i class="fa-solid fa-triangle-exclamation" style="color:#ea580c;"></i> Venue Conflicts</div>
+            <div class="card-amount" style="color:#ea580c;"><?= $admin_venue_conflicts_count ?></div>
+            <div class="card-detail">Scheduling issues.</div>
+          </div>
+          <!-- 6. Overdue Proposals -->
+          <div class="info-card admin-metric-card" id="cardAdminOverdueProposals" onclick="filterAdminByCard('Overdue Proposals')" style="cursor:pointer; transition:all 0.2s ease;" title="Click to filter by Items exceeding configured review SLA">
+            <div class="card-label"><i class="fa-solid fa-fire-flame-curved" style="color:#9333ea;"></i> Overdue Proposals</div>
+            <div class="card-amount" style="color:#9333ea;"><?= $admin_overdue_count ?></div>
+            <div class="card-detail">Items exceeding configured review SLA.</div>
+          </div>
+        </div>
+
+        <!-- ──────────────────────────────────────────────────────────
+             ADMIN EVENT ADMINISTRATION TABLE (8 Columns Specified)
+             Columns: Event ID | Event | Organization | Date | Venue | SSC Review | Admin Status | Action
+        ────────────────────────────────────────────────────────── -->
+        <div class="card" id="adminEventQueueCard">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+            <div>
+              <h3 style="margin:0; font-size:1.15rem; color:#1e293b; display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-calendar-check" style="color:#2563eb;"></i> Event Administration &amp; Clearance Pipeline
+                <?php if ($admin_pending_approval_count > 0): ?>
+                  <span style="background:#fef3c7; color:#d97706; font-size:0.75rem; padding:3px 10px; border-radius:12px; font-weight:700;">
+                    <?= $admin_pending_approval_count ?> Pending Admin Approval
+                  </span>
+                <?php endif; ?>
+              </h3>
+              <p style="margin:4px 0 0 0; font-size:0.8rem; color:#64748b;">Review SSC-endorsed activities, resolve venue scheduling collisions, and issue administrative clearance.</p>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <?php if (can_any(['events.create.own', 'events.create.institutional'])): ?>
+                <button type="button" class="card-btn btn-sm btn-ai-planner" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i> AI Event Planner
+                </button>
+              <?php endif; ?>
+              <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff; font-weight:700; padding:8px 14px; border-radius:8px;" onclick="openCreateEventModal()" title="Create Institutional / Administrative Event">
+                <i class="fa-solid fa-calendar-plus"></i> Create Institutional Event
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter & Search Toolbar -->
+          <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; align-items:center; background:#f8fafc; padding:12px 14px; border-radius:8px; border:1px solid #e2e8f0;">
+            <!-- Search Input -->
+            <div style="flex:1; min-width:220px; position:relative;">
+              <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:0.85rem;"></i>
+              <input type="text" id="adminQueueSearchInput" placeholder="Search Event ID, title, organization, venue, review notes..." onkeyup="filterAdminEventQueue()" style="width:100%; padding:8px 12px 8px 34px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; box-sizing:border-box;" />
+            </div>
+
+            <!-- Admin Status Filter -->
+            <div style="min-width:180px;">
+              <select id="adminQueueStatusFilter" onchange="filterAdminEventQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
+                <option value="">All Admin States</option>
+                <option value="Pending Admin">Pending Admin Approval</option>
+                <option value="Approved">Approved</option>
+                <option value="Returned">Returned</option>
+                <option value="Rejected">Rejected</option>
+              </select>
+            </div>
+
+            <!-- Organization Filter -->
+            <div style="min-width:160px;">
+              <select id="adminQueueOrgFilter" onchange="filterAdminEventQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
+                <option value="">All Organizations</option>
+                <option value="INSTITUTIONAL">BCP Institutional</option>
+                <?php foreach ($clubs as $c): ?>
+                  <option value="<?= htmlspecialchars($c['code']) ?>"><?= htmlspecialchars($c['code']) ?> - <?= htmlspecialchars($c['name']) ?></option>
+                <?php endforeach; ?>
+              </select>
+            </div>
+
+            <!-- Reset Filter Button -->
+            <div>
+              <button type="button" onclick="resetAdminQueueFilter()" class="card-btn btn-sm" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-size:0.82rem; padding:7px 12px; border-radius:6px; cursor:pointer;">
+                <i class="fa-solid fa-rotate-left"></i> Reset
+              </button>
+            </div>
+          </div>
+
+          <!-- Active card filter indicator badge bar -->
+          <div id="adminFilterNoticeBar" style="display:none; margin-bottom:14px; background:#eff6ff; border:1px solid #93c5fd; color:#1d4ed8; padding:8px 14px; border-radius:8px; font-size:0.82rem; justify-content:space-between; align-items:center;">
+            <span id="adminFilterNoticeText"><i class="fa-solid fa-filter"></i> Filtering table records</span>
+            <button type="button" onclick="resetAdminQueueFilter()" style="background:none; border:none; color:#1d4ed8; cursor:pointer; font-weight:700;"><i class="fa-solid fa-xmark"></i> Clear</button>
+          </div>
+
+          <!-- Table Wrap with Responsive Scroller & Pagination -->
+          <div class="table-responsive">
+            <table id="adminEventQueueTable" class="data-table resp-table mobile-card-table no-auto-paginate" style="width:100%;">
+              <thead>
+                <tr>
+                  <th style="width:8%;">Event ID</th>
+                  <th style="width:23%;">Event</th>
+                  <th style="width:14%;">Organization</th>
+                  <th style="width:11%;">Date</th>
+                  <th style="width:11%;">Venue</th>
+                  <th style="width:10%;">SSC Review</th>
+                  <th style="width:9%;">Admin Status</th>
+                  <th style="text-align:right; width:14%;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="adminEventQueueBody">
+                <?php if (empty($events)): ?>
+                  <tr id="adminQueueEmptyRow">
+                    <td colspan="8" class="empty-state-cell" style="text-align:center; padding:36px 16px; color:#94a3b8;">
+                      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; width:100%; margin:0 auto;">
+                        <i class="fa-solid fa-calendar-xmark" style="font-size:2.2rem; margin-bottom:10px; display:inline-block; color:#94a3b8;"></i>
+                        <span style="font-weight:600; font-size:0.9rem; color:#475569; text-align:center;">No event proposals in queue.</span>
+                      </div>
+                    </td>
+                  </tr>
+                <?php else: ?>
+                  <tr id="adminQueueEmptyRow" style="display:none;">
+                    <td colspan="8" class="empty-state-cell" style="text-align:center; padding:36px 16px; color:#94a3b8;">
+                      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; width:100%; margin:0 auto;">
+                        <i class="fa-solid fa-magnifying-glass" style="font-size:2rem; margin-bottom:8px; display:inline-block; color:#94a3b8;"></i>
+                        <span style="font-weight:600; font-size:0.9rem; color:#475569; text-align:center;">No events match the current filter criteria.</span>
+                      </div>
+                    </td>
+                  </tr>
+                  <?php foreach ($events as $ev): 
+                    $ev_ts = strtotime($ev['event_date']);
+                    $sub_ts = !empty($ev['created_at']) ? strtotime($ev['created_at']) : $ev_ts;
+                    $dp = (int)$ev['days_pending'];
+                    $is_overdue = ($dp >= 7 && in_array($ev['status'], ['Pending Admin', 'Pending SSC']));
+                    $is_appr_today = ($ev['status'] === 'Approved' && substr($ev['created_at'] ?? '', 0, 10) === $today_str);
+                    $is_upcoming = ($ev['status'] === 'Approved' && $ev_ts >= $now_ts);
+                  ?>
+                    <tr class="admin-queue-row"
+                        id="admin-event-row-<?= $ev['id'] ?>"
+                        data-id="<?= $ev['id'] ?>"
+                        data-status="<?= htmlspecialchars($ev['status']) ?>"
+                        data-type="<?= htmlspecialchars($ev['event_type']) ?>"
+                        data-org="<?= htmlspecialchars($ev['club_code']) ?>"
+                        data-conflict="<?= $ev['has_venue_conflict'] ? '1' : '0' ?>"
+                        data-overdue="<?= $is_overdue ? '1' : '0' ?>"
+                        data-approved-today="<?= $is_appr_today ? '1' : '0' ?>"
+                        data-upcoming="<?= $is_upcoming ? '1' : '0' ?>"
+                        data-date="<?= date('Y-m-d', $ev_ts) ?>">
+                      <!-- 1. Event ID -->
+                      <td data-label="Event ID">
+                        <span style="font-family:monospace; font-weight:700; color:#2563eb; font-size:0.75rem; word-break:break-all;"><?= htmlspecialchars($ev['event_ref_id']) ?></span>
+                      </td>
+                      <!-- 2. Event -->
+                      <td data-label="Event">
+                        <div style="font-weight:700; color:#1e293b; font-size:0.79rem; line-height:1.25; margin-bottom:2px;" title="<?= htmlspecialchars($ev['title']) ?>">
+                          <?= htmlspecialchars($ev['title']) ?>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:4px; flex-wrap:wrap;">
+                          <span class="badge-<?= $ev['event_type'] === 'Institutional' ? 'purple' : 'info' ?>" style="font-size:0.62rem; font-weight:700; padding:1px 5px; border-radius:3px;">
+                            <?= htmlspecialchars($ev['event_type']) ?>
+                          </span>
+                          <?php if ($ev['has_venue_conflict']): ?>
+                            <span class="badge-danger" style="font-size:0.62rem; padding:1px 5px; border-radius:3px; background:#fef2f2; color:#b91c1c; border:1px solid #fca5a5;">
+                              <i class="fa-solid fa-triangle-exclamation"></i> Conflict
+                            </span>
+                          <?php endif; ?>
+                          <?php if ($is_overdue): ?>
+                            <span style="font-size:0.62rem; padding:1px 5px; border-radius:3px; background:#faf5ff; color:#7e22ce; border:1px solid #d8b4fe; font-weight:700;">
+                              <i class="fa-solid fa-fire-flame-curved"></i> SLA (<?= $dp ?>d)
+                            </span>
+                          <?php endif; ?>
+                        </div>
+                        <?php if ($ev['rejection_note']): ?>
+                          <div style="font-size:0.68rem; color:#dc2626; margin-top:2px; line-height:1.2;">
+                            <i class="fa-solid fa-comment-dots"></i> <?= htmlspecialchars($ev['rejection_note']) ?>
+                          </div>
+                        <?php endif; ?>
+                      </td>
+                      <!-- 3. Organization -->
+                      <td data-label="Organization">
+                        <div>
+                          <span class="club-badge" style="font-size:0.66rem; padding:1px 5px;"><?= htmlspecialchars($ev['club_code']) ?></span>
+                        </div>
+                        <div style="font-size:0.72rem; color:#475569; margin-top:2px; line-height:1.2; word-break:break-word;" title="<?= htmlspecialchars($ev['club_name']) ?>">
+                          <?= htmlspecialchars($ev['club_name']) ?>
+                        </div>
+                      </td>
+                      <!-- 4. Date -->
+                      <td data-label="Date">
+                        <div style="font-weight:600; color:#1e293b; font-size:0.75rem; white-space:nowrap;"><?= date('M d, Y', $ev_ts) ?></div>
+                        <div style="color:#64748b; font-size:0.69rem; white-space:nowrap; margin-top:1px;"><i class="fa-regular fa-clock" style="font-size:0.65rem;"></i> <?= date('h:i A', $ev_ts) ?></div>
+                      </td>
+                      <!-- 5. Venue -->
+                      <td data-label="Venue">
+                        <div style="color:#1e293b; font-weight:500; font-size:0.75rem; line-height:1.2; word-break:break-word;" title="<?= htmlspecialchars($ev['venue']) ?>">
+                          <i class="fa-solid fa-location-dot" style="color:#64748b; font-size:0.69rem;"></i> <?= htmlspecialchars($ev['venue']) ?>
+                        </div>
+                        <?php if ($ev['has_venue_conflict']): ?>
+                          <div style="font-size:0.66rem; color:#ea580c; font-weight:700; margin-top:2px;">
+                            <i class="fa-solid fa-triangle-exclamation"></i> Conflict
+                          </div>
+                        <?php endif; ?>
+                      </td>
+                      <!-- 6. SSC Review -->
+                      <td data-label="SSC Review">
+                        <?php if (in_array($ev['status'], ['Pending Admin', 'Approved']) || strpos($ev['endorsement_notes'] ?? '', 'Endorsed') !== false): ?>
+                          <span class="badge-active" style="display:inline-flex; align-items:center; gap:3px; font-size:0.66rem; font-weight:700; padding:2px 5px;">
+                            <i class="fa-solid fa-circle-check"></i> Passed SSC
+                          </span>
+                          <?php if (!empty($ev['endorsement_notes'])): ?>
+                            <div style="font-size:0.67rem; color:#64748b; margin-top:2px; line-height:1.2; word-break:break-word;" title="<?= htmlspecialchars($ev['endorsement_notes']) ?>">
+                              <?= htmlspecialchars(mb_strimwidth($ev['endorsement_notes'], 0, 36, '...')) ?>
+                            </div>
+                          <?php endif; ?>
+                        <?php elseif ($ev['status'] === 'Pending SSC'): ?>
+                          <span class="badge-warning" style="display:inline-flex; align-items:center; gap:3px; font-size:0.66rem; font-weight:700; padding:2px 5px;">
+                            <i class="fa-solid fa-clock"></i> In Review
+                          </span>
+                        <?php elseif ($ev['status'] === 'Returned'): ?>
+                          <span class="badge-warning" style="display:inline-flex; align-items:center; gap:3px; font-size:0.66rem; font-weight:700; padding:2px 5px;">
+                            <i class="fa-solid fa-rotate-left"></i> Returned
+                          </span>
+                        <?php elseif ($ev['status'] === 'Rejected'): ?>
+                          <span class="badge-inactive" style="display:inline-flex; align-items:center; gap:3px; font-size:0.66rem; font-weight:700; padding:2px 5px;">
+                            <i class="fa-solid fa-ban"></i> SSC Rejected
+                          </span>
+                        <?php else: ?>
+                          <span class="badge-info" style="font-size:0.66rem; font-weight:700; padding:2px 5px;">
+                            <?= htmlspecialchars($ev['status']) ?>
+                          </span>
+                        <?php endif; ?>
+                      </td>
+                      <!-- 7. Admin Status -->
+                      <td data-label="Admin Status">
+                        <?php if ($ev['status'] === 'Pending Admin'): ?>
+                          <span class="badge-warning" style="background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:0.66rem; font-weight:700; display:inline-flex; align-items:center; gap:3px; padding:2px 5px;">
+                            <i class="fa-solid fa-hourglass-half"></i> Pending
+                          </span>
+                        <?php elseif ($ev['status'] === 'Approved'): ?>
+                          <span class="badge-active" style="font-size:0.66rem; font-weight:700; display:inline-flex; align-items:center; gap:3px; padding:2px 5px;">
+                            <i class="fa-solid fa-circle-check"></i> Approved
+                          </span>
+                        <?php elseif ($ev['status'] === 'Rejected'): ?>
+                          <span class="badge-inactive" style="font-size:0.66rem; font-weight:700; display:inline-flex; align-items:center; gap:3px; padding:2px 5px;">
+                            <i class="fa-solid fa-ban"></i> Rejected
+                          </span>
+                        <?php elseif ($ev['status'] === 'Returned'): ?>
+                          <span class="badge-warning" style="font-size:0.66rem; font-weight:700; display:inline-flex; align-items:center; gap:3px; padding:2px 5px;">
+                            <i class="fa-solid fa-rotate-left"></i> Returned
+                          </span>
+                        <?php else: ?>
+                          <span class="badge-info" style="font-size:0.66rem; font-weight:700; padding:2px 5px;">
+                            <?= htmlspecialchars($ev['status']) ?>
+                          </span>
+                        <?php endif; ?>
+                      </td>
+                      <!-- 8. Action (Approve / override / return / reject / details) -->
+                      <td data-label="Action" style="text-align:right;">
+                        <div class="event-act-group">
+                          <!-- 1. Approve Button -->
+                          <?php if ($ev['status'] === 'Pending Admin'): ?>
+                            <button type="button" class="admin-tbl-act-btn" style="background:#16a34a; color:#fff;" onclick="adminApproveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Approve and Publish to Campus Calendar" aria-label="Approve">
+                              <i class="fa-solid fa-check"></i>
+                            </button>
+                          <?php else: ?>
+                            <button type="button" class="admin-tbl-act-btn btn-disabled" disabled title="Approve Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)" aria-label="Approve Disabled">
+                              <i class="fa-solid fa-check"></i>
+                            </button>
+                          <?php endif; ?>
+
+                          <!-- 2. Override Button -->
+                          <button type="button" class="admin-tbl-act-btn" style="background:#7c3aed; color:#fff;" onclick="openAdminOverrideModal(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>', <?= $ev['has_venue_conflict'] ? 'true' : 'false' ?>)" title="Admin Override Clearance (Force approve or clear conflicts)" aria-label="Override">
+                            <i class="fa-solid fa-bolt"></i>
+                          </button>
+
+                          <!-- 3. Return Button -->
+                          <?php if ($ev['status'] !== 'Returned' && $ev['status'] !== 'Rejected'): ?>
+                            <button type="button" class="admin-tbl-act-btn" style="background:#f59e0b; color:#fff;" onclick="openReturnEventModal(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Return for Revision" aria-label="Return">
+                              <i class="fa-solid fa-rotate-left"></i>
+                            </button>
+                          <?php else: ?>
+                            <button type="button" class="admin-tbl-act-btn btn-disabled" disabled title="<?= $ev['status'] === 'Returned' ? 'Already Returned for Revision' : 'Return Unavailable' ?>" aria-label="Return Disabled">
+                              <i class="fa-solid fa-rotate-left"></i>
+                            </button>
+                          <?php endif; ?>
+
+                          <!-- 4. Reject Button -->
+                          <?php if ($ev['status'] !== 'Rejected'): ?>
+                            <button type="button" class="admin-tbl-act-btn" style="background:#dc2626; color:#fff;" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event Proposal" aria-label="Reject">
+                              <i class="fa-solid fa-xmark"></i>
+                            </button>
+                          <?php else: ?>
+                            <button type="button" class="admin-tbl-act-btn btn-disabled" disabled title="Already Rejected" aria-label="Reject Disabled">
+                              <i class="fa-solid fa-xmark"></i>
+                            </button>
+                          <?php endif; ?>
+
+                          <!-- 5. Details Button -->
+                          <button type="button" class="admin-tbl-act-btn" style="background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;" onclick="viewEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="View Event Proposal Details" aria-label="Details">
+                            <i class="fa-solid fa-eye"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  <?php endforeach; ?>
+                <?php endif; ?>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <?php endif; ?>
+
+      <?php if ($sess_role !== 'ssc' && $sess_role !== 'admin'): ?>
       <!-- Events Table -->
-      <div class="table-card" id="eventsListCard" <?= ($sess_role !== 'student' && $events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:16px; border-bottom:1px solid #f1f5f9; padding-bottom:12px;">
+      <div class="card" id="eventsListCard" <?= ($sess_role !== 'student' && $events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
+        <div class="filter-toolbar-wrap" style="margin-bottom:16px; border-bottom:1px solid #f1f5f9; padding-bottom:12px;">
           <div>
             <?php if ($sess_role === 'student'): ?>
               <h3 style="margin:0; font-size:1.1rem; color:#1e293b;"><i class="fa-solid fa-list-ul" style="color:#2563eb;"></i> List of Events Posted</h3>
@@ -855,7 +1928,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
           </div>
 
           <!-- Month Filter & Locating Controls -->
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <div class="filter-controls-group">
             <label for="monthFilterSelect" style="font-size:0.8rem; font-weight:600; color:#475569;"><i class="fa-solid fa-filter"></i> Month:</label>
             <select id="monthFilterSelect" class="card-btn" style="background:#fff; color:#1e293b; border:1px solid #cbd5e1; padding:6px 12px; font-weight:600; font-size:0.8rem;" onchange="filterEventsBySelectedMonth(this.value)">
               <option value="ALL">All Months</option>
@@ -879,8 +1952,13 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <button type="button" class="card-btn btn-sm" style="background:#64748b; color:#fff;" onclick="filterEventsBySelectedMonth('ALL')" title="Show all events">
               Show All
             </button>
+            <?php if (can_any(['events.create.own', 'events.create.institutional'])): ?>
+              <button type="button" class="card-btn btn-sm btn-ai-planner" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> AI Event Planner
+              </button>
+            <?php endif; ?>
             <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-              <button type="button" class="card-btn btn-sm" id="openCreateEvent" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openCreateEventModal()" title="Create event proposal to submit to SSC for review and approval">
+              <button type="button" class="card-btn btn-sm btn-full-mobile" id="openCreateEvent" style="background:#16a34a; color:#fff; font-weight:700;" onclick="openCreateEventModal()" title="Create event proposal to submit to SSC for review and approval">
                 <i class="fa-solid fa-calendar-plus"></i> Create Event Proposal
               </button>
             <?php endif; ?>
@@ -900,7 +1978,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <?php endif; ?>
           </div>
         <?php else: ?>
-        <table class="data-table" id="eventTable">
+        <div class="table-wrap">
+          <table id="eventTable" class="table-wide">
           <thead>
             <tr>
               <th>Event Title</th>
@@ -909,7 +1988,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <th>Date & Time</th>
               <th>Venue</th>
               <th>Status</th>
-              <th style="text-align:right; white-space:nowrap; min-width:260px;">Actions</th>
+              <th style="text-align:right; white-space:nowrap;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -946,37 +2025,61 @@ require_once __DIR__ . '/../shared/sidebar.php';
                   <button type="button" class="event-act-btn event-act-btn-details" onclick="viewEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="View Event Details">
                     <i class="fa-solid fa-eye"></i> Details
                   </button>
-                  <button type="button" class="event-act-btn event-act-btn-qr" onclick="if(window.openGlobalEventQr){ window.openGlobalEventQr(<?= (int)$ev['id'] ?>); } else { alert('QR viewer unavailable'); }" title="View Event QR Code & Official Attendance Poster">
+                  <button type="button" class="event-act-btn event-act-btn-qr" onclick="if(window.openGlobalEventQr){ window.openGlobalEventQr(<?= (int)$ev['id'] ?>); } else { window.showSystemModal({ title: 'QR Unavailable', message: 'QR viewer is currently unavailable.', type: 'warning' }); }" title="View Event QR Code & Official Attendance Poster">
                     <i class="fa-solid fa-qrcode"></i> QR
                   </button>
-                  <?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
+                  <?php if (can_any(['events.review.ssc', 'events.approve.admin', 'events.create.own'])): ?>
                     <button type="button" class="event-act-btn event-act-btn-reg" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="View Event Registrations">
                       <i class="fa-solid fa-users-rectangle"></i> Registrations
                     </button>
                   <?php endif; ?>
                   
                   <?php /* STAGE 2: SSC Endorsement */ ?>
-                  <?php if (in_array($sess_role, ['ssc', 'admin']) && in_array($ev['status'], ['Pending SSC', 'Pending OSA'])): ?>
-                    <button type="button" class="event-act-btn event-act-btn-endorse" onclick="endorseEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Endorse to Admin">
-                      <i class="fa-solid fa-arrow-right"></i> Endorse
-                    </button>
-                    <button type="button" class="event-act-btn event-act-btn-reject" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
-                      <i class="fa-solid fa-times"></i> Reject
-                    </button>
+                  <?php if (can('events.review.ssc') && !can('events.approve.admin')): ?>
+                    <?php if (in_array($ev['status'], ['Pending SSC', 'Pending OSA'])): ?>
+                      <button type="button" class="event-act-btn event-act-btn-endorse" onclick="endorseEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Endorse to Admin">
+                        <i class="fa-solid fa-arrow-right"></i> Endorse
+                      </button>
+                      <button type="button" class="event-act-btn event-act-btn-reject" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
+                        <i class="fa-solid fa-times"></i> Reject
+                      </button>
+                    <?php else: ?>
+                      <button type="button" class="event-act-btn btn-disabled" disabled title="Endorsement Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                        <i class="fa-solid fa-arrow-right"></i> Endorse
+                      </button>
+                      <button type="button" class="event-act-btn btn-disabled" disabled title="Reject Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                        <i class="fa-solid fa-times"></i> Reject
+                      </button>
+                    <?php endif; ?>
 
                   <?php /* STAGE 3: Admin Final Calendar Approval */ ?>
-                  <?php elseif (in_array($sess_role, ['admin']) && $ev['status'] === 'Pending Admin'): ?>
-                    <button type="button" class="event-act-btn event-act-btn-endorse" onclick="adminApproveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Approve for Calendar">
-                      <i class="fa-solid fa-check"></i> Approve
-                    </button>
-                    <button type="button" class="event-act-btn event-act-btn-reject" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
-                      <i class="fa-solid fa-times"></i> Reject
-                    </button>
+                  <?php elseif (can('events.approve.admin')): ?>
+                    <?php if ($ev['status'] === 'Pending Admin'): ?>
+                      <button type="button" class="event-act-btn event-act-btn-endorse" onclick="adminApproveEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Approve for Calendar">
+                        <i class="fa-solid fa-check"></i> Approve
+                      </button>
+                      <button type="button" class="event-act-btn event-act-btn-reject" onclick="rejectEvent(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="Reject Event">
+                        <i class="fa-solid fa-times"></i> Reject
+                      </button>
+                    <?php else: ?>
+                      <button type="button" class="event-act-btn btn-disabled" disabled title="Approval Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                        <i class="fa-solid fa-check"></i> Approve
+                      </button>
+                      <button type="button" class="event-act-btn btn-disabled" disabled title="Reject Unavailable (Status: <?= htmlspecialchars($ev['status']) ?>)">
+                        <i class="fa-solid fa-times"></i> Reject
+                      </button>
+                    <?php endif; ?>
 
-                  <?php elseif ($sess_role === 'club_adviser' && in_array($ev['status'], ['Pending SSC', 'Pending OSA', 'Rejected'])): ?>
-                    <button type="button" class="event-act-btn event-act-btn-edit" onclick="editEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="Edit Event Proposal">
-                      <i class="fa-solid fa-edit"></i> Edit
-                    </button>
+                  <?php elseif (can('events.edit.own')): ?>
+                    <?php if (in_array($ev['status'], ['Pending SSC', 'Pending OSA', 'Rejected'])): ?>
+                      <button type="button" class="event-act-btn event-act-btn-edit" onclick="editEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="Edit Event Proposal">
+                        <i class="fa-solid fa-edit"></i> Edit
+                      </button>
+                    <?php else: ?>
+                      <button type="button" class="event-act-btn btn-disabled" disabled title="Edit Locked (Event is <?= htmlspecialchars($ev['status']) ?>)">
+                        <i class="fa-solid fa-edit"></i> Edit
+                      </button>
+                    <?php endif; ?>
                   <?php endif; ?>
                 </div>
               </td>
@@ -984,8 +2087,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <?php endforeach; ?>
           </tbody>
         </table>
+        </div>
         <?php endif; ?>
       </div>
+      <?php endif; ?>
 
     </div>
   </div>
@@ -993,21 +2098,12 @@ require_once __DIR__ . '/../shared/sidebar.php';
 </div>
 
 <!-- ────────────────────────────────────────────────────────────
-     AI EVENT PLANNER FLOATING ACTION BUTTON & MODAL
+     AI EVENT PLANNER DIALOG MODAL
 ──────────────────────────────────────────────────────────── -->
-<?php if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])): ?>
-<!-- Floating Action Button (Accessible on Approval Pipeline) -->
-<button type="button" class="ai-fab-btn" id="aiPlannerFabBtn" onclick="openModal('aiPlannerModal')" title="Open AI Event Planner &amp; Schedule Conflict Optimizer" aria-label="Open AI Event Planner" <?= ($sess_role !== 'student' && $events_view === 'calendar') ? 'style="display:none;"' : '' ?>>
-  <div class="ai-fab-icon-wrap">
-    <i class="fa-solid fa-wand-magic-sparkles"></i>
-    <span class="ai-fab-pulse"></span>
-  </div>
-  <span class="ai-fab-label">AI Event Planner</span>
-</button>
-
+<?php if (can_any(['events.create.own', 'events.create.institutional'])): ?>
 <!-- AI Event Planner Dialog Modal -->
 <div class="modal-overlay" id="aiPlannerModal">
-  <div class="modal modal-lg" style="max-width:900px; width:95%; max-height:90vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-radius:18px; box-shadow:0 25px 50px -12px rgba(15,23,42,0.35);">
+  <div class="modal modal-lg" style="max-width:980px; width:95%; max-height:90vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-radius:18px; box-shadow:0 25px 50px -12px rgba(15,23,42,0.35);">
     <div class="modal-header" style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #2563eb 100%); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
       <div style="display:flex; align-items:center; gap:12px;">
         <div class="ai-rec-icon-wrap">
@@ -1016,10 +2112,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
         </div>
         <div>
           <h3 style="margin:0; font-size:1.05rem; font-weight:800; color:#fff; display:flex; align-items:center; gap:8px;">
-            <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> AI Event Planner &amp; Schedule Conflict Optimizer
+            <i class="fa-solid fa-wand-magic-sparkles" style="color:#f59e0b;"></i> AI Event Planner
           </h3>
-          <p style="margin:3px 0 0; font-size:0.75rem; color:rgba(255,255,255,0.8); line-height:1.4;">
-            Generative AI event proposal engine analyzing historical activity trends, future campus schedules, and 2026 Philippine holidays to produce conflict-free dates.
+          <p style="margin:2px 0 0; font-size:0.75rem; color:rgba(255,255,255,0.85); line-height:1.3;">
+            Generate conflict-free event proposals and schedules.
           </p>
         </div>
       </div>
@@ -1030,7 +2126,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
 
     <!-- AI Prompt Controls Row -->
     <div style="background:#f8fafc; border-bottom:1px solid #e2e8f0; padding:14px 24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; flex-shrink:0;">
-      <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+      <?php if ($sess_role === 'ssc'): ?>
       <div style="display:flex; flex-direction:column; gap:4px;">
         <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-sitemap"></i> Organization</label>
         <select id="aiPlannerClubSelect" style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.82rem; background:#fff; font-weight:600; color:#1e293b; height:38px;" title="Select organization to plan events for">
@@ -1041,29 +2137,29 @@ require_once __DIR__ . '/../shared/sidebar.php';
       </div>
       <?php endif; ?>
 
-      <div style="flex:1; min-width:260px; display:flex; flex-direction:column; gap:4px;">
-        <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-lightbulb"></i> Custom Event Theme / Focus (Optional)</label>
-        <input type="text" id="aiPlannerThemeInput" placeholder="e.g. AI &amp; Cybersecurity Bootcamp, Cultural Dance Festival, Leadership Forum, Outreach..." style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.84rem; color:#1e293b; background:#fff; width:100%; height:38px;" onkeydown="if(event.key==='Enter') generateAIEventPlans();"/>
+      <div style="flex:1; min-width:240px; display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:0.72rem; font-weight:700; color:#64748b;"><i class="fa-solid fa-lightbulb"></i> Theme / Topic (Optional)</label>
+        <input type="text" id="aiPlannerThemeInput" placeholder="e.g. Leadership Seminar, Sports Fest, Workshop..." style="padding:8px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.84rem; color:#1e293b; background:#fff; width:100%; height:38px;" onkeydown="if(event.key==='Enter') generateAIEventPlans();"/>
       </div>
 
       <div style="display:flex; align-items:flex-end; height:100%; padding-top:18px;">
-        <button type="button" class="ai-rec-generate-btn" id="aiPlanBtn" onclick="generateAIEventPlans()" style="height:38px; padding:0 20px;">
+        <button type="button" class="ai-rec-generate-btn" id="aiPlanBtn" onclick="generateAIEventPlans()" style="height:38px; padding:0 18px;">
           <i class="fa-solid fa-wand-magic-sparkles"></i>
-          <span>Generate AI Event Ideas &amp; Dates</span>
+          <span>Generate Ideas</span>
         </button>
       </div>
     </div>
 
     <!-- AI Result Container -->
-    <div class="ai-rec-body" id="aiPlannerBody" style="padding:20px 24px; overflow-y:auto; flex:1; max-height:calc(90vh - 170px);">
+    <div class="ai-rec-body" id="aiPlannerBody" style="padding:16px 20px; overflow-y:auto; overflow-x:hidden; flex:1; max-height:calc(90vh - 170px); width:100%; box-sizing:border-box;">
       <!-- Initial Guide / Empty State -->
       <div id="aiPlannerEmptyState" style="text-align:center; padding:36px 20px; color:#64748b;">
-        <div style="width:60px; height:60px; border-radius:18px; background:linear-gradient(135deg, #eff6ff, #dbeafe); color:#2563eb; display:flex; align-items:center; justify-content:center; font-size:1.6rem; margin:0 auto 14px; box-shadow:0 8px 16px rgba(37,99,235,0.12);">
+        <div style="width:56px; height:56px; border-radius:16px; background:linear-gradient(135deg, #eff6ff, #dbeafe); color:#2563eb; display:flex; align-items:center; justify-content:center; font-size:1.5rem; margin:0 auto 14px; box-shadow:0 8px 16px rgba(37,99,235,0.12);">
           <i class="fa-solid fa-wand-magic-sparkles"></i>
         </div>
-        <h4 style="font-size:1rem; font-weight:700; color:#1e293b; margin:0 0 6px;">Ready to Plan Conflict-Free Campus Events</h4>
-        <p style="font-size:0.82rem; color:#64748b; max-width:480px; margin:0 auto 16px; line-height:1.5;">
-          Specify a custom theme above or leave it blank, then click <strong>"Generate AI Event Ideas &amp; Dates"</strong>. The AI engine will analyze campus calendars and Philippine holidays to craft conflict-free proposals.
+        <h4 style="font-size:0.98rem; font-weight:700; color:#1e293b; margin:0 0 6px;">Smart Event Suggestions</h4>
+        <p style="font-size:0.82rem; color:#64748b; max-width:380px; margin:0 auto; line-height:1.5;">
+          Choose an organization and click <strong>Generate Ideas</strong> to preview recommended dates and venues.
         </p>
       </div>
 
@@ -1072,23 +2168,23 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <div class="ai-shimmer-bar"></div>
         <div class="ai-shimmer-bar short"></div>
         <div class="ai-shimmer-bar"></div>
-        <div class="ai-thinking-text"><i class="fa-solid fa-brain fa-beat-fade"></i> Connecting to Google Gemini AI &amp; analyzing campus calendar schedules...</div>
+        <div class="ai-thinking-text"><i class="fa-solid fa-brain fa-beat-fade"></i> Generating event proposals...</div>
       </div>
 
       <!-- Results -->
-      <div id="aiPlannerResults"></div>
+      <div id="aiPlannerResults" style="width:100%; box-sizing:border-box; overflow-x:hidden;"></div>
     </div>
 
     <!-- Modal Footer -->
-    <div class="modal-actions" style="padding:12px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; align-items:center; flex-shrink:0;">
-      <span style="font-size:0.75rem; color:#64748b;"><i class="fa-solid fa-shield-halved" style="color:#16a34a;"></i> Automatically checked against 2026 Academic &amp; PH Holidays</span>
+    <div class="modal-actions" style="padding:10px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; align-items:center; flex-shrink:0;">
+      <span style="font-size:0.75rem; color:#64748b;"><i class="fa-solid fa-shield-halved" style="color:#16a34a;"></i> Checked against campus calendar &amp; holidays</span>
     </div>
   </div>
 </div>
 <?php endif; ?>
 
 <!-- ------ CREATE EVENT MODAL (Supports Club & School-Wide Events) ------ -->
-<?php if (in_array($sess_role, ['club_adviser','ssc','admin'])): ?>
+<?php if (can_any(['events.create.own', 'events.create.institutional', 'events.approve.admin'])): ?>
 <div class="modal-overlay" id="createEventModal">
   <div class="modal modal-lg" style="max-width:600px; padding:0; overflow:hidden; border-radius:16px;">
     <div class="modal-header" style="background: linear-gradient(135deg, #1e3a8a, #2563eb); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
@@ -1098,10 +2194,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
       </h3>
       <button class="modal-close" onclick="closeModal('createEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <form id="createEventForm" autocomplete="off">
+    <form id="createEventForm" autocomplete="off" enctype="multipart/form-data">
       <div class="modal-body" style="padding:24px;">
         
-        <?php if (in_array($sess_role, ['ssc', 'admin'])): ?>
+        <?php if (can_any(['events.create.institutional', 'events.approve.admin'])): ?>
         <div class="form-group" style="margin-bottom:14px;">
           <label style="font-weight:700; font-size:0.8rem; color:#475569;">Event Scope / Type <span style="color:#ef4444;">*</span></label>
           <select name="event_type" id="createEventTypeSelect" onchange="toggleEventScopeFields(this.value)" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.85rem; font-weight:600;">
@@ -1119,7 +2215,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
           <label>Description &amp; Objectives</label>
           <textarea name="description" rows="3" placeholder="Specify event details, objectives, target attendees, and schedule..."></textarea>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-grid-2">
           <div class="form-group">
             <label>Event Date &amp; Time <span style="color:#ef4444;">*</span></label>
             <input type="datetime-local" name="event_date" id="createEventDateInput" required onchange="autoCheckModalDate()"/>
@@ -1129,8 +2225,18 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <input type="text" name="venue" id="createEventVenueInput" placeholder="e.g. Main Gymnasium / Auditorium" required onchange="autoCheckModalDate()"/>
           </div>
         </div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label>Expected Attendees</label>
+            <input type="number" name="expected_attendees" min="0" placeholder="e.g. 150" value="0"/>
+          </div>
+          <div class="form-group">
+            <label>Proposal Document (PDF / DOCX / JPG)</label>
+            <input type="file" name="attachment" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" style="padding:7px 10px; font-size:0.8rem; background:#f8fafc; border:1.5px dashed #cbd5e1; border-radius:8px;"/>
+          </div>
+        </div>
         <div style="margin-bottom:16px;">
-          <button type="button" class="card-btn btn-sm" id="btnAuditModalDate" style="background:#4338ca; color:#fff; font-weight:700; padding:7px 14px; border-radius:8px;" onclick="runAICheckDateConflict()">
+          <button type="button" class="card-btn" id="btnAuditModalDate" style="background:linear-gradient(135deg, #4338ca, #3b82f6); color:#fff; font-weight:700; padding:10px 16px; border-radius:8px; width:100%; display:inline-flex; align-items:center; justify-content:center; gap:8px; font-size:0.84rem; border:none; cursor:pointer; box-shadow:0 2px 6px rgba(67,56,202,0.25);" onclick="runAICheckDateConflict()">
             <i class="fa-solid fa-shield-halved"></i> AI Audit Date &amp; Check Conflicts
           </button>
           <div id="conflictAuditResult" style="display:none; margin-top:10px; font-size:0.82rem; border-radius:10px; padding:12px 16px; line-height:1.45; box-shadow:0 2px 6px rgba(0,0,0,0.03);"></div>
@@ -1221,7 +2327,7 @@ require_once __DIR__ . '/../shared/sidebar.php';
           <label>Description &amp; Objectives</label>
           <textarea name="description" id="editEventDesc" rows="3"></textarea>
         </div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <div class="form-grid-2">
           <div class="form-group">
             <label>Event Date &amp; Time <span style="color:#ef4444;">*</span></label>
             <input type="datetime-local" name="event_date" id="editEventDate" required/>
@@ -1282,8 +2388,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
       </div>
 
       <!-- Registrations Data Table -->
-      <div style="overflow-x:auto; border:1px solid #e2e8f0; border-radius:10px;">
-        <table class="data-table" style="width:100%; font-size:0.85rem; border-collapse:collapse;" id="regTable">
+      <div class="table-wrap">
+        <table class="table-wide" style="width:100%; font-size:0.85rem; border-collapse:collapse;" id="regTable">
           <thead>
             <tr style="background:#f8fafc; color:#334155; text-align:left;">
               <th style="padding:10px 12px; width:35px; text-align:center;">#</th>
@@ -1310,8 +2416,270 @@ require_once __DIR__ . '/../shared/sidebar.php';
   </div>
 </div>
 
-<div id="toast" class="toast-notification" style="display:none;"></div>
-<script src="../js/dashboard.js"></script>
+<!-- ────────────────────────────────────────────────────────────
+     SSC EVENT REVIEW PANEL MODAL (6-Point Validation Checklist)
+──────────────────────────────────────────────────────────── -->
+<?php if ($sess_role === 'ssc' || $sess_role === 'admin'): ?>
+<div class="modal-overlay" id="sscEventReviewModal" style="display:none;">
+  <div class="modal modal-lg" style="max-width:980px; width:95%; max-height:92vh; display:flex; flex-direction:column; padding:0; overflow:hidden; border-radius:18px; box-shadow:0 25px 50px -12px rgba(15,23,42,0.35);">
+    <!-- Modal Header -->
+    <div class="modal-header" style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #2563eb 100%); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div style="width:40px; height:40px; border-radius:10px; background:rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; font-size:1.2rem; color:#fff;">
+          <i class="fa-solid fa-clipboard-check"></i>
+        </div>
+        <div>
+          <h3 style="margin:0; font-size:1.1rem; font-weight:800; color:#fff; display:flex; align-items:center; gap:8px;">
+            SSC Event Review Panel
+            <span id="sscRevRefBadge" style="font-size:0.75rem; font-weight:700; background:rgba(255,255,255,0.2); padding:2px 8px; border-radius:6px; font-family:monospace;"></span>
+          </h3>
+          <span id="sscRevStatusBadge" style="font-size:0.74rem; font-weight:600; opacity:0.9;"></span>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeModal('sscEventReviewModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.2rem; background:none; border:none; cursor:pointer; padding:6px;" aria-label="Close">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <!-- Modal Body (Scrollable dual-column) -->
+    <div class="modal-body" style="padding:22px 26px; overflow-y:auto; flex:1; max-height:calc(92vh - 150px);">
+      <input type="hidden" id="sscRevEventId" value=""/>
+
+      <div class="ssc-review-grid">
+        <!-- LEFT COLUMN: Event Details -->
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:18px;">
+          <h4 style="margin:0 0 14px; font-size:0.95rem; font-weight:700; color:#1e293b; display:flex; align-items:center; gap:8px; border-bottom:1px solid #e2e8f0; padding-bottom:10px;">
+            <i class="fa-solid fa-circle-info" style="color:#2563eb;"></i> Event Proposal Details
+          </h4>
+
+          <div style="margin-bottom:12px;">
+            <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase;">Event Title</div>
+            <div id="sscRevTitle" style="font-size:1rem; font-weight:800; color:#0f172a; margin-top:2px;"></div>
+          </div>
+
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Host Organization:</span>
+            <span class="ssc-detail-val" id="sscRevClub"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Faculty Adviser:</span>
+            <span class="ssc-detail-val" id="sscRevAdviser"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Event Type:</span>
+            <span class="ssc-detail-val" id="sscRevType"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Date &amp; Time:</span>
+            <span class="ssc-detail-val" id="sscRevDateTime"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Venue:</span>
+            <span class="ssc-detail-val" id="sscRevVenue"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Expected Attendees:</span>
+            <span class="ssc-detail-val" id="sscRevAttendees"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Submitted By:</span>
+            <span class="ssc-detail-val" id="sscRevSubmitter"></span>
+          </div>
+          <div class="ssc-detail-row">
+            <span class="ssc-detail-label">Submitted Date:</span>
+            <span class="ssc-detail-val" id="sscRevSubmitDate"></span>
+          </div>
+
+          <!-- Schedule & Venue Collision Banner -->
+          <div id="sscRevConflictBanner" style="display:none; margin-top:14px; padding:12px 14px; border-radius:8px; font-size:0.8rem; line-height:1.45;"></div>
+
+          <!-- Description & Objectives -->
+          <div style="margin-top:14px;">
+            <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px;">Description &amp; Objectives:</div>
+            <div id="sscRevDesc" style="font-size:0.82rem; color:#334155; line-height:1.5; background:#fff; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0; min-height:60px; max-height:140px; overflow-y:auto;"></div>
+          </div>
+
+          <!-- Attachments Section -->
+          <div style="margin-top:14px;">
+            <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:6px;">Proposal Document / Attachments:</div>
+            <div id="sscRevAttachmentWrap"></div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Validation Checklist & Decision -->
+        <div style="display:flex; flex-direction:column; justify-content:space-between;">
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div>
+                <h4 style="margin:0; font-size:0.95rem; font-weight:700; color:#1e293b; display:flex; align-items:center; gap:8px;">
+                  <i class="fa-solid fa-list-check" style="color:#16a34a;"></i> Validation Checklist
+                </h4>
+                <span style="font-size:0.74rem; color:#64748b;">Verify 6 criteria before endorsement</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span id="sscChecklistBadge" style="font-size:0.75rem; font-weight:700; background:#eff6ff; color:#2563eb; padding:3px 8px; border-radius:6px; border:1px solid #bfdbfe;">
+                  0 of 6 verified
+                </span>
+                <button type="button" class="card-btn btn-sm" onclick="toggleAllSscChecklist()" style="font-size:0.72rem; padding:3px 8px; background:#f1f5f9; color:#475569; border:1px solid #cbd5e1;">
+                  Check All
+                </button>
+              </div>
+            </div>
+
+            <!-- 6 Checklist Items -->
+            <div style="margin-bottom:16px;">
+              <label class="ssc-checklist-item">
+                <input type="checkbox" id="chk_ssc_org" onchange="updateSscChecklistCount()"/>
+                <div class="ssc-checklist-label">
+                  <strong>Recognized Organization</strong>
+                  <div style="font-size:0.72rem; color:#64748b; font-weight:400;">Organization holds active accreditation and is in good standing</div>
+                </div>
+              </label>
+
+              <label class="ssc-checklist-item">
+                <input type="checkbox" id="chk_ssc_adviser" onchange="updateSscChecklistCount()"/>
+                <div class="ssc-checklist-label">
+                  <strong>Adviser Endorsement</strong>
+                  <div style="font-size:0.72rem; color:#64748b; font-weight:400;">Faculty adviser has verified and endorsed the activity proposal</div>
+                </div>
+              </label>
+
+              <label class="ssc-checklist-item">
+                <input type="checkbox" id="chk_ssc_schedule" onchange="updateSscChecklistCount()"/>
+                <div class="ssc-checklist-label">
+                  <strong>Schedule Clearance</strong>
+                  <div style="font-size:0.72rem; color:#64748b; font-weight:400;">No conflict with academic exam blackouts or institutional events</div>
+                </div>
+              </label>
+
+              <label class="ssc-checklist-item">
+                <input type="checkbox" id="chk_ssc_venue" onchange="updateSscChecklistCount()"/>
+                <div class="ssc-checklist-label">
+                  <strong>Venue Availability</strong>
+                  <div style="font-size:0.72rem; color:#64748b; font-weight:400;">Facility cleared of collisions and suitable for attendee capacity</div>
+                </div>
+              </label>
+
+              <label class="ssc-checklist-item">
+                <input type="checkbox" id="chk_ssc_info" onchange="updateSscChecklistCount()"/>
+                <div class="ssc-checklist-label">
+                  <strong>Complete Information</strong>
+                  <div style="font-size:0.72rem; color:#64748b; font-weight:400;">Program objectives, schedule, timeline and expected attendees complete</div>
+                </div>
+              </label>
+
+              <label class="ssc-checklist-item">
+                <input type="checkbox" id="chk_ssc_attachments" onchange="updateSscChecklistCount()"/>
+                <div class="ssc-checklist-label">
+                  <strong>Required Attachments</strong>
+                  <div style="font-size:0.72rem; color:#64748b; font-weight:400;">Event proposal, safety protocol &amp; budget sheet attached</div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Review Remarks Input -->
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:0.78rem; font-weight:700; color:#334155;">SSC Review Remarks / Instructions:</label>
+              <textarea id="sscReviewRemarks" rows="3" placeholder="Specify endorsement remarks, feedback, or revision requirements..." style="width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; font-size:0.83rem; line-height:1.4; box-sizing:border-box;"></textarea>
+            </div>
+          </div>
+
+          <!-- Review Panel Action Buttons (3 Decisions) -->
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:14px; margin-top:14px;">
+            <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:8px;">Endorsement Decision:</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr 1.3fr; gap:8px;">
+              <!-- 1. Return for Revision -->
+              <button type="button" class="card-btn" style="background:#f59e0b; color:#fff; font-weight:700; padding:10px 8px; font-size:0.78rem; display:inline-flex; align-items:center; justify-content:center; gap:5px;" onclick="submitSscReviewDecision('return')" title="Return proposal to club adviser for revisions">
+                <i class="fa-solid fa-rotate-left"></i> Return for Revision
+              </button>
+              <!-- 2. Reject -->
+              <button type="button" class="card-btn" style="background:#dc2626; color:#fff; font-weight:700; padding:10px 8px; font-size:0.78rem; display:inline-flex; align-items:center; justify-content:center; gap:5px;" onclick="submitSscReviewDecision('reject')" title="Reject event proposal">
+                <i class="fa-solid fa-xmark"></i> Reject
+              </button>
+              <!-- 3. Endorse to Admin -->
+              <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700; padding:10px 12px; font-size:0.82rem; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="submitSscReviewDecision('endorse')" title="Endorse proposal and forward to System Admin">
+                <i class="fa-solid fa-paper-plane"></i> Endorse to Admin
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Footer -->
+    <div class="modal-actions" style="padding:12px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-shrink:0;">
+      <span style="font-size:0.75rem; color:#64748b;"><i class="fa-solid fa-shield-halved" style="color:#2563eb;"></i> SSC Official Governance Oversight</span>
+      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600;" onclick="closeModal('sscEventReviewModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Return for Revision Standalone Modal -->
+<div class="modal-overlay" id="returnEventModal" style="display:none;">
+  <div class="modal" style="max-width:500px; padding:0; overflow:hidden; border-radius:16px;">
+    <div class="modal-header" style="background:#f59e0b; color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0; font-size:1.05rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-rotate-left"></i> Return Event for Revision
+      </h3>
+      <button class="modal-close" onclick="closeModal('returnEventModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" style="padding:24px;">
+      <input type="hidden" id="returnEventId" value=""/>
+      <p id="returnEventDesc" style="color:#475569; margin-bottom:14px; font-size:0.86rem; line-height:1.45;"></p>
+      <div class="form-group">
+        <label style="font-weight:700; font-size:0.8rem; color:#334155;">Required Revisions / Feedback <span style="color:#ef4444;">*</span></label>
+        <textarea id="returnEventNote" rows="3" placeholder="Detail the revisions needed from the organization adviser..." style="width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; font-size:0.83rem; box-sizing:border-box;"></textarea>
+      </div>
+    </div>
+    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px;">
+      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600;" onclick="closeModal('returnEventModal')">Cancel</button>
+      <button type="button" class="card-btn" id="confirmReturnEventBtn" style="background:#f59e0b; color:#fff; padding:9px 18px; font-weight:700;" onclick="submitReturnEvent()"><i class="fa-solid fa-rotate-left"></i> Return for Revision</button>
+    </div>
+  </div>
+</div>
+
+<?php if ($sess_role === 'admin'): ?>
+<!-- Admin Override Clearance Modal -->
+<div class="modal-overlay" id="adminOverrideModal" style="display:none;">
+  <div class="modal" style="max-width:520px; padding:0; overflow:hidden; border-radius:16px;">
+    <div class="modal-header" style="background:linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%); color:#fff; padding:18px 24px; display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0; font-size:1.05rem; color:#ffffff; font-weight:700; display:flex; align-items:center; gap:8px;">
+        <i class="fa-solid fa-bolt"></i> Admin Override Clearance
+      </h3>
+      <button class="modal-close" onclick="closeModal('adminOverrideModal')" type="button" style="color:#ffffff; opacity:0.9; font-size:1.1rem; background:none; border:none; cursor:pointer;" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body" style="padding:24px;">
+      <input type="hidden" id="adminOverrideEventId" value=""/>
+      <p id="adminOverrideEventDesc" style="color:#1e293b; font-weight:600; margin-bottom:12px; font-size:0.9rem; line-height:1.4;"></p>
+      
+      <div id="adminOverrideConflictAlert" style="display:none; margin-bottom:14px; background:#fff7ed; border:1px solid #fdba74; color:#c2410c; padding:10px 14px; border-radius:8px; font-size:0.82rem; line-height:1.4;">
+        <i class="fa-solid fa-triangle-exclamation" style="margin-right:4px;"></i><strong>Schedule Notice:</strong> This event has an overlapping venue conflict. Executing this override grants priority administrative clearance and publishes the event to the campus calendar.
+      </div>
+
+      <div class="form-group" style="margin-bottom:12px;">
+        <label style="font-weight:700; font-size:0.8rem; color:#334155; margin-bottom:6px; display:block;">
+          Override Justification / Clearance Note <span style="color:#ef4444;">*</span>
+        </label>
+        <textarea id="adminOverrideReason" rows="3" placeholder="e.g. Authorized priority venue booking / Special executive clearance..." style="width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; font-size:0.83rem; box-sizing:border-box;"></textarea>
+      </div>
+
+      <p style="font-size:0.75rem; color:#64748b; margin:0; line-height:1.35;">
+        <i class="fa-solid fa-shield-halved" style="color:#7c3aed;"></i> This will immediately set the status to <strong>Approved</strong>, publish the event to the active campus calendar, log an override entry in the system audit trail, and notify all stakeholders.
+      </p>
+    </div>
+    <div class="modal-actions" style="padding:14px 24px; background:#f8fafc; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px;">
+      <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600;" onclick="closeModal('adminOverrideModal')">Cancel</button>
+      <button type="button" class="card-btn" id="confirmAdminOverrideBtn" style="background:#7c3aed; color:#fff; padding:9px 18px; font-weight:700;" onclick="submitAdminOverride()">
+        <i class="fa-solid fa-bolt"></i> Grant Override Clearance
+      </button>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
+<?php endif; ?>
+
+<script src="../js/dashboard.js?v=<?= filemtime(__DIR__ . '/../js/dashboard.js') ?>"></script>
+<script src="../js/table-pagination.js"></script>
 <script>
 const ROLE = '<?= $sess_role ?>';
 const ALL_EVENTS = <?= json_encode($events, JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
@@ -1319,6 +2687,65 @@ const MY_REG_IDS = <?= json_encode($my_reg_ids) ?>;
 const PH_HOLIDAYS = <?= json_encode($ph_holidays_all, JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 
 let currentDate = new Date();
+let calSearchQuery = '';
+
+// Universal tokenized search matcher: matches any letter or multi-word query across fields
+function matchesSearchQuery(text, query) {
+  if (!query) return true;
+  if (!text) return false;
+  const words = query.toLowerCase().trim().split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 0) return true;
+  const target = text.toLowerCase();
+  return words.every(word => target.includes(word));
+}
+
+function switchEventsView(viewName) {
+  const calSection = document.getElementById('activeCalendarSection');
+  const sscPipeline = document.getElementById('sscPipelineSection');
+  const adminPipeline = document.getElementById('adminPipelineSection');
+  const eventsList = document.getElementById('eventsListCard');
+  const btnCal = document.getElementById('btnViewCalendar');
+  const btnPipe = document.getElementById('btnViewPipeline');
+
+  if (viewName === 'calendar') {
+    if (calSection) calSection.style.display = 'block';
+    if (sscPipeline) sscPipeline.style.display = 'none';
+    if (adminPipeline) adminPipeline.style.display = 'none';
+    if (eventsList && ROLE !== 'student') eventsList.style.display = 'none';
+
+    btnCal?.classList.add('active');
+    btnPipe?.classList.remove('active');
+
+    document.querySelectorAll('#dropEvents a').forEach(a => {
+      a.classList.toggle('active', a.href.includes('view=calendar'));
+    });
+
+    try {
+      history.replaceState(null, '', 'events.php?view=calendar');
+    } catch (e) {}
+
+    if (typeof renderCalendar === 'function') {
+      renderCalendar();
+    }
+  } else {
+    if (calSection && ROLE !== 'student') calSection.style.display = 'none';
+    if (sscPipeline) sscPipeline.style.display = 'block';
+    if (adminPipeline) adminPipeline.style.display = 'block';
+    if (eventsList) eventsList.style.display = 'block';
+
+    btnCal?.classList.remove('active');
+    btnPipe?.classList.add('active');
+
+    document.querySelectorAll('#dropEvents a').forEach(a => {
+      a.classList.toggle('active', a.href.includes('view=pipeline'));
+    });
+
+    try {
+      history.replaceState(null, '', 'events.php?view=pipeline');
+    } catch (e) {}
+  }
+}
+window.switchEventsView = switchEventsView;
 
 function renderCalendar() {
   const year = currentDate.getFullYear();
@@ -1364,6 +2791,8 @@ function renderCalendar() {
     const hol = PH_HOLIDAYS[dateStr] || null;
     cell.setAttribute('data-full-date', dateStr);
 
+    let cellHasMatch = false;
+
     // Set interactive hover title
     if (dayEvents.length === 1) {
       cell.title = `Click to view event: ${dayEvents[0].title}`;
@@ -1404,7 +2833,7 @@ function renderCalendar() {
     }
     cell.appendChild(dateNumEl);
 
-    // 🇵🇭 Render Philippine Holiday / Special Non-Working Day Pill
+    // 🇵🇭 Render Philippine Holiday / Special Non-Working Day / Academic Exam Blackout Pill
     if (hol) {
       const hPill = document.createElement('div');
       let hClass = 'cal-holiday-regular';
@@ -1416,6 +2845,17 @@ function renderCalendar() {
         hClass = 'cal-holiday-exam';
         icon = '<i class="fa-solid fa-graduation-cap"></i>';
       }
+
+      if (calSearchQuery) {
+        const holFullText = [hol.name, hol.filipino_name, hol.category, hol.type, hol.description, 'exam', 'midterm', 'final', 'examination'].filter(Boolean).join(' ');
+        if (matchesSearchQuery(holFullText, calSearchQuery)) {
+          cellHasMatch = true;
+          hClass += ' cal-pill-matched';
+        } else {
+          hClass += ' cal-pill-dimmed';
+        }
+      }
+
       hPill.className = `cal-holiday-pill ${hClass}`;
       hPill.title = `${hol.name} (${hol.category}): ${hol.description}`;
       hPill.innerHTML = `${icon} <span>${hol.name}</span>`;
@@ -1433,6 +2873,16 @@ function renderCalendar() {
       else if (ev.status === 'Completed') pillClass = 'cal-pill-completed';
       else if (ev.status === 'Upcoming')  pillClass = 'cal-pill-upcoming';
 
+      if (calSearchQuery) {
+        const evFullText = [ev.title, ev.club_code, ev.club_name, ev.venue, ev.description].filter(Boolean).join(' ');
+        if (matchesSearchQuery(evFullText, calSearchQuery)) {
+          cellHasMatch = true;
+          pillClass += ' cal-pill-matched';
+        } else {
+          pillClass += ' cal-pill-dimmed';
+        }
+      }
+
       const isReg = MY_REG_IDS.includes(parseInt(ev.id));
       const pill = document.createElement('div');
       pill.className = `cal-event-pill ${pillClass}`;
@@ -1444,6 +2894,14 @@ function renderCalendar() {
       });
       cell.appendChild(pill);
     });
+
+    if (calSearchQuery) {
+      if (cellHasMatch) {
+        cell.classList.add('cal-cell-matched');
+      } else {
+        cell.classList.add('cal-cell-dimmed');
+      }
+    }
 
     grid.appendChild(cell);
   }
@@ -1627,11 +3085,6 @@ function runAICheckDateConflict() {
   autoCheckModalDate();
 }
 
-function viewEventById(id) {
-  const ev = ALL_EVENTS.find(e => parseInt(e.id) === parseInt(id));
-  if (ev) viewEvent(ev);
-}
-
 function locateOnCalendar(dateStr, eventId) {
   if (!dateStr) return;
   const parts = dateStr.split('-');
@@ -1677,21 +3130,47 @@ function syncTableWithActiveCalMonth() {
 }
 
 function registerForEvent(id) {
+  const regBtn = document.querySelector('#viewEventModal button[onclick*="registerForEvent"]');
+  if (regBtn) {
+    regBtn.disabled = true;
+    regBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Registering...';
+  }
+
   const fd = new FormData();
   fd.append('action', 'register');
   fd.append('event_id', id);
+
   fetch('../shared/event_actions.php', { method: 'POST', body: fd })
     .then(r => r.json())
     .then(res => {
       if (res.success) {
+        const intId = parseInt(id);
+        if (!MY_REG_IDS.includes(intId)) {
+          MY_REG_IDS.push(intId);
+        }
+        if (regBtn) {
+          regBtn.outerHTML = `
+            <div style="padding:8px 14px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; display:inline-flex; align-items:center; gap:6px; color:#15803d; font-weight:700; font-size:0.82rem;">
+              <i class="fa-solid fa-circle-check"></i> Registered (Confirmed)
+            </div>`;
+        }
+        renderCalendar();
         showToast(res.message, 'success');
-        closeModal('viewEventModal');
-        setTimeout(() => location.reload(), 1500);
       } else {
-        showToast(res.message, 'error');
+        if (regBtn) {
+          regBtn.disabled = false;
+          regBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Register for Event / Activity';
+        }
+        showToast(res.message || 'Registration failed.', 'error');
       }
     })
-    .catch(() => showToast('Network error.', 'error'));
+    .catch(() => {
+      if (regBtn) {
+        regBtn.disabled = false;
+        regBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Register for Event / Activity';
+      }
+      showToast('Network error while processing registration.', 'error');
+    });
 }
 
 document.getElementById('calPrevBtn')?.addEventListener('click', () => {
@@ -1703,6 +3182,147 @@ document.getElementById('calNextBtn')?.addEventListener('click', () => {
   currentDate.setMonth(currentDate.getMonth() + 1);
   renderCalendar();
 });
+
+// Calendar Search Bar & Live Dropdown Handler
+const calSearchInput = document.getElementById('calSearchInput');
+const calSearchClear = document.getElementById('calSearchClear');
+const calSearchResults = document.getElementById('calSearchResults');
+
+if (calSearchInput) {
+  calSearchInput.addEventListener('input', (e) => {
+    calSearchQuery = e.target.value.trim().toLowerCase();
+
+    if (calSearchClear) {
+      calSearchClear.style.display = calSearchQuery ? 'inline-flex' : 'none';
+    }
+
+    renderCalendar();
+
+    // Render quick search dropdown for matches across all months
+    if (calSearchResults) {
+      if (!calSearchQuery || calSearchQuery.length < 1) {
+        calSearchResults.style.display = 'none';
+        calSearchResults.innerHTML = '';
+      } else {
+        // 1. Search across ALL_EVENTS
+        const eventMatches = ALL_EVENTS.filter(ev => {
+          const t = [ev.title, ev.club_code, ev.club_name, ev.venue, ev.description].filter(Boolean).join(' ');
+          return matchesSearchQuery(t, calSearchQuery);
+        }).map(ev => ({
+          type: 'event',
+          id: ev.id,
+          title: ev.title,
+          badge: ev.club_code || 'CAMPUS',
+          badgeColor: '#2563eb',
+          sub: ev.venue || 'Campus Venue',
+          dateStr: ev.event_date.slice(0, 10),
+          raw: ev
+        }));
+
+        // 2. Search across PH_HOLIDAYS (including Academic Exam Blackouts)
+        const holidayMatches = [];
+        for (const [dStr, hol] of Object.entries(PH_HOLIDAYS)) {
+          const t = [hol.name, hol.filipino_name, hol.category, hol.type, hol.description, 'exam', 'midterm', 'final', 'examination'].filter(Boolean).join(' ');
+          if (matchesSearchQuery(t, calSearchQuery)) {
+            let bColor = '#dc2626';
+            if (hol.type === 'special_non_working') bColor = '#7c3aed';
+            else if (hol.type === 'exam_blackout') bColor = '#d97706';
+
+            holidayMatches.push({
+              type: 'holiday',
+              id: dStr,
+              title: hol.name,
+              badge: hol.category || 'Holiday',
+              badgeColor: bColor,
+              sub: hol.filipino_name || (hol.type === 'exam_blackout' ? 'Academic Blackout' : 'Philippine Holiday'),
+              dateStr: dStr,
+              raw: hol
+            });
+          }
+        }
+
+        const matches = [...eventMatches, ...holidayMatches].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+
+        if (matches.length === 0) {
+          calSearchResults.innerHTML = `<div style="padding:12px; font-size:0.8rem; color:#64748b; text-align:center;"><i class="fa-solid fa-circle-question" style="margin-right:6px;"></i>No matching events or holidays found</div>`;
+          calSearchResults.style.display = 'block';
+        } else {
+          calSearchResults.innerHTML = matches.slice(0, 12).map(item => {
+            const itemDate = new Date(item.dateStr + 'T00:00:00');
+            const dateFmt = !isNaN(itemDate) ? itemDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : item.dateStr;
+            return `
+              <div class="cal-search-result-item" data-type="${item.type}" data-id="${item.id}" data-date="${item.dateStr}">
+                <div style="min-width:0; flex:1;">
+                  <div class="cal-search-result-title">${item.title}</div>
+                  <div style="font-size:0.72rem; color:#64748b; display:flex; gap:6px; align-items:center;">
+                    <span style="font-weight:700; color:${item.badgeColor};">${item.badge}</span> &bull; <span>${item.sub}</span>
+                  </div>
+                </div>
+                <div class="cal-search-result-date">${dateFmt}</div>
+              </div>
+            `;
+          }).join('');
+          calSearchResults.style.display = 'block';
+
+          calSearchResults.querySelectorAll('.cal-search-result-item').forEach(el => {
+            el.addEventListener('click', () => {
+              const type = el.getAttribute('data-type');
+              const id = el.getAttribute('data-id');
+              const dateStr = el.getAttribute('data-date');
+              calSearchResults.style.display = 'none';
+
+              const parts = dateStr.split('-');
+              const yr = parseInt(parts[0]);
+              const mo = parseInt(parts[1]) - 1;
+              currentDate = new Date(yr, mo, 1);
+              renderCalendar();
+
+              locateOnCalendar(dateStr, id);
+
+              if (type === 'event') {
+                const foundEv = ALL_EVENTS.find(e => parseInt(e.id) === parseInt(id));
+                if (foundEv) setTimeout(() => viewEvent(foundEv), 350);
+              } else {
+                const foundHol = PH_HOLIDAYS[dateStr];
+                if (foundHol) setTimeout(() => viewHolidayModal(foundHol), 350);
+              }
+            });
+          });
+        }
+      }
+    }
+  });
+
+  // Support Enter key to automatically jump to the first matching event or holiday
+  calSearchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const firstItem = calSearchResults?.querySelector('.cal-search-result-item');
+      if (firstItem) {
+        firstItem.click();
+      }
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#calSearchBox') && calSearchResults) {
+      calSearchResults.style.display = 'none';
+    }
+  });
+}
+
+if (calSearchClear) {
+  calSearchClear.addEventListener('click', () => {
+    if (calSearchInput) calSearchInput.value = '';
+    calSearchQuery = '';
+    calSearchClear.style.display = 'none';
+    if (calSearchResults) {
+      calSearchResults.style.display = 'none';
+      calSearchResults.innerHTML = '';
+    }
+    renderCalendar();
+    if (calSearchInput) calSearchInput.focus();
+  });
+}
 
 function resetCreateEventForm() {
   const form = document.getElementById('createEventForm');
@@ -1746,12 +3366,6 @@ function closeModal(id) {
   }
 }
 
-function showToast(msg, type = 'success') {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.className = 'toast-notification ' + type;
-  t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3500);
-}
-
 function filterEventTable() {
   const q = document.getElementById('eventSearch').value.toLowerCase();
   document.querySelectorAll('#eventTable tbody tr').forEach(tr => {
@@ -1784,6 +3398,7 @@ function viewEvent(ev) {
   }
   const statusBadgeClass = ev.status === 'Approved' ? 'badge-active' : (ev.status === 'Rejected' ? 'badge-inactive' : 'badge-warning');
   const formattedDate = new Date(ev.event_date.replace(' ', 'T')).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+  
   document.getElementById('viewEventBody').innerHTML = `
     <div style="display:flex; flex-direction:column; gap:16px;">
       <div>
@@ -1816,13 +3431,13 @@ function viewEvent(ev) {
         <div style="color:#991b1b; background:#fef2f2; border:1px solid #fca5a5; padding:12px 14px; border-radius:10px; font-size:0.85rem;">
           <strong>Rejection Note:</strong> ${ev.rejection_note}
         </div>` : ''}
-      <div style="margin-top:12px; padding-top:16px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-        <button type="button" class="card-btn" style="background:#059669; color:#ffffff; font-weight:700; padding:8px 14px; border-radius:8px; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:8px; font-size:0.82rem;" onclick="closeModal('viewEventModal'); if(window.openGlobalEventQr){ window.openGlobalEventQr(${ev.id}); }">
-          <i class="fa-solid fa-qrcode"></i> Event QR Code &amp; Poster
-        </button>
+
+      <div style="margin-top:4px; padding-top:14px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <button type="button" class="card-btn" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-weight:600; padding:8px 16px; border-radius:8px; cursor:pointer;" onclick="closeModal('viewEventModal')">Close</button>
         ${regActionHtml}
       </div>
     </div>`;
+
   openModal('viewEventModal');
 }
 // Edit event
@@ -1839,13 +3454,19 @@ function editEvent(ev) {
 }
 
 // Endorse Event (SSC -> Admin)
-function endorseEvent(id, title) {
-  const notes = prompt(`Endorse event "${title}" to System Admin for final calendar clearance? Optional endorsement notes:`, 'Endorsed by SSC.');
-  if (notes === null) return;
+async function endorseEvent(id, title) {
+  const notes = await window.showDecisionModal(
+    'Endorse Event Proposal?',
+    `Endorse event "${title}" to System Admin for final calendar clearance. Enter endorsement notes:`,
+    { defaultValue: 'Endorsed by SSC.', confirmText: 'Endorse & Forward', requireInput: false }
+  );
+  if (notes === false || notes === null) return;
   const fd = new FormData();
   fd.append('action', 'ssc_endorse');
   fd.append('id', id);
   fd.append('notes', notes);
+  const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  if (csrfMeta) fd.append('csrf_token', csrfMeta.content);
   fetch('../shared/event_actions.php', { method: 'POST', body: fd })
     .then(r => r.json()).then(res => {
       if (res.success) { showToast('Event endorsed to System Admin!', 'success'); setTimeout(() => location.reload(), 1200); }
@@ -1854,11 +3475,18 @@ function endorseEvent(id, title) {
 }
 
 // Admin Final Approve (Admin -> Approved on Calendar)
-function adminApproveEvent(id, title) {
-  if (!confirm(`Grant final clearance and publish "${title}" to the active campus calendar?`)) return;
+async function adminApproveEvent(id, title) {
+  const confirmed = await window.showConfirmModal(
+    'Approve & Publish Event?',
+    `Grant final clearance and publish "${title}" to the active campus calendar?`,
+    { type: 'decision', confirmText: 'Approve & Publish' }
+  );
+  if (!confirmed) return;
   const fd = new FormData();
   fd.append('action', 'admin_approve');
   fd.append('id', id);
+  const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+  if (csrfMeta) fd.append('csrf_token', csrfMeta.content);
   fetch('../shared/event_actions.php', { method: 'POST', body: fd })
     .then(r => r.json()).then(res => {
       if (res.success) { showToast('Event approved and posted to campus calendar!', 'success'); setTimeout(() => location.reload(), 1200); }
@@ -1901,7 +3529,20 @@ function rejectEvent(id, title) {
 
 document.getElementById('confirmRejectEventBtn')?.addEventListener('click', async () => {
   const note = document.getElementById('rejectEventNote').value.trim();
-  if (!note) { alert('Please provide a reason.'); return; }
+  if (!note) {
+    await window.showSystemModal({
+      title: 'Reason Required',
+      message: 'Please provide a reason for rejecting this event proposal.',
+      type: 'warning'
+    });
+    return;
+  }
+  const confirmed = await window.showConfirmModal(
+    'Reject Event Proposal?',
+    'Do you want to reject this event proposal with the specified reason?',
+    { type: 'error', danger: true, confirmText: 'Yes, Reject Proposal' }
+  );
+  if (!confirmed) return;
   const fd = new FormData();
   fd.append('action','reject'); fd.append('id', rejectEvId); fd.append('note', note);
   const res = await fetch('../shared/event_actions.php', { method:'POST', body:fd }).then(r => r.json());
@@ -1909,6 +3550,711 @@ document.getElementById('confirmRejectEventBtn')?.addEventListener('click', asyn
   if (res.success) { showToast('Event rejected.', 'warning'); setTimeout(() => location.reload(), 1500); }
   else showToast(res.message, 'error');
 });
+
+// ── SSC EVENT REVIEW PANEL & QUEUE FUNCTIONS ─────────────────
+let currentSscReviewEvent = null;
+
+function openSscReviewPanel(ev) {
+  currentSscReviewEvent = ev;
+  const idEl = document.getElementById('sscRevEventId');
+  if (idEl) idEl.value = ev.id;
+
+  const refBadge = document.getElementById('sscRevRefBadge');
+  if (refBadge) refBadge.textContent = ev.event_ref_id || ('EVT-' + ev.id);
+
+  const statusBadge = document.getElementById('sscRevStatusBadge');
+  if (statusBadge) {
+    statusBadge.textContent = ev.status;
+    statusBadge.style.color = (ev.status === 'Approved') ? '#86efac' : (ev.status === 'Rejected' ? '#fca5a5' : '#fde68a');
+  }
+
+  const titleEl = document.getElementById('sscRevTitle');
+  if (titleEl) titleEl.textContent = ev.title;
+
+  const clubEl = document.getElementById('sscRevClub');
+  if (clubEl) clubEl.textContent = `${ev.club_code} - ${ev.club_name}`;
+
+  const adviserEl = document.getElementById('sscRevAdviser');
+  if (adviserEl) adviserEl.textContent = ev.adviser_name || 'Prof. BCP Faculty Adviser';
+
+  const typeEl = document.getElementById('sscRevType');
+  if (typeEl) typeEl.textContent = ev.event_type || 'Club';
+
+  const dtEl = document.getElementById('sscRevDateTime');
+  if (dtEl) {
+    const d = new Date(ev.event_date);
+    dtEl.textContent = !isNaN(d) ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ev.event_date;
+  }
+
+  const venueEl = document.getElementById('sscRevVenue');
+  if (venueEl) venueEl.textContent = ev.venue;
+
+  const attEl = document.getElementById('sscRevAttendees');
+  if (attEl) attEl.textContent = (ev.expected_attendees && parseInt(ev.expected_attendees) > 0) ? `${ev.expected_attendees} Expected Attendees` : 'Not specified';
+
+  const subEl = document.getElementById('sscRevSubmitter');
+  if (subEl) {
+    const fullName = `${ev.first_name || ''} ${ev.last_name || ''}`.trim() || 'Club Adviser';
+    const roleTxt = ev.creator_role ? ` (${ev.creator_role.replace('_', ' ')})` : '';
+    subEl.textContent = fullName + roleTxt;
+  }
+
+  const subDtEl = document.getElementById('sscRevSubmitDate');
+  if (subDtEl) {
+    const sd = new Date(ev.created_at || ev.event_date);
+    subDtEl.textContent = !isNaN(sd) ? sd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  }
+
+  const descEl = document.getElementById('sscRevDesc');
+  if (descEl) descEl.textContent = ev.description || 'No description or event objectives provided.';
+
+  // Schedule & Venue Collision Banner
+  const banner = document.getElementById('sscRevConflictBanner');
+  if (banner) {
+    if (ev.has_venue_conflict) {
+      banner.style.display = 'block';
+      banner.style.background = '#fff7ed';
+      banner.style.border = '1px solid #fdba74';
+      banner.style.color = '#9a3412';
+      banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i><strong>Schedule Notice:</strong> Another event is also scheduled at <strong>"${ev.venue}"</strong> on this date. Confirm venue coordination prior to endorsement.`;
+    } else {
+      banner.style.display = 'block';
+      banner.style.background = '#f0fdf4';
+      banner.style.border = '1px solid #86efac';
+      banner.style.color = '#166534';
+      banner.innerHTML = `<i class="fa-solid fa-circle-check" style="margin-right:6px;"></i><strong>Schedule Cleared:</strong> No conflicting events or calendar blackouts found for this date &amp; venue.`;
+    }
+  }
+
+  // Attachment link
+  const attWrap = document.getElementById('sscRevAttachmentWrap');
+  if (attWrap) {
+    if (ev.attachment) {
+      attWrap.innerHTML = `
+        <a href="../uploads/events/${encodeURIComponent(ev.attachment)}" target="_blank" class="card-btn btn-sm" style="background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; font-weight:700; display:inline-flex; align-items:center; gap:6px; text-decoration:none; padding:7px 12px; border-radius:8px;">
+          <i class="fa-solid fa-file-pdf" style="font-size:1rem; color:#dc2626;"></i>
+          <span>Download / View Proposal Document (${ev.attachment})</span>
+        </a>
+      `;
+    } else {
+      attWrap.innerHTML = `<span style="font-size:0.8rem; color:#94a3b8; font-style:italic;"><i class="fa-solid fa-file-circle-xmark" style="margin-right:4px;"></i> No proposal document attached</span>`;
+    }
+  }
+
+  // Checklist initialization
+  const isApprovedOrEndorsed = in_array_js(ev.status, ['Pending Admin', 'Approved', 'Completed']);
+  ['chk_ssc_org', 'chk_ssc_adviser', 'chk_ssc_schedule', 'chk_ssc_venue', 'chk_ssc_info', 'chk_ssc_attachments'].forEach(chkId => {
+    const chk = document.getElementById(chkId);
+    if (chk) {
+      if (isApprovedOrEndorsed) {
+        chk.checked = true;
+      } else if (ev.status === 'Rejected') {
+        chk.checked = false;
+      } else {
+        // Default pending checks
+        if (chkId === 'chk_ssc_org' || chkId === 'chk_ssc_adviser' || chkId === 'chk_ssc_info') {
+          chk.checked = true;
+        } else if (chkId === 'chk_ssc_venue' || chkId === 'chk_ssc_schedule') {
+          chk.checked = !ev.has_venue_conflict;
+        } else {
+          chk.checked = !!ev.attachment;
+        }
+      }
+    }
+  });
+  updateSscChecklistCount();
+
+  // Remarks initialization
+  const remEl = document.getElementById('sscReviewRemarks');
+  if (remEl) {
+    remEl.value = ev.rejection_note || (ev.endorsement_notes ? ev.endorsement_notes.replace('Endorsed by SSC: ', '') : '');
+  }
+
+  openModal('sscEventReviewModal');
+}
+
+function in_array_js(val, arr) {
+  return arr.indexOf(val) !== -1;
+}
+
+function updateSscChecklistCount() {
+  const chkIds = ['chk_ssc_org', 'chk_ssc_adviser', 'chk_ssc_schedule', 'chk_ssc_venue', 'chk_ssc_info', 'chk_ssc_attachments'];
+  let count = 0;
+  chkIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.checked) count++;
+  });
+  const badge = document.getElementById('sscChecklistBadge');
+  if (badge) {
+    badge.textContent = `${count} of ${chkIds.length} verified`;
+    if (count === chkIds.length) {
+      badge.style.background = '#ecfdf5';
+      badge.style.color = '#047857';
+      badge.style.borderColor = '#a7f3d0';
+    } else {
+      badge.style.background = '#eff6ff';
+      badge.style.color = '#2563eb';
+      badge.style.borderColor = '#bfdbfe';
+    }
+  }
+}
+
+function toggleAllSscChecklist() {
+  const chkIds = ['chk_ssc_org', 'chk_ssc_adviser', 'chk_ssc_schedule', 'chk_ssc_venue', 'chk_ssc_info', 'chk_ssc_attachments'];
+  const allChecked = chkIds.every(id => {
+    const el = document.getElementById(id);
+    return el && el.checked;
+  });
+  chkIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = !allChecked;
+  });
+  updateSscChecklistCount();
+}
+
+async function submitSscReviewDecision(decision) {
+  const idEl = document.getElementById('sscRevEventId');
+  const id = idEl ? parseInt(idEl.value) : 0;
+  if (!id) {
+    await window.showSystemModal({
+      title: 'Invalid Selection',
+      message: 'No event proposal was selected for review.',
+      type: 'error'
+    });
+    return;
+  }
+
+  const remarks = (document.getElementById('sscReviewRemarks')?.value || '').trim();
+
+  if (decision === 'return') {
+    if (!remarks) {
+      await window.showSystemModal({
+        title: 'Instructions Required',
+        message: 'Please provide instructions or remarks for the required revisions.',
+        type: 'warning'
+      });
+      document.getElementById('sscReviewRemarks')?.focus();
+      return;
+    }
+
+    const confirmed = await window.showConfirmModal(
+      'Return Event for Revision?',
+      'Do you want to return this event proposal for revision? The organizing club will be notified with your instructions and must submit a revised proposal.',
+      { type: 'warning', warning: true, confirmText: 'Yes, Return for Revision' }
+    );
+    if (!confirmed) return;
+
+    const fd = new FormData();
+    fd.append('action', 'return_for_revision');
+    fd.append('id', id);
+    fd.append('note', remarks);
+
+    try {
+      const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd }).then(r => r.json());
+      closeModal('sscEventReviewModal');
+      if (res.success) {
+        showToast('Event proposal returned for revision.', 'warning');
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        showToast(res.message || 'Failed to return proposal.', 'error');
+      }
+    } catch (err) {
+      showToast('Network error.', 'error');
+    }
+    return;
+  }
+
+  if (decision === 'reject') {
+    if (!remarks) {
+      await window.showSystemModal({
+        title: 'Reason Required',
+        message: 'Please provide a reason for rejecting this event proposal.',
+        type: 'warning'
+      });
+      document.getElementById('sscReviewRemarks')?.focus();
+      return;
+    }
+
+    const confirmed = await window.showConfirmModal(
+      'Reject Event Proposal?',
+      'Do you want to reject this event proposal? This will log your rejection rationale into the governance audit trail.',
+      { type: 'error', danger: true, confirmText: 'Yes, Reject Proposal' }
+    );
+    if (!confirmed) return;
+
+    const fd = new FormData();
+    fd.append('action', 'reject');
+    fd.append('id', id);
+    fd.append('note', remarks);
+
+    try {
+      const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd }).then(r => r.json());
+      closeModal('sscEventReviewModal');
+      if (res.success) {
+        showToast('Event proposal rejected.', 'warning');
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        showToast(res.message || 'Failed to reject event.', 'error');
+      }
+    } catch (err) {
+      showToast('Network error.', 'error');
+    }
+    return;
+  }
+
+  if (decision === 'endorse') {
+    const chkLabels = [];
+    if (document.getElementById('chk_ssc_org')?.checked) chkLabels.push('Recognized Org');
+    if (document.getElementById('chk_ssc_adviser')?.checked) chkLabels.push('Adviser Endorsed');
+    if (document.getElementById('chk_ssc_schedule')?.checked) chkLabels.push('Schedule Cleared');
+    if (document.getElementById('chk_ssc_venue')?.checked) chkLabels.push('Venue Verified');
+    if (document.getElementById('chk_ssc_info')?.checked) chkLabels.push('Info Complete');
+    if (document.getElementById('chk_ssc_attachments')?.checked) chkLabels.push('Attachments Verified');
+
+    const confirmed = await window.showConfirmModal(
+      'Endorse Proposal to Admin?',
+      `Are you sure you want to endorse this event to System Admin? (${chkLabels.length} compliance checkpoints verified).`,
+      { type: 'decision', confirmText: 'Endorse & Submit' }
+    );
+    if (!confirmed) return;
+
+    const fd = new FormData();
+    fd.append('action', 'ssc_endorse');
+    fd.append('id', id);
+    fd.append('notes', remarks || 'Verified and endorsed by SSC.');
+    chkLabels.forEach(lbl => fd.append('checklist[]', lbl));
+
+    try {
+      const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd }).then(r => r.json());
+      closeModal('sscEventReviewModal');
+      if (res.success) {
+        showToast('Event successfully endorsed to System Admin!', 'success');
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        showToast(res.message || 'Failed to endorse event.', 'error');
+      }
+    } catch (err) {
+      showToast('Network error.', 'error');
+    }
+    return;
+  }
+}
+
+// ── SSC APPROVAL QUEUE SEARCH & FILTERS ──────────────────────
+window.sscFilterConflictOnly = false;
+
+function filterSscApprovalQueue() {
+  const q = (document.getElementById('sscQueueSearchInput')?.value || '').toLowerCase().trim();
+  const statusFilter = document.getElementById('sscQueueStatusFilter')?.value || '';
+  const typeFilter = document.getElementById('sscQueueTypeFilter')?.value || '';
+  const conflictOnly = window.sscFilterConflictOnly;
+
+  const rows = document.querySelectorAll('#sscApprovalQueueTable tbody tr.queue-row');
+  let matchCount = 0;
+
+  rows.forEach(tr => {
+    const text = tr.innerText.toLowerCase();
+    const rowStatus = tr.getAttribute('data-status') || '';
+    const rowType = tr.getAttribute('data-type') || '';
+    const rowConflict = tr.getAttribute('data-conflict') === '1';
+
+    let match = true;
+    if (q && !text.includes(q)) match = false;
+    if (statusFilter) {
+      if (statusFilter === 'Rejected_Returned') {
+        if (rowStatus !== 'Rejected' && rowStatus !== 'Returned') match = false;
+      } else if (statusFilter === 'Approved') {
+        if (rowStatus !== 'Approved' && rowStatus !== 'Upcoming' && rowStatus !== 'Completed') match = false;
+      } else if (rowStatus !== statusFilter) {
+        match = false;
+      }
+    }
+    if (typeFilter && rowType !== typeFilter) match = false;
+    if (conflictOnly && !rowConflict) match = false;
+
+    if (match) {
+      tr.removeAttribute('data-search-hidden');
+      matchCount++;
+    } else {
+      tr.setAttribute('data-search-hidden', 'true');
+    }
+  });
+
+  const emptyRow = document.getElementById('sscQueueEmptyRow');
+  if (emptyRow) {
+    emptyRow.style.display = matchCount === 0 ? '' : 'none';
+  }
+
+  // Refresh paginator
+  const tbl = document.getElementById('sscApprovalQueueTable');
+  if (tbl && tbl._paginator) {
+    tbl._paginator.currentPage = 1;
+    tbl._paginator.render();
+  }
+}
+
+function filterSscByCard(filterKey) {
+  // Clear card active styling
+  document.querySelectorAll('.ssc-metric-card').forEach(c => c.classList.remove('active-card-filter'));
+
+  const sFilter = document.getElementById('sscQueueStatusFilter');
+  const tFilter = document.getElementById('sscQueueTypeFilter');
+  const conflictNotice = document.getElementById('sscConflictNoticeBar');
+
+  if (filterKey === 'Conflict') {
+    window.sscFilterConflictOnly = !window.sscFilterConflictOnly;
+    if (window.sscFilterConflictOnly) {
+      document.getElementById('cardVenueConflicts')?.classList.add('active-card-filter');
+      if (conflictNotice) conflictNotice.style.display = 'flex';
+    } else {
+      if (conflictNotice) conflictNotice.style.display = 'none';
+    }
+    if (sFilter) sFilter.value = '';
+    if (tFilter) tFilter.value = '';
+  } else if (filterKey === 'Institutional') {
+    window.sscFilterConflictOnly = false;
+    if (conflictNotice) conflictNotice.style.display = 'none';
+    document.getElementById('cardInstitutionalEvents')?.classList.add('active-card-filter');
+    if (tFilter) tFilter.value = 'Institutional';
+    if (sFilter) sFilter.value = '';
+  } else if (filterKey === 'Rejected_Returned') {
+    window.sscFilterConflictOnly = false;
+    if (conflictNotice) conflictNotice.style.display = 'none';
+    document.getElementById('cardRejectedEvents')?.classList.add('active-card-filter');
+    if (sFilter) sFilter.value = 'Returned';
+    if (tFilter) tFilter.value = '';
+  } else if (filterKey === 'Pending SSC') {
+    window.sscFilterConflictOnly = false;
+    if (conflictNotice) conflictNotice.style.display = 'none';
+    document.getElementById('cardPendingSsc')?.classList.add('active-card-filter');
+    if (sFilter) sFilter.value = 'Pending SSC';
+    if (tFilter) tFilter.value = '';
+  } else if (filterKey === 'Pending Admin') {
+    window.sscFilterConflictOnly = false;
+    if (conflictNotice) conflictNotice.style.display = 'none';
+    document.getElementById('cardEndorsedMonth')?.classList.add('active-card-filter');
+    if (sFilter) sFilter.value = 'Pending Admin';
+    if (tFilter) tFilter.value = '';
+  } else if (filterKey === 'Approved') {
+    window.sscFilterConflictOnly = false;
+    if (conflictNotice) conflictNotice.style.display = 'none';
+    document.getElementById('cardUpcomingEvents')?.classList.add('active-card-filter');
+    if (sFilter) sFilter.value = 'Approved';
+    if (tFilter) tFilter.value = '';
+  }
+
+  filterSscApprovalQueue();
+
+  // Auto-scroll to queue table if in pipeline view
+  const queueCard = document.getElementById('sscApprovalQueueCard');
+  if (queueCard && queueCard.style.display !== 'none') {
+    queueCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function resetSscQueueFilter() {
+  window.sscFilterConflictOnly = false;
+  const sInput = document.getElementById('sscQueueSearchInput');
+  if (sInput) sInput.value = '';
+  const sFilter = document.getElementById('sscQueueStatusFilter');
+  if (sFilter) sFilter.value = '';
+  const tFilter = document.getElementById('sscQueueTypeFilter');
+  if (tFilter) tFilter.value = '';
+  const notice = document.getElementById('sscConflictNoticeBar');
+  if (notice) notice.style.display = 'none';
+  document.querySelectorAll('.ssc-metric-card').forEach(c => c.classList.remove('active-card-filter'));
+  filterSscApprovalQueue();
+}
+
+function quickSscEndorse(id, title) {
+  endorseEvent(id, title);
+}
+
+function quickSscReject(id, title) {
+  rejectEvent(id, title);
+}
+
+let returnTargetEvId = 0;
+function openReturnEventModal(id, title) {
+  returnTargetEvId = id;
+  const idEl = document.getElementById('returnEventId');
+  if (idEl) idEl.value = id;
+  const descEl = document.getElementById('returnEventDesc');
+  if (descEl) descEl.textContent = `Return proposal: "${title}" for revisions.`;
+  const noteEl = document.getElementById('returnEventNote');
+  if (noteEl) noteEl.value = '';
+  openModal('returnEventModal');
+}
+
+async function submitReturnEvent() {
+  const note = (document.getElementById('returnEventNote')?.value || '').trim();
+  if (!note) {
+    await window.showSystemModal({
+      title: 'Instructions Required',
+      message: 'Please provide instructions for the revision.',
+      type: 'warning'
+    });
+    document.getElementById('returnEventNote')?.focus();
+    return;
+  }
+  const confirmed = await window.showConfirmModal(
+    'Return Event for Revision?',
+    'Do you want to return this event proposal to the club organizers for revision?',
+    { type: 'warning', confirmText: 'Yes, Return for Revision' }
+  );
+  if (!confirmed) return;
+
+  const id = returnTargetEvId || parseInt(document.getElementById('returnEventId')?.value || '0');
+  const fd = new FormData();
+  fd.append('action', 'return_for_revision');
+  fd.append('id', id);
+  fd.append('note', note);
+
+  try {
+    const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd }).then(r => r.json());
+    closeModal('returnEventModal');
+    if (res.success) {
+      showToast('Event proposal returned for revision.', 'warning');
+      setTimeout(() => location.reload(), 1200);
+    } else {
+      showToast(res.message || 'Failed to return event.', 'error');
+    }
+  } catch (err) {
+    showToast('Network error.', 'error');
+  }
+}
+
+// ── ADMIN EVENT ADMINISTRATION QUEUE FUNCTIONS ───────────────
+let currentAdminOverrideId = 0;
+
+function openAdminOverrideModal(id, title, hasConflict) {
+  currentAdminOverrideId = id;
+  const idEl = document.getElementById('adminOverrideEventId');
+  if (idEl) idEl.value = id;
+  const descEl = document.getElementById('adminOverrideEventDesc');
+  if (descEl) descEl.textContent = `Grant administrative override clearance for "${title}"`;
+  const alertEl = document.getElementById('adminOverrideConflictAlert');
+  if (alertEl) alertEl.style.display = hasConflict ? 'block' : 'none';
+  const reasonEl = document.getElementById('adminOverrideReason');
+  if (reasonEl) reasonEl.value = '';
+  openModal('adminOverrideModal');
+}
+
+async function submitAdminOverride() {
+  const reason = (document.getElementById('adminOverrideReason')?.value || '').trim();
+  if (!reason) {
+    await window.showSystemModal({
+      title: 'Justification Required',
+      message: 'Please enter an administrative override justification.',
+      type: 'warning'
+    });
+    document.getElementById('adminOverrideReason')?.focus();
+    return;
+  }
+
+  const confirmed = await window.showConfirmModal(
+    'Grant Admin Override Clearance?',
+    'Do you want to grant administrative override clearance and immediately approve this event proposal?',
+    { type: 'warning', confirmText: 'Yes, Grant Clearance' }
+  );
+  if (!confirmed) return;
+
+  const id = currentAdminOverrideId || parseInt(document.getElementById('adminOverrideEventId')?.value || '0');
+  const btn = document.getElementById('confirmAdminOverrideBtn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...'; }
+
+  const fd = new FormData();
+  fd.append('action', 'admin_override');
+  fd.append('id', id);
+  fd.append('reason', reason);
+
+  try {
+    const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd }).then(r => r.json());
+    closeModal('adminOverrideModal');
+    if (res.success) {
+      showToast('Event approved via administrative override clearance!', 'success');
+      setTimeout(() => location.reload(), 1200);
+    } else {
+      showToast(res.message || 'Failed to apply override.', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Grant Override Clearance'; }
+    }
+  } catch (err) {
+    showToast('Network error occurred.', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Grant Override Clearance'; }
+  }
+}
+
+let activeAdminCardFilter = null;
+
+function filterAdminByCard(type) {
+  const cards = document.querySelectorAll('.admin-metric-card');
+  const noticeBar = document.getElementById('adminFilterNoticeBar');
+  const noticeText = document.getElementById('adminFilterNoticeText');
+
+  // Toggle if clicked again
+  if (activeAdminCardFilter === type) {
+    resetAdminQueueFilter();
+    return;
+  }
+
+  activeAdminCardFilter = type;
+  cards.forEach(c => c.style.outline = 'none');
+
+  if (noticeBar) noticeBar.style.display = 'flex';
+  if (noticeText) noticeText.innerHTML = `<i class="fa-solid fa-filter"></i> Filtering table by <strong>${type}</strong>`;
+
+  // Highlight active card
+  const cardMap = {
+    'Pending Admin': 'cardAdminPendingApproval',
+    'Approved Today': 'cardAdminApprovedToday',
+    'Rejected': 'cardAdminRejected',
+    'Upcoming': 'cardAdminUpcoming',
+    'Venue Conflicts': 'cardAdminVenueConflicts',
+    'Overdue Proposals': 'cardAdminOverdueProposals'
+  };
+  const activeCardEl = document.getElementById(cardMap[type]);
+  if (activeCardEl) {
+    activeCardEl.style.outline = '2px solid #2563eb';
+    activeCardEl.style.outlineOffset = '2px';
+  }
+
+  const rows = document.querySelectorAll('.admin-queue-row');
+  let matchCount = 0;
+
+  rows.forEach(r => {
+    let show = false;
+    const status = r.getAttribute('data-status');
+    const conflict = r.getAttribute('data-conflict');
+    const overdue = r.getAttribute('data-overdue');
+    const apprToday = r.getAttribute('data-approved-today');
+    const upcoming = r.getAttribute('data-upcoming');
+
+    if (type === 'Pending Admin') {
+      show = (status === 'Pending Admin');
+    } else if (type === 'Approved Today') {
+      show = (apprToday === '1' || status === 'Approved');
+    } else if (type === 'Rejected') {
+      show = (status === 'Rejected');
+    } else if (type === 'Upcoming') {
+      show = (upcoming === '1');
+    } else if (type === 'Venue Conflicts') {
+      show = (conflict === '1');
+    } else if (type === 'Overdue Proposals') {
+      show = (overdue === '1');
+    }
+
+    if (show) {
+      r.removeAttribute('data-search-hidden');
+      matchCount++;
+    } else {
+      r.setAttribute('data-search-hidden', 'true');
+    }
+  });
+
+  const emptyRow = document.getElementById('adminQueueEmptyRow');
+  if (emptyRow) {
+    emptyRow.style.display = (matchCount === 0) ? '' : 'none';
+  }
+
+  const tbl = document.getElementById('adminEventQueueTable');
+  if (tbl && tbl._paginator) {
+    tbl._paginator.currentPage = 1;
+    tbl._paginator.render();
+  }
+}
+
+function filterAdminEventQueue() {
+  const searchVal = (document.getElementById('adminQueueSearchInput')?.value || '').toLowerCase().trim();
+  const statusVal = document.getElementById('adminQueueStatusFilter')?.value || '';
+  const orgVal = document.getElementById('adminQueueOrgFilter')?.value || '';
+
+  // Reset active card highlight if toolbar filters are used
+  if (activeAdminCardFilter) {
+    document.querySelectorAll('.admin-metric-card').forEach(c => c.style.outline = 'none');
+    const noticeBar = document.getElementById('adminFilterNoticeBar');
+    if (noticeBar) noticeBar.style.display = 'none';
+    activeAdminCardFilter = null;
+  }
+
+  const rows = document.querySelectorAll('.admin-queue-row');
+  let matchCount = 0;
+
+  rows.forEach(r => {
+    const text = r.textContent.toLowerCase();
+    const status = r.getAttribute('data-status');
+    const org = r.getAttribute('data-org');
+
+    const matchesSearch = !searchVal || text.includes(searchVal);
+    const matchesStatus = !statusVal || (status === statusVal);
+    const matchesOrg = !orgVal || (org === orgVal);
+
+    if (matchesSearch && matchesStatus && matchesOrg) {
+      r.removeAttribute('data-search-hidden');
+      matchCount++;
+    } else {
+      r.setAttribute('data-search-hidden', 'true');
+    }
+  });
+
+  const emptyRow = document.getElementById('adminQueueEmptyRow');
+  if (emptyRow) {
+    emptyRow.style.display = (matchCount === 0) ? '' : 'none';
+  }
+
+  const tbl = document.getElementById('adminEventQueueTable');
+  if (tbl && tbl._paginator) {
+    tbl._paginator.currentPage = 1;
+    tbl._paginator.render();
+  }
+}
+
+function resetAdminQueueFilter() {
+  activeAdminCardFilter = null;
+  document.querySelectorAll('.admin-metric-card').forEach(c => c.style.outline = 'none');
+  const noticeBar = document.getElementById('adminFilterNoticeBar');
+  if (noticeBar) noticeBar.style.display = 'none';
+
+  const sInp = document.getElementById('adminQueueSearchInput');
+  if (sInp) sInp.value = '';
+  const stFilter = document.getElementById('adminQueueStatusFilter');
+  if (stFilter) stFilter.value = '';
+  const orgFilter = document.getElementById('adminQueueOrgFilter');
+  if (orgFilter) orgFilter.value = '';
+
+  const rows = document.querySelectorAll('.admin-queue-row');
+  rows.forEach(r => {
+    r.removeAttribute('data-search-hidden');
+  });
+
+  const emptyRow = document.getElementById('adminQueueEmptyRow');
+  if (emptyRow) {
+    emptyRow.style.display = (rows.length === 0) ? '' : 'none';
+  }
+
+  const tbl = document.getElementById('adminEventQueueTable');
+  if (tbl && tbl._paginator) {
+    tbl._paginator.currentPage = 1;
+    tbl._paginator.render();
+  }
+}
+
+// Auto initialize pagination for admin table when loaded
+function initAdminEventQueuePagination() {
+  const tbl = document.getElementById('adminEventQueueTable');
+  if (tbl && window.initTablePagination && !tbl._paginator) {
+    window.initTablePagination(tbl, {
+      pageSize: 10,
+      showPageSizeSelector: false,
+      showInfo: false
+    });
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initAdminEventQueuePagination);
+} else {
+  initAdminEventQueuePagination();
+}
 
 // Create event proposal form submit
 document.getElementById('createEventForm')?.addEventListener('submit', async (e) => {
@@ -1957,7 +4303,11 @@ async function viewRegistrations(eventId, eventTitle) {
     const res = await fetch('../shared/event_actions.php', { method: 'POST', body: fd });
     const data = await res.json();
     if (!data.success) {
-      alert('Error: ' + data.message);
+      await window.showSystemModal({
+        title: 'Registration Error',
+        message: data.message || 'Failed to retrieve registrations.',
+        type: 'error'
+      });
       return;
     }
 
@@ -1982,7 +4332,11 @@ async function viewRegistrations(eventId, eventTitle) {
     renderRegistrationsTable(list);
     document.getElementById('eventRegistrationsModal').style.display = 'flex';
   } catch (err) {
-    alert('Network error retrieving registration list.');
+    await window.showSystemModal({
+      title: 'Network Error',
+      message: 'Network error retrieving registration list. Please check your connection.',
+      type: 'error'
+    });
   }
 }
 
@@ -2047,13 +4401,21 @@ function loadImage(src) {
 
 async function exportRegistrationsPDF() {
   if (!currentViewingEventMeta) {
-    alert('No event data selected.');
+    await window.showSystemModal({
+      title: 'Selection Required',
+      message: 'No event was selected for PDF export.',
+      type: 'warning'
+    });
     return;
   }
 
   const list = currentViewingEventRegistrations || [];
   if (!list.length) {
-    alert('No registered student attendees available to export.');
+    await window.showSystemModal({
+      title: 'Export Unavailable',
+      message: 'No registered student attendees available to export.',
+      type: 'info'
+    });
     return;
   }
 
@@ -2258,7 +4620,11 @@ async function exportRegistrationsPDF() {
 
 function exportRegistrationsCSV() {
   if (!currentViewingEventRegistrations || !currentViewingEventRegistrations.length) {
-    alert('No registrations available to export.');
+    window.showSystemModal({
+      title: 'Export Unavailable',
+      message: 'No registered student attendees available to export.',
+      type: 'info'
+    });
     return;
   }
   const headers = ['#', 'Student Number', 'First Name', 'Last Name', 'Email', 'Course', 'Year Level', 'Section', 'Contact Phone', 'Status', 'Registered At'];
@@ -2309,7 +4675,11 @@ function printEventRegistrationsReport() {
 
   const printWin = window.open('', '_blank', 'width=920,height=780');
   if (!printWin) {
-    alert('Please allow popups to export/print event registrations.');
+    window.showSystemModal({
+      title: 'Popups Blocked',
+      message: 'Please allow browser popups to export and print official event registrations.',
+      type: 'warning'
+    });
     return;
   }
 
@@ -2329,9 +4699,9 @@ function printEventRegistrationsReport() {
         .doc-title { text-align: center; margin: 8px 0 10px; font-size: 14px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; }
         .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; background: #f8fafc; }
         .meta-table td { padding: 6px 10px; border: 1px solid #e2e8f0; font-size: 11px; }
-        table.data-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10.5px; }
-        table.data-table th { background: #f1f5f9; color: #1e293b; font-weight: 700; padding: 6px 8px; border: 1px solid #cbd5e1; text-align: left; }
-        table.data-table td { padding: 6px 8px; border: 1px solid #cbd5e1; }
+        table.export-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10.5px; }
+        table.export-table th { background: #f1f5f9; color: #1e293b; font-weight: 700; padding: 6px 8px; border: 1px solid #cbd5e1; text-align: left; }
+        table.export-table td { padding: 6px 8px; border: 1px solid #cbd5e1; }
         .signatures { display: flex; justify-content: space-between; margin-top: 32px; page-break-inside: avoid; }
         .sign-box { width: 30%; text-align: center; font-size: 10.5px; }
         .sign-line { border-top: 1px solid #334155; margin-top: 40px; padding-top: 4px; font-weight: 700; color: #0f172a; }
@@ -2359,37 +4729,41 @@ function printEventRegistrationsReport() {
 
       <div class="doc-title">Official Event Registration Roster</div>
 
-      <table class="meta-table">
-        <tr>
-          <td style="width:50%;"><strong>Event Title:</strong> ${currentViewingEventMeta.title}</td>
-          <td style="width:50%;"><strong>Host Organization:</strong> ${currentViewingEventMeta.club || 'Campus Organization'}</td>
-        </tr>
-        <tr>
-          <td><strong>Scheduled Date &amp; Time:</strong> ${currentViewingEventMeta.date || 'TBD'}</td>
-          <td><strong>Venue:</strong> ${currentViewingEventMeta.venue || 'Campus Facility'}</td>
-        </tr>
-        <tr>
-          <td><strong>Total Registered Attendees:</strong> ${list.length} Students</td>
-          <td><strong>Generated Date:</strong> ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
-        </tr>
-      </table>
-
-      <table class="data-table">
-        <thead>
+      <div class="table-wrap table-compact">
+        <table class="meta-table table-compact">
           <tr>
-            <th style="width:30px; text-align:center;">#</th>
-            <th>Student Name</th>
-            <th>Student ID</th>
-            <th>Course &amp; Year</th>
-            <th>Email</th>
-            <th>Contact Phone</th>
-            <th style="text-align:center; width:80px;">Status</th>
+            <td style="width:50%;"><strong>Event Title:</strong> ${currentViewingEventMeta.title}</td>
+            <td style="width:50%;"><strong>Host Organization:</strong> ${currentViewingEventMeta.club || 'Campus Organization'}</td>
           </tr>
-        </thead>
-        <tbody>
-          ${rowsHtml || '<tr><td colspan="7" style="text-align:center; padding:16px;">No students registered yet.</td></tr>'}
-        </tbody>
-      </table>
+          <tr>
+            <td><strong>Scheduled Date &amp; Time:</strong> ${currentViewingEventMeta.date || 'TBD'}</td>
+            <td><strong>Venue:</strong> ${currentViewingEventMeta.venue || 'Campus Facility'}</td>
+          </tr>
+          <tr>
+            <td><strong>Total Registered Attendees:</strong> ${list.length} Students</td>
+            <td><strong>Generated Date:</strong> ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table class="export-table">
+          <thead>
+            <tr>
+              <th style="width:30px; text-align:center;">#</th>
+              <th>Student Name</th>
+              <th>Student ID</th>
+              <th>Course &amp; Year</th>
+              <th>Email</th>
+              <th>Contact Phone</th>
+              <th style="text-align:center; width:80px;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || '<tr><td colspan="7" style="text-align:center; padding:16px;">No students registered yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
 
       <div class="signatures">
         <div class="sign-box">
@@ -2430,7 +4804,7 @@ async function generateAIEventPlans() {
   if (!btn || !body) return;
 
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Generating AI Event Proposals &amp; Schedules...</span>';
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>Generating...</span>';
   body.style.display = 'block';
   const emptyState = document.getElementById('aiPlannerEmptyState');
   if (emptyState) emptyState.style.display = 'none';
@@ -2440,6 +4814,10 @@ async function generateAIEventPlans() {
   try {
     const fd = new FormData();
     fd.append('action', 'plan_events');
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    if (csrfMeta) {
+      fd.append('csrf_token', csrfMeta.content);
+    }
     if (clubSelect) {
       fd.append('club_id', clubSelect.value);
     }
@@ -2460,7 +4838,7 @@ async function generateAIEventPlans() {
     if (!data.success) {
       results.innerHTML = `<div class="ai-error-msg"><i class="fa-solid fa-triangle-exclamation"></i> ${data.message || 'Failed to generate event plans.'}</div>`;
       btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>Generate AI Event Ideas &amp; Dates</span>';
+      btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>Generate Ideas</span>';
       return;
     }
 
@@ -2477,23 +4855,20 @@ async function generateAIEventPlans() {
 
     let html = '';
 
-    // Summary Box
-    if (parsed.analysis_summary) {
+    const isGemini = data.engine && data.engine.toLowerCase().includes('gemini');
+    if (!isGemini) {
+      let warnText = 'No Google Gemini API key configured in System Settings. Showing rule-based procedural recommendations.';
+      if (data.google_error && !data.google_error.toLowerCase().includes('no api key')) {
+        warnText = `API Key is active, but Google returned: "${data.google_error}". Showing rule-based procedural recommendations while Google recovers.`;
+      }
       html += `
-        <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:12px; padding:14px 18px; margin-bottom:16px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:4px;">
-            <div style="font-weight:800; color:#1e3a8a; font-size:0.92rem;">
-              <i class="fa-solid fa-sparkles" style="color:#2563eb; margin-right:6px;"></i> Strategic AI Event Proposals for ${parsed.organization || 'Organization'}
-            </div>
-            <span style="font-size:0.72rem; font-weight:700; background:#dbeafe; color:#1e40af; padding:3px 8px; border-radius:4px;">
-              <i class="fa-solid fa-microchip"></i> ${data.engine || 'Google Gemini AI'}
-            </span>
-          </div>
-          <div style="font-size:0.82rem; color:#334155; line-height:1.5;">${parsed.analysis_summary}</div>
+        <div style="margin-bottom:14px; padding:10px 14px; background:#fffbeb; border:1.5px solid #fde68a; border-radius:10px; font-size:0.82rem; color:#92400e; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+          <div><i class="fa-solid fa-triangle-exclamation" style="color:#d97706; margin-right:6px;"></i><strong>Notice:</strong> ${warnText}</div>
+          <a href="../dashboard/admin_settings.php" target="_blank" style="color:#b45309; font-weight:700; text-decoration:underline;">System Settings &rarr;</a>
         </div>`;
     }
 
-    // Grid of Proposed Plans
+    // Grid of Proposed Plans - 3 Aligned in a Row
     html += '<div class="ai-plans-grid">';
     CURRENT_AI_PLANS.forEach((plan, idx) => {
       const dtStr = plan.recommended_date ? plan.recommended_date.replace('T', ' ') : 'N/A';
@@ -2501,39 +4876,30 @@ async function generateAIEventPlans() {
       const score = plan.feasibility_score || 95;
 
       html += `
-        <div class="ai-plan-card" style="animation: fadeInUp 0.4s ease ${idx * 0.12}s both;">
+        <div class="ai-plan-card" style="animation: fadeInUp 0.35s ease ${idx * 0.08}s both;">
           <div>
             <div class="ai-plan-header">
               <div class="ai-plan-title">${plan.title}</div>
-              <span class="ai-score-pill"><i class="fa-solid fa-shield-check"></i> ${score}% ${plan.clash_status || 'Conflict-Free'}</span>
+              <span class="ai-score-pill"><i class="fa-solid fa-shield-check"></i> ${score}%</span>
             </div>
             <div class="ai-plan-meta">
               <span class="ai-meta-tag"><i class="fa-solid fa-calendar-day"></i> ${formattedDate}</span>
               <span class="ai-meta-tag"><i class="fa-solid fa-location-dot"></i> ${plan.recommended_venue || 'Campus Venue'}</span>
-              <span class="ai-meta-tag" style="background:#fef3c7; color:#92400e; border-color:#fde68a;"><i class="fa-solid fa-tags"></i> ${plan.category || 'General'}</span>
             </div>
             <div class="ai-plan-desc">${plan.description}</div>
-            <div class="ai-conflict-box">
-              <strong><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> Date Accessibility Analysis:</strong><br>
-              ${plan.accessibility_verdict || 'Clear and convenient schedule for student attendance.'}<br>
-              <span style="color:#047857; font-weight:600; display:inline-block; margin-top:3px;"><i class="fa-solid fa-calendar-check"></i> ${plan.holiday_check || 'No holiday conflicts.'}</span>
+            <div class="ai-conflict-box" title="${plan.accessibility_verdict || 'Schedule Clear'}">
+              <i class="fa-solid fa-circle-check" style="color:#16a34a; flex-shrink:0;"></i>
+              <span>${plan.holiday_check || 'No schedule conflicts'}</span>
             </div>
           </div>
           <div>
             <button type="button" class="ai-apply-plan-btn" onclick="applyAIEventPlan(${idx})">
-              <i class="fa-solid fa-pen-to-square"></i> Use This Plan (Auto-Fill Proposal)
+              <i class="fa-solid fa-pen-to-square"></i> Use This Plan
             </button>
           </div>
         </div>`;
     });
     html += '</div>';
-
-    if (parsed.scheduling_insights) {
-      html += `
-        <div style="margin-top:16px; padding:12px 16px; background:#fdf4ff; border:1px solid #f0abfc; border-radius:10px; font-size:0.78rem; color:#86198f;">
-          <i class="fa-solid fa-lightbulb" style="margin-right:6px;"></i> <strong>SSC &amp; Adviser Scheduling Note:</strong> ${parsed.scheduling_insights}
-        </div>`;
-    }
 
     results.innerHTML = html;
     btn.disabled = false;
@@ -2543,7 +4909,7 @@ async function generateAIEventPlans() {
     loading.style.display = 'none';
     results.innerHTML = `<div class="ai-error-msg"><i class="fa-solid fa-triangle-exclamation"></i> Network or server error. Please try again.</div>`;
     btn.disabled = false;
-    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>Generate AI Event Ideas &amp; Dates</span>';
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> <span>Generate Ideas</span>';
   }
 }
 
@@ -2595,7 +4961,11 @@ async function runAICheckDateConflict() {
   const btn        = document.getElementById('btnAuditModalDate');
 
   if (!dateInput || !dateInput.value) {
-    alert('Please select an event date and time first.');
+    await window.showSystemModal({
+      title: 'Date Selection Required',
+      message: 'Please select an event date and time first before running conflict audit.',
+      type: 'warning'
+    });
     dateInput?.focus();
     return;
   }
@@ -2663,6 +5033,5 @@ function autoCheckModalDate() {
   }
 }
 </script>
-<script src="../js/table-pagination.js"></script>
 </body>
 </html>

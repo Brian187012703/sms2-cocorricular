@@ -113,11 +113,11 @@ if (isset($conn) && $conn instanceof mysqli) {
     <div class="qr-modal-body qr-tab-panel active" id="panelMyQr">
       <?php if (!empty($all_students_list) && in_array($qr_role, ['club_adviser', 'ssc', 'admin'])): ?>
       <!-- Staff Student Badge Selector -->
-      <div style="margin-bottom:14px; text-align:left; background:#f8fafc; padding:10px 14px; border-radius:12px; border:1px solid #e2e8f0;">
-        <label for="qrStudentPickerSelect" style="display:block; font-size:0.75rem; font-weight:700; color:#334155; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">
+      <div class="qr-picker-container">
+        <label for="qrStudentPickerSelect" class="qr-picker-label">
           <i class="fa-solid fa-users" style="color:#2563eb;"></i> Select Student Badge to View:
         </label>
-        <select id="qrStudentPickerSelect" class="form-control" onchange="onQrStudentPickerChange(this.value)" style="width:100%; height:38px; padding:0 10px; border-radius:8px; border:1.5px solid #cbd5e1; font-size:0.84rem; font-weight:600; background:#fff; color:#0f172a; outline:none;">
+        <select id="qrStudentPickerSelect" class="form-control qr-picker-select" onchange="onQrStudentPickerChange(this.value)">
           <option value="self">-- My Personal Staff Badge (<?= htmlspecialchars($qr_first . ' ' . $qr_last) ?>) --</option>
           <optgroup label="Enrolled Students (16 Academic Programs)">
             <?php foreach ($all_students_list as $st): ?>
@@ -146,23 +146,22 @@ if (isset($conn) && $conn instanceof mysqli) {
       </div>
       <div class="qr-code-frame" id="qrCodeFrame">
         <div class="qr-scan-line"></div>
-        <div id="myQrCanvasBox" class="qr-canvas-box" style="width:200px; height:200px; display:flex; align-items:center; justify-content:center; margin:auto; overflow:hidden;"></div>
+        <div id="myQrCanvasBox" class="qr-canvas-box"></div>
       </div>
       <div class="qr-student-name" id="qrStudentNameText"><?= $qr_first . ' ' . $qr_last ?></div>
-      <div id="qrStudentNumBox" style="font-size:0.86rem; font-weight:700; color:#2563eb; margin:2px 0; <?= empty($qr_student_num) ? 'display:none;' : '' ?>">
-        <i class="fa-solid fa-id-card-clip"></i> Student Number: <span id="qrStudentNumText"><?= htmlspecialchars($qr_student_num) ?></span>
+      <div id="qrStudentNumBox" style="font-size:0.84rem; font-weight:700; color:#2563eb; margin:2px 0; <?= empty($qr_student_num) ? 'display:none;' : '' ?>">
+        <i class="fa-solid fa-id-card-clip"></i> <span id="qrStudentNumText"><?= htmlspecialchars($qr_student_num) ?></span>
       </div>
-      <div id="qrCourseBox" style="font-size:0.78rem; color:#64748b; margin-bottom:4px;">
+      <div id="qrCourseBox" style="font-size:0.76rem; color:#64748b; margin-bottom:4px;">
         <?= htmlspecialchars($qr_course . ' ' . $qr_year_sec) ?>
       </div>
-      <div class="qr-student-id">Unique QR ID: <strong id="qrPayloadText"><?= htmlspecialchars($qr_code_str) ?></strong></div>
-      <p class="qr-subtext" id="qrSubtextLine">Present this unique QR code at any event scanning terminal for instant attendance check-in.</p>
-      <div style="display:flex; justify-content:center; gap:8px; margin-top:14px; flex-wrap:wrap;">
-        <button type="button" onclick="downloadQR()" class="btn-download-qr" id="btnDownloadQrBadge" style="margin:0;">
-          <i class="fa-solid fa-download"></i> Download QR Badge
+      <div class="qr-student-id"><strong id="qrPayloadText"><?= htmlspecialchars($qr_code_str) ?></strong></div>
+      <div class="qr-action-btn-row">
+        <button type="button" onclick="downloadQR()" class="btn-download-qr" id="btnDownloadQrBadge">
+          <i class="fa-solid fa-download"></i> Download QR
         </button>
-        <button type="button" onclick="printStudentBadge()" class="card-btn" id="btnPrintQrBadge" style="background:#1e3a8a; color:#ffffff; font-weight:700; padding:10px 18px; border-radius:10px; border:none; cursor:pointer; display:inline-flex; align-items:center; gap:6px; font-size:0.85rem;">
-          <i class="fa-solid fa-print"></i> Print Official Badge
+        <button type="button" onclick="printStudentBadge()" class="btn-print-badge" id="btnPrintQrBadge">
+          <i class="fa-solid fa-print"></i> Print Badge
         </button>
       </div>
     </div>
@@ -172,11 +171,11 @@ if (isset($conn) && $conn instanceof mysqli) {
 
       <?php if (in_array($qr_role, ['club_adviser','ssc','admin'])): ?>
       <!-- Staff Event Selector -->
-      <div class="qr-select-wrapper">
-        <label class="qr-select-label">
-          <i class="fa-solid fa-calendar-days"></i> Select Active Event
+      <div class="qr-picker-container" style="margin-bottom:8px;">
+        <label class="qr-picker-label" for="scanEventSelect">
+          <i class="fa-solid fa-calendar-days" style="color:#2563eb;"></i> Select Active Event:
         </label>
-        <select id="scanEventSelect" class="qr-select-input">
+        <select id="scanEventSelect" class="form-control qr-picker-select">
           <option value="">— Choose an event —</option>
           <?php foreach ($scan_events as $se): ?>
             <option value="<?= $se['id'] ?>"><?= htmlspecialchars($se['title']) ?> (<?= date('M d', strtotime($se['event_date'])) ?>)</option>
@@ -188,17 +187,17 @@ if (isset($conn) && $conn instanceof mysqli) {
       </div>
       <?php else: ?>
       <!-- Student Event Check-in Banner -->
-      <div class="qr-info-banner">
+      <div class="qr-info-banner" style="margin-bottom:10px;">
         <div class="qr-banner-icon"><i class="fa-solid fa-circle-info"></i></div>
         <div class="qr-banner-text">
           <strong>Event Self Check-In</strong>
-          <span>Point camera at the <code>BCP-EVENT-{id}</code> QR code posted at the venue.</span>
+          <span>Scan the venue <code>BCP-EVENT-{id}</code> QR poster.</span>
         </div>
       </div>
       <?php endif; ?>
 
       <!-- Camera Viewport -->
-      <div class="qr-camera-wrap" id="qrCameraWrap" style="cursor:pointer;" title="Camera Viewport (Drop image or click Scan Image)">
+      <div class="qr-camera-wrap" id="qrCameraWrap" style="cursor:pointer;" title="Camera Viewport">
         <div id="html5GlobalQrReader" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:12px;overflow:hidden;"></div>
         <video id="qrGlobalVideo" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;border-radius:12px;"></video>
         <canvas id="qrGlobalCanvas" style="display:none;"></canvas>
@@ -231,22 +230,15 @@ if (isset($conn) && $conn instanceof mysqli) {
       </div>
 
       <!-- Manual Code Entry Row -->
-      <div style="display:flex; gap:6px; width:100%; margin-bottom:10px;">
+      <div style="display:flex; gap:6px; width:100%; margin-bottom:8px;">
         <div style="position:relative; flex:1;">
           <i class="fa-solid fa-barcode" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:0.8rem;"></i>
-          <input type="text" id="manualGlobalQrInput" placeholder="Enter QR ID or Student # e.g. BCP-STUDENT-1" style="width:100%; height:34px; padding:0 8px 0 28px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.78rem; outline:none; box-sizing:border-box;" />
+          <input type="text" id="manualGlobalQrInput" placeholder="Enter QR ID or Student #" style="width:100%; height:34px; padding:0 8px 0 28px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.78rem; outline:none; box-sizing:border-box;" />
         </div>
         <button type="button" id="manualGlobalQrSubmitBtn" style="height:34px; padding:0 12px; background:#2563eb; color:#fff; border:none; border-radius:6px; font-weight:600; font-size:0.78rem; cursor:pointer; display:flex; align-items:center; gap:4px; white-space:nowrap;">
           <i class="fa-solid fa-check"></i> Submit
         </button>
       </div>
-      <p class="qr-subtext">
-        <?php if (in_array($qr_role, ['club_adviser','ssc','admin'])): ?>
-          Select an event above, then point camera at student QR badge (<code>BCP-STUDENT-{id}</code>) or upload/paste a badge image.
-        <?php else: ?>
-          Start scanner and point camera at the venue Event QR code (<code>BCP-EVENT-{id}</code>) or enter code manually.
-        <?php endif; ?>
-      </p>
 
       <!-- Recent Scans Log -->
       <div id="scanLog" class="qr-scan-log"></div>
@@ -255,11 +247,11 @@ if (isset($conn) && $conn instanceof mysqli) {
     <!-- Tab 3: Event QR Posters (Staff / Adviser / Admin) -->
     <?php if (in_array($qr_role, ['club_adviser','ssc','admin'])): ?>
     <div class="qr-modal-body qr-tab-panel" id="panelEventPoster" style="display:none;">
-      <div class="qr-select-wrapper" style="margin-bottom:14px;">
-        <label class="qr-select-label">
-          <i class="fa-solid fa-calendar-days"></i> Select Approved Event to Generate Official Poster &amp; QR:
+      <div class="qr-picker-container" style="margin-bottom:8px;">
+        <label class="qr-picker-label" for="modalEventSelect">
+          <i class="fa-solid fa-calendar-check" style="color:#2563eb;"></i> Select Approved Event:
         </label>
-        <select id="modalEventSelect" class="qr-select-input" onchange="renderEventQrInModal(this.value)">
+        <select id="modalEventSelect" class="form-control qr-picker-select" onchange="renderEventQrInModal(this.value)">
           <option value="">— Select an Event —</option>
           <?php foreach ($scan_events as $idx => $sev): ?>
             <option value="<?= $sev['id'] ?>"
@@ -274,19 +266,20 @@ if (isset($conn) && $conn instanceof mysqli) {
         </select>
       </div>
 
-      <div class="qr-code-frame" id="eventQrCodeFrame" style="margin-bottom:12px;">
-        <div id="eventQrCanvasBox" class="qr-canvas-box" style="width:200px; height:200px; display:flex; align-items:center; justify-content:center; margin:auto; overflow:hidden;"></div>
+      <div class="qr-code-frame" id="eventQrCodeFrame" style="margin-bottom:8px;">
+        <div class="qr-scan-line"></div>
+        <div id="eventQrCanvasBox" class="qr-canvas-box"></div>
       </div>
 
-      <div id="modalEventTitle" style="font-weight:800; font-size:1.05rem; color:#0f172a; margin-bottom:4px; text-align:center;">Select an event</div>
-      <div id="modalEventMeta" style="font-size:0.8rem; color:#64748b; margin-bottom:6px; text-align:center;">Event Venue &amp; Schedule</div>
-      <div id="modalEventPayload" style="font-size:0.75rem; color:#2563eb; font-family:monospace; margin-bottom:14px; text-align:center; font-weight:700;">Payload: BCP-EVENT-1</div>
+      <div id="modalEventTitle" style="font-weight:800; font-size:0.98rem; color:#0f172a; margin-bottom:2px; text-align:center;">Select an event</div>
+      <div id="modalEventMeta" style="font-size:0.76rem; color:#64748b; margin-bottom:8px; text-align:center;">Event Venue &amp; Schedule</div>
+      <div id="modalEventPayload" style="display:none;">Payload: BCP-EVENT-1</div>
 
-      <div style="display:flex; gap:8px; justify-content:center;">
-        <button type="button" onclick="downloadEventQR()" class="btn-download-qr" style="margin:0; flex:1; max-width:180px;">
+      <div class="qr-action-btn-row">
+        <button type="button" onclick="downloadEventQR()" class="btn-download-qr">
           <i class="fa-solid fa-download"></i> Download QR
         </button>
-        <button type="button" onclick="printModalEventPoster()" class="btn-download-qr" style="margin:0; flex:1; max-width:180px; background:#1e293b;">
+        <button type="button" onclick="printModalEventPoster()" class="btn-print-badge" style="background:#1e293b;">
           <i class="fa-solid fa-print"></i> Print Poster
         </button>
       </div>

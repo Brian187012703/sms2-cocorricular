@@ -34,13 +34,27 @@ switch ($action) {
         $types  = '';
 
         if ($user_role === 'club_adviser') {
-            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-            $cm->bind_param('i', $user_id);
-            $cm->execute();
-            $cm->bind_result($club_id);
-            $cm->fetch();
-            $cm->close();
-            if (!empty($club_id)) { $club_filter = 'AND cm.club_id = ?'; $params[] = $club_id; $types .= 'i'; }
+            $c_stmt = $conn->prepare("SELECT id FROM clubs WHERE adviser_user_id = ? LIMIT 1");
+            $c_stmt->bind_param('i', $user_id);
+            $c_stmt->execute();
+            $c_res = $c_stmt->get_result()->fetch_assoc();
+            $c_stmt->close();
+            $club_id = $c_res['id'] ?? 0;
+            if (!$club_id) {
+                $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND role IN ('Adviser','adviser','Club Adviser') AND status='Active' LIMIT 1");
+                $cm->bind_param('i', $user_id);
+                $cm->execute();
+                $cm->bind_result($club_id);
+                $cm->fetch();
+                $cm->close();
+            }
+            if (!empty($club_id)) {
+                $club_filter = 'AND cm.club_id = ?';
+                $params[] = (int)$club_id;
+                $types .= 'i';
+            } else {
+                $club_filter = 'AND 1=0';
+            }
         }
 
         $sql = "SELECT cm.id, cm.club_id, cm.user_id, cm.role AS member_role,
@@ -69,13 +83,27 @@ switch ($action) {
         $params = [];
         $types  = '';
         if ($user_role === 'club_adviser') {
-            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-            $cm->bind_param('i', $user_id);
-            $cm->execute();
-            $cm->bind_result($club_id);
-            $cm->fetch();
-            $cm->close();
-            if (!empty($club_id)) { $club_filter = 'AND cm.club_id = ?'; $params[] = $club_id; $types .= 'i'; }
+            $c_stmt = $conn->prepare("SELECT id FROM clubs WHERE adviser_user_id = ? LIMIT 1");
+            $c_stmt->bind_param('i', $user_id);
+            $c_stmt->execute();
+            $c_res = $c_stmt->get_result()->fetch_assoc();
+            $c_stmt->close();
+            $club_id = $c_res['id'] ?? 0;
+            if (!$club_id) {
+                $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND role IN ('Adviser','adviser','Club Adviser') AND status='Active' LIMIT 1");
+                $cm->bind_param('i', $user_id);
+                $cm->execute();
+                $cm->bind_result($club_id);
+                $cm->fetch();
+                $cm->close();
+            }
+            if (!empty($club_id)) {
+                $club_filter = 'AND cm.club_id = ?';
+                $params[] = (int)$club_id;
+                $types .= 'i';
+            } else {
+                $club_filter = 'AND 1=0';
+            }
         }
 
         $sql = "SELECT cm.id, cm.club_id, cm.user_id, cm.joined_at,
@@ -89,7 +117,7 @@ switch ($action) {
                 FROM club_memberships cm
                 JOIN clubs c ON c.id = cm.club_id
                 JOIN users u ON u.id = cm.user_id
-                LEFT JOIN club_applications ca ON (ca.club_id = cm.club_id AND ca.user_id = cm.user_id AND ca.status = 'Pending')
+                LEFT JOIN club_applications ca ON (ca.club_id = cm.club_id AND ca.user_id = cm.user_id AND ca.status IN ('Pending', 'PENDING_ADVISER', 'PENDING_SSC'))
                 WHERE cm.status = 'Pending' $club_filter
                 ORDER BY cm.joined_at ASC";
         $stmt = $conn->prepare($sql);
@@ -158,19 +186,85 @@ switch ($action) {
         $upload_dir = __DIR__ . '/../uploads/applications/';
         if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
 
+        $allowed_exts  = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'webp', 'jfif'];
+        $allowed_mimes = [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-word',
+            'application/zip',
+            'application/x-zip',
+            'application/octet-stream',
+            'image/jpeg',
+            'image/pjpeg',
+            'image/png',
+            'image/webp'
+        ];
+        $max_bytes     = 10 * 1024 * 1024; // 10 MB matching UI prompt
+
+        // Pre-check upload errors if files were sent
+        if (!empty($_FILES['letter_intent']['error']) && $_FILES['letter_intent']['error'] !== UPLOAD_ERR_OK && $_FILES['letter_intent']['error'] !== UPLOAD_ERR_NO_FILE) {
+            if ($_FILES['letter_intent']['error'] === UPLOAD_ERR_INI_SIZE || $_FILES['letter_intent']['error'] === UPLOAD_ERR_FORM_SIZE) {
+                rRespond(false, 'Letter of Intent exceeds the server upload limit.');
+            }
+            rRespond(false, 'Failed to upload Letter of Intent. Error code: ' . $_FILES['letter_intent']['error']);
+        }
+        if (!empty($_FILES['letter_endorsement']['error']) && $_FILES['letter_endorsement']['error'] !== UPLOAD_ERR_OK && $_FILES['letter_endorsement']['error'] !== UPLOAD_ERR_NO_FILE) {
+            if ($_FILES['letter_endorsement']['error'] === UPLOAD_ERR_INI_SIZE || $_FILES['letter_endorsement']['error'] === UPLOAD_ERR_FORM_SIZE) {
+                rRespond(false, 'Letter of Endorsement exceeds the server upload limit.');
+            }
+            rRespond(false, 'Failed to upload Letter of Endorsement. Error code: ' . $_FILES['letter_endorsement']['error']);
+        }
+
         $letter_intent_path = null;
-        if (!empty($_FILES['letter_intent']['name'])) {
-            $ext = strtolower(pathinfo($_FILES['letter_intent']['name'], PATHINFO_EXTENSION));
-            $fname = 'intent_' . time() . '_' . $user_id . '.' . $ext;
+        if (!empty($_FILES['letter_intent']['name']) && $_FILES['letter_intent']['error'] === UPLOAD_ERR_OK) {
+            if ($_FILES['letter_intent']['size'] > $max_bytes) {
+                rRespond(false, 'Letter of Intent exceeds the 10MB size limit.');
+            }
+            $ext = strtolower(trim(pathinfo($_FILES['letter_intent']['name'], PATHINFO_EXTENSION)));
+            if (!in_array($ext, $allowed_exts, true)) {
+                rRespond(false, 'Invalid file type for Letter of Intent. Allowed formats: PDF, DOC, DOCX, JPG, PNG, WEBP.');
+            }
+            $mime = '';
+            if (function_exists('finfo_open')) {
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mime  = finfo_file($finfo, $_FILES['letter_intent']['tmp_name']);
+                finfo_close($finfo);
+            } elseif (function_exists('mime_content_type')) {
+                $mime = mime_content_type($_FILES['letter_intent']['tmp_name']);
+            }
+            if (!empty($mime) && !in_array($mime, $allowed_mimes, true)) {
+                rRespond(false, 'Invalid file content for Letter of Intent. Only genuine PDF, Word documents, and images are accepted.');
+            }
+
+            $fname = 'intent_' . $user_id . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
             if (move_uploaded_file($_FILES['letter_intent']['tmp_name'], $upload_dir . $fname)) {
                 $letter_intent_path = $fname;
             }
         }
 
         $letter_endorsement_path = null;
-        if (!empty($_FILES['letter_endorsement']['name'])) {
-            $ext = strtolower(pathinfo($_FILES['letter_endorsement']['name'], PATHINFO_EXTENSION));
-            $fname = 'endorsement_' . time() . '_' . $user_id . '.' . $ext;
+        if (!empty($_FILES['letter_endorsement']['name']) && $_FILES['letter_endorsement']['error'] === UPLOAD_ERR_OK) {
+            if ($_FILES['letter_endorsement']['size'] > $max_bytes) {
+                rRespond(false, 'Letter of Endorsement exceeds the 10MB size limit.');
+            }
+            $ext = strtolower(trim(pathinfo($_FILES['letter_endorsement']['name'], PATHINFO_EXTENSION)));
+            if (!in_array($ext, $allowed_exts, true)) {
+                rRespond(false, 'Invalid file type for Letter of Endorsement. Allowed formats: PDF, DOC, DOCX, JPG, PNG, WEBP.');
+            }
+            $mime = '';
+            if (function_exists('finfo_open')) {
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mime  = finfo_file($finfo, $_FILES['letter_endorsement']['tmp_name']);
+                finfo_close($finfo);
+            } elseif (function_exists('mime_content_type')) {
+                $mime = mime_content_type($_FILES['letter_endorsement']['tmp_name']);
+            }
+            if (!empty($mime) && !in_array($mime, $allowed_mimes, true)) {
+                rRespond(false, 'Invalid file content for Letter of Endorsement. Only genuine PDF, Word documents, and images are accepted.');
+            }
+
+            $fname = 'endorsement_' . $user_id . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
             if (move_uploaded_file($_FILES['letter_endorsement']['tmp_name'], $upload_dir . $fname)) {
                 $letter_endorsement_path = $fname;
             }
@@ -191,9 +285,9 @@ switch ($action) {
 
         // Auto-populate student info from students table if not provided
         if (empty($student_id_no) || empty($course) || empty($year_level)) {
-            $st_stmt = $conn->prepare("SELECT student_number, course, year_level, phone, birthday FROM students WHERE first_name = ? AND last_name = ? LIMIT 1");
+            $st_stmt = $conn->prepare("SELECT student_number, course, year_level, phone, birthday FROM students WHERE user_id = ? OR (first_name = ? AND last_name = ?) LIMIT 1");
             if ($st_stmt) {
-                $st_stmt->bind_param('ss', $first_name, $last_name);
+                $st_stmt->bind_param('iss', $user_id, $first_name, $last_name);
                 $st_stmt->execute();
                 $st_res = $st_stmt->get_result();
                 if ($st_res && $row = $st_res->fetch_assoc()) {
@@ -254,26 +348,66 @@ switch ($action) {
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) rRespond(false, 'Invalid membership ID.');
 
+        // Scope check: If adviser, verify applicant belongs to adviser's club
+        $chk = $conn->prepare("SELECT cm.id, cm.club_id, cm.user_id, cm.status, c.name AS club_name FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.id = ?");
+        $chk->bind_param('i', $id);
+        $chk->execute();
+        $cm = $chk->get_result()->fetch_assoc();
+        $chk->close();
+        if (!$cm) rRespond(false, 'Membership record not found.');
+
+        if ($user_role === 'club_adviser') {
+            if (!verify_club_adviser_scope($conn, (int)$cm['club_id'], $user_id)) {
+                rRespond(false, 'Unauthorized: You can only approve applicants for your assigned organization.');
+            }
+        }
+
+        $old_status = $cm['status'];
+        if ($user_role === 'club_adviser') {
+            $new_mem_status = 'Pending';
+            $adv_sql = ", adviser_review='Endorsed'";
+            $ssc_sql = "";
+            $app_status = 'PENDING_SSC';
+            $action_type = 'adviser_endorse';
+            $history_remarks = 'Application endorsed by Club Adviser';
+        } else {
+            $new_mem_status = 'Active';
+            $adv_sql = "";
+            $ssc_sql = ", ssc_review='Approved'";
+            $app_status = 'Approved';
+            $action_type = 'ssc_approve';
+            $history_remarks = 'Application approved by SSC / System Administration';
+        }
+
         $stmt = $conn->prepare(
-            "UPDATE club_memberships SET status='Active', approved_by=? WHERE id=? AND status='Pending'"
+            "UPDATE club_memberships SET status=?, approved_by=? $adv_sql $ssc_sql WHERE id=?"
         );
-        $stmt->bind_param('ii', $user_id, $id);
-        if (!$stmt->execute() || $stmt->affected_rows === 0) rRespond(false, 'Could not approve — already processed?');
+        $stmt->bind_param('sii', $new_mem_status, $user_id, $id);
+        if (!$stmt->execute()) rRespond(false, 'Could not process approval — already updated?');
         $stmt->close();
 
-        // Fetch membership details to sync club_applications
-        $cm = $conn->query("SELECT cm.club_id, cm.user_id, c.name FROM club_memberships cm JOIN clubs c ON c.id=cm.club_id WHERE cm.id=$id")->fetch_assoc();
-        if ($cm) {
-            $app_up = $conn->prepare("UPDATE club_applications SET status='Approved', reviewed_by=?, reviewed_at=NOW() WHERE club_id=? AND user_id=? AND status='Pending'");
-            $app_up->bind_param('iii', $user_id, $cm['club_id'], $cm['user_id']);
-            $app_up->execute();
-            $app_up->close();
+        // Sync club_applications
+        $app_up = $conn->prepare("UPDATE club_applications SET status=?, adviser_status=IF(?='club_adviser', 'Endorsed', adviser_status), ssc_status=IF(?!='club_adviser', 'Approved', ssc_status), reviewed_by=?, reviewed_at=NOW() $adv_sql $ssc_sql WHERE club_id=? AND user_id=? AND status IN ('Pending', 'PENDING_ADVISER', 'PENDING_SSC')");
+        $app_up->bind_param('sssiii', $app_status, $user_role, $user_role, $user_id, $cm['club_id'], $cm['user_id']);
+        $app_up->execute();
+        $app_up->close();
 
+        log_workflow_history($conn, 'club_applications', $id, $old_status, $app_status, $action_type, $user_id, $history_remarks);
+
+        if ($user_role === 'club_adviser') {
+            push_notification($conn, (int)$cm['user_id'], 'Application Endorsed',
+                "Your application to join {$cm['club_name']} was endorsed by your Adviser and forwarded for SSC oversight.", 'info', 'club_application', $id, '../dashboard/roster.php');
+        } else {
             push_notification($conn, (int)$cm['user_id'], 'Membership Approved!',
-                "Your application to join {$cm['name']} has been approved! Welcome aboard!", 'success');
+                "Your application to join {$cm['club_name']} has been approved! Welcome aboard!", 'success', 'club_membership', $id, '../dashboard/roster.php');
+            // Auto-sync dedicated organization database
+            require_once __DIR__ . '/org_db_manager.php';
+            sync_org_data_to_dedicated_db($conn, (int)$cm['club_id']);
         }
-        log_audit($conn, $user_id, 'roster_approve', 'club_memberships', $id, "Approved membership #$id");
-        rRespond(true, 'Applicant approved successfully.');
+
+        log_audit($conn, $user_id, 'roster_approve', 'club_memberships', $id, "Approved/Endorsed membership #$id");
+        $msg = ($user_role === 'club_adviser') ? 'Applicant endorsed and forwarded to SSC.' : 'Applicant approved successfully.';
+        rRespond(true, $msg);
     }
 
     // ── REJECT applicant ─────────────────────────────────────
@@ -282,38 +416,158 @@ switch ($action) {
             rRespond(false, 'Not authorized.');
         $id   = (int)($_POST['id']     ?? 0);
         if ($id <= 0) rRespond(false, 'Invalid membership ID.');
+        $notes = trim($_POST['notes'] ?? $_POST['reason'] ?? 'Application rejected.');
+
+        $chk = $conn->prepare("SELECT cm.id, cm.club_id, cm.user_id, cm.status, c.name AS club_name FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.id = ?");
+        $chk->bind_param('i', $id);
+        $chk->execute();
+        $cm = $chk->get_result()->fetch_assoc();
+        $chk->close();
+        if (!$cm) rRespond(false, 'Membership record not found.');
+
+        // Scope check: If adviser, verify applicant belongs to adviser's club
+        if ($user_role === 'club_adviser') {
+            if (!verify_club_adviser_scope($conn, (int)$cm['club_id'], $user_id)) {
+                rRespond(false, 'Unauthorized: You can only review applicants for your assigned organization.');
+            }
+        }
+
+        $adv_sql = ($user_role === 'club_adviser') ? ", adviser_review='Rejected'" : "";
+        $ssc_sql = in_array($user_role, ['ssc', 'admin']) ? ", ssc_review='Rejected'" : "";
 
         $stmt = $conn->prepare(
-            "UPDATE club_memberships SET status='Rejected' WHERE id=? AND status='Pending'"
+            "UPDATE club_memberships SET status='Rejected', review_notes=? $adv_sql $ssc_sql WHERE id=?"
         );
-        $stmt->bind_param('i', $id);
-        if (!$stmt->execute() || $stmt->affected_rows === 0) rRespond(false, 'Could not reject — already processed?');
+        $stmt->bind_param('si', $notes, $id);
+        if (!$stmt->execute()) rRespond(false, 'Could not reject — already processed?');
         $stmt->close();
 
-        $cm = $conn->query("SELECT cm.club_id, cm.user_id, c.name FROM club_memberships cm JOIN clubs c ON c.id=cm.club_id WHERE cm.id=$id")->fetch_assoc();
-        if ($cm) {
-            $app_up = $conn->prepare("UPDATE club_applications SET status='Rejected', reviewed_by=?, reviewed_at=NOW() WHERE club_id=? AND user_id=? AND status='Pending'");
-            $app_up->bind_param('iii', $user_id, $cm['club_id'], $cm['user_id']);
-            $app_up->execute();
-            $app_up->close();
+        $app_up = $conn->prepare("UPDATE club_applications SET status='Rejected', rejection_reason=?, review_notes=?, reviewed_by=?, reviewed_at=NOW() $adv_sql $ssc_sql WHERE club_id=? AND user_id=? AND status IN ('Pending', 'PENDING_ADVISER', 'PENDING_SSC')");
+        $app_up->bind_param('ssiii', $notes, $notes, $user_id, $cm['club_id'], $cm['user_id']);
+        $app_up->execute();
+        $app_up->close();
 
-            push_notification($conn, (int)$cm['user_id'], 'Membership Update',
-                "Your application to join {$cm['name']} was not approved.", 'warning');
-        }
+        log_workflow_history($conn, 'club_applications', $id, $cm['status'], 'REJECTED', 'reject', $user_id, $notes);
+
+        push_notification($conn, (int)$cm['user_id'], 'Membership Update',
+            "Your application to join {$cm['club_name']} was not approved: $notes", 'warning', 'club_application', $id, '../dashboard/roster.php');
+
+        // Auto-sync dedicated organization database
+        require_once __DIR__ . '/org_db_manager.php';
+        sync_org_data_to_dedicated_db($conn, (int)$cm['club_id']);
+
         log_audit($conn, $user_id, 'roster_reject', 'club_memberships', $id, "Rejected membership #$id");
         rRespond(true, 'Applicant rejected.');
     }
 
+    // ── RETURN applicant for revision ─────────────────────────
+    case 'return': {
+        if (!in_array($user_role, ['club_adviser','ssc','admin']))
+            rRespond(false, 'Not authorized.');
+        $id   = (int)($_POST['id'] ?? 0);
+        if ($id <= 0) rRespond(false, 'Invalid membership ID.');
+        $notes = trim($_POST['notes'] ?? $_POST['reason'] ?? 'Application returned for document completion or revision.');
+
+        $chk = $conn->prepare("SELECT cm.id, cm.club_id, cm.user_id, cm.status, c.name AS club_name FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.id = ?");
+        $chk->bind_param('i', $id);
+        $chk->execute();
+        $cm = $chk->get_result()->fetch_assoc();
+        $chk->close();
+        if (!$cm) rRespond(false, 'Membership record not found.');
+
+        // Scope check: If adviser, verify applicant belongs to adviser's club
+        if ($user_role === 'club_adviser') {
+            if (!verify_club_adviser_scope($conn, (int)$cm['club_id'], $user_id)) {
+                rRespond(false, 'Unauthorized: You can only return applicants for your assigned organization.');
+            }
+        }
+
+        $adv_state = ($user_role === 'club_adviser') ? 'Returned' : 'Under Review';
+        $ssc_state = in_array($user_role, ['ssc', 'admin']) ? 'Returned' : 'Pending SSC';
+
+        $stmt = $conn->prepare(
+            "UPDATE club_memberships SET status='Returned', adviser_review=?, ssc_review=?, review_notes=? WHERE id=?"
+        );
+        $stmt->bind_param('sssi', $adv_state, $ssc_state, $notes, $id);
+        if (!$stmt->execute()) rRespond(false, 'Could not return application — already processed?');
+        $stmt->close();
+
+        $app_up = $conn->prepare("UPDATE club_applications SET status='Returned', adviser_review=?, ssc_review=?, review_notes=?, reviewed_by=?, reviewed_at=NOW() WHERE club_id=? AND user_id=? AND (status IN ('Pending', 'PENDING_ADVISER', 'PENDING_SSC', 'Returned'))");
+        $app_up->bind_param('sssiii', $adv_state, $ssc_state, $notes, $user_id, $cm['club_id'], $cm['user_id']);
+        $app_up->execute();
+        $app_up->close();
+
+        log_workflow_history($conn, 'club_applications', $id, $cm['status'], 'RETURNED', 'return_for_revision', $user_id, $notes);
+
+        push_notification($conn, (int)$cm['user_id'], 'Application Returned for Revision',
+            "Your application to join {$cm['club_name']} has been returned: $notes", 'warning', 'club_application', $id, '../dashboard/roster.php');
+
+        log_audit($conn, $user_id, 'roster_return', 'club_memberships', $id, "Returned membership #$id: $notes");
+        rRespond(true, 'Application returned for revision successfully.');
+    }
+
     // ── REMOVE active member ─────────────────────────────────
-    case 'remove': {
-        if (!in_array($user_role, ['club_adviser','admin'])) rRespond(false, 'Not authorized.');
+    case 'remove':
+    case 'remove_member': {
+        if (!in_array($user_role, ['club_adviser','admin','ssc'])) rRespond(false, 'Not authorized.');
         $id = (int)($_POST['id'] ?? 0);
+        if ($id <= 0) rRespond(false, 'Invalid membership ID.');
+
+        // Scope check: If adviser, verify member belongs to adviser's club
+        if ($user_role === 'club_adviser') {
+            $sess_user = $_SESSION['username'] ?? '';
+            $sess_last = $_SESSION['last_name'] ?? '';
+            $chk_adv = $conn->prepare("
+                SELECT cm.id FROM club_memberships cm 
+                JOIN clubs c ON c.id = cm.club_id
+                WHERE cm.id = ? 
+                  AND (c.id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') 
+                   OR c.code = UPPER(SUBSTRING_INDEX(?, '.', 1))
+                   OR (? != '' AND c.adviser_name LIKE CONCAT('%', ?, '%')))
+                LIMIT 1
+            ");
+            $chk_adv->bind_param('iisss', $id, $user_id, $sess_user, $sess_last, $sess_last);
+            $chk_adv->execute();
+            if (!$chk_adv->get_result()->fetch_assoc()) {
+                $chk_adv->close();
+                rRespond(false, 'Unauthorized: You can only remove members from your assigned organization.');
+            }
+            $chk_adv->close();
+        }
+
+        // Fetch membership details to notify & audit
+        $cm_info = $conn->query("
+            SELECT cm.user_id, cm.club_id, c.name AS club_name, u.first_name, u.last_name 
+            FROM club_memberships cm 
+            JOIN clubs c ON c.id=cm.club_id 
+            JOIN users u ON u.id=cm.user_id 
+            WHERE cm.id=$id
+        ")->fetch_assoc();
+
         $stmt = $conn->prepare("UPDATE club_memberships SET status='Rejected' WHERE id=?");
         $stmt->bind_param('i', $id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            rRespond(false, 'Failed to remove member: ' . $stmt->error);
+        }
         $stmt->close();
-        log_audit($conn, $user_id, 'roster_remove', 'club_memberships', $id, "Removed member #$id");
-        rRespond(true, 'Member removed.');
+
+        // Also sync club_applications status
+        if ($cm_info) {
+            $app_up = $conn->prepare("UPDATE club_applications SET status='Rejected', reviewed_by=?, reviewed_at=NOW() WHERE club_id=? AND user_id=? AND status IN ('Pending', 'Approved')");
+            $app_up->bind_param('iii', $user_id, $cm_info['club_id'], $cm_info['user_id']);
+            $app_up->execute();
+            $app_up->close();
+
+            push_notification($conn, (int)$cm_info['user_id'], 'Membership Status Update',
+                "You have been removed from {$cm_info['club_name']}.", 'warning');
+
+            // Auto-sync dedicated organization database
+            require_once __DIR__ . '/org_db_manager.php';
+            sync_org_data_to_dedicated_db($conn, (int)$cm_info['club_id']);
+        }
+
+        log_audit($conn, $user_id, 'roster_remove', 'club_memberships', $id, "Removed member #$id from club " . ($cm_info['club_id'] ?? 0));
+        rRespond(true, 'Member removed from the organization successfully.');
     }
 
     // ── EXPORT CSV ───────────────────────────────────────────
@@ -343,6 +597,13 @@ switch ($action) {
                 $club_filter = 'AND cm.club_id = ?';
                 $params[] = $req_club_id;
                 $types .= 'i';
+            }
+        } elseif (!empty($_GET['club_code']) || !empty($_POST['club_code'])) {
+            $req_code = trim($_GET['club_code'] ?? $_POST['club_code']);
+            if (!empty($req_code) && strtolower($req_code) !== 'all') {
+                $club_filter = 'AND c.code = ?';
+                $params[] = $req_code;
+                $types .= 's';
             }
         }
 

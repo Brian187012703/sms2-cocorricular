@@ -10,15 +10,17 @@ return new class extends Migration
     {
         if (!Schema::hasTable('students')) {
             Schema::create('students', function (Blueprint $table) {
-                $table->id();
-                $table->unsignedInteger('user_id')->nullable();
-                $table->string('student_id', 30)->unique();
-                $table->string('first_name', 50);
-                $table->string('last_name', 50);
-                $table->string('email', 100)->unique();
-                $table->string('course', 50);
-                $table->integer('year_level');
-                $table->enum('status', ['Active', 'Graduated', 'Suspended'])->default('Active');
+                $table->increments('id');
+                $table->unsignedInteger('user_id')->nullable()->index();
+                $table->string('student_number', 50)->unique();
+                $table->string('first_name', 100);
+                $table->string('last_name', 100);
+                $table->date('birthday')->nullable();
+                $table->string('course', 150);
+                $table->string('year_level', 50);
+                $table->string('section', 50)->default('');
+                $table->string('phone', 20)->default('');
+                $table->enum('status', ['Active', 'Inactive'])->default('Active');
                 $table->timestamps();
             });
         }

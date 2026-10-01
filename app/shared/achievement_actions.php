@@ -80,9 +80,9 @@ switch ($action) {
         achRespond(true, 'OK', ['pending' => $rows]);
     }
 
-    // ── SUBMIT achievement (Student / Adviser) ────────────────
+    // ── SUBMIT achievement ───────────────────────────────────
     case 'submit': {
-        if (!in_array($user_role, ['student','club_adviser'])) achRespond(false, 'Only students and advisers can submit.');
+        if (!in_array($user_role, ['student','club_adviser','ssc','admin'])) achRespond(false, 'Not authorized to submit.');
 
         $title       = trim($_POST['title']       ?? '');
         $competition = trim($_POST['competition'] ?? '');
@@ -105,14 +105,28 @@ switch ($action) {
 
         // Handle file upload
         $proof_file = null;
-        if (!empty($_FILES['proof_file']['name'])) {
+        if (!empty($_FILES['proof_file']['name']) && $_FILES['proof_file']['error'] === UPLOAD_ERR_OK) {
             $uploads_dir = __DIR__ . '/../uploads/achievements/';
             if (!is_dir($uploads_dir)) mkdir($uploads_dir, 0755, true);
             $ext  = strtolower(pathinfo($_FILES['proof_file']['name'], PATHINFO_EXTENSION));
-            $allowed = ['jpg','jpeg','png','pdf','webp'];
-            if (!in_array($ext, $allowed)) achRespond(false, 'Invalid file type. Allowed: jpg, png, pdf.');
+            $allowed_exts = ['jpg','jpeg','png','pdf','webp'];
+            if (!in_array($ext, $allowed_exts, true)) achRespond(false, 'Invalid file type. Allowed: JPG, PNG, PDF, WEBP.');
             if ($_FILES['proof_file']['size'] > 5 * 1024 * 1024) achRespond(false, 'File too large (max 5MB).');
-            $fname = 'ach_' . time() . '_' . $user_id . '.' . $ext;
+
+            $allowed_mimes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+            $mime = '';
+            if (function_exists('finfo_open')) {
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mime  = finfo_file($finfo, $_FILES['proof_file']['tmp_name']);
+                finfo_close($finfo);
+            } elseif (function_exists('mime_content_type')) {
+                $mime = mime_content_type($_FILES['proof_file']['tmp_name']);
+            }
+            if (!empty($mime) && !in_array($mime, $allowed_mimes, true)) {
+                achRespond(false, 'Invalid file content: only genuine images and PDFs are accepted.');
+            }
+
+            $fname = 'ach_' . $user_id . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
             if (!move_uploaded_file($_FILES['proof_file']['tmp_name'], $uploads_dir . $fname))
                 achRespond(false, 'File upload failed.');
             $proof_file = $fname;
@@ -177,6 +191,53 @@ switch ($action) {
         }
         log_audit($conn, $user_id, 'achievement_reject', 'achievements', $id, "Rejected #$id: $note");
         achRespond(true, 'Achievement returned for additional info.');
+    }
+
+    // ── CLARIFY achievement (SSC / Admin) ────────────────────
+    case 'clarify': {
+        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Not authorized.');
+        $id   = (int)($_POST['id']    ?? 0);
+        $note = trim($_POST['notes']  ?? '');
+        if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
+        if (empty($note)) achRespond(false, 'Please provide clarification instructions or remarks.');
+
+        $stmt = $conn->prepare("UPDATE achievements SET notes=?, verified_by=? WHERE id=?");
+        $stmt->bind_param('sii', $note, $user_id, $id);
+        if (!$stmt->execute()) achRespond(false, 'Failed to update clarification notes.');
+        $stmt->close();
+
+        $ach = $conn->query("SELECT submitted_by, title FROM achievements WHERE id=$id")->fetch_assoc();
+        if ($ach) {
+            push_notification($conn, (int)$ach['submitted_by'], 'Achievement Clarification Requested',
+                "SSC requested clarification on \"{$ach['title']}\": $note", 'warning');
+        }
+        log_audit($conn, $user_id, 'achievement_clarify', 'achievements', $id, "Clarify #$id: $note");
+        achRespond(true, 'Clarification request saved and sent to requester.');
+    }
+
+    // ── GET DETAILS (View Proof / Modal) ──────────────────────
+    case 'get_details': {
+        $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
+        if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
+
+        $stmt = $conn->prepare(
+            "SELECT a.id, a.title, a.competition, a.award_date, a.proof_file, a.status, a.notes, a.created_at,
+                    c.name AS club_name, c.code AS club_code,
+                    u.first_name AS sub_first, u.last_name AS sub_last, u.role AS sub_role,
+                    v.first_name AS ver_first, v.last_name AS ver_last, v.role AS ver_role
+             FROM achievements a
+             JOIN clubs c ON c.id = a.club_id
+             JOIN users u ON u.id = a.submitted_by
+             LEFT JOIN users v ON v.id = a.verified_by
+             WHERE a.id = ?"
+        );
+        $stmt->bind_param('i', $id);
+        $stmt->execute();
+        $ach = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if (!$ach) achRespond(false, 'Achievement not found.');
+        achRespond(true, 'OK', ['achievement' => $ach]);
     }
 
     default:

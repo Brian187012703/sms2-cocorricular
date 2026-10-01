@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -22,60 +21,51 @@ class AuthController extends Controller
             ->orWhere('email', $credentials['username'])
             ->first();
 
-        if (!$user || !Hash::check($credentials['password'], $user->password)) {
+        if (!$user || !password_verify($credentials['password'], $user->password_hash)) {
             throw ValidationException::withMessages([
                 'username' => ['The provided credentials do not match our records.'],
             ]);
         }
 
+        if (strcasecmp($user->status ?? 'Active', 'Active') !== 0) {
+            throw ValidationException::withMessages([
+                'username' => ['Your account has been deactivated. Please contact the administrator.'],
+            ]);
+        }
+
+        $user->update(['last_login' => now()]);
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
             'message' => 'Login successful',
-            'token' => $token,
-            'user' => $user,
+            'token'   => $token,
+            'user'    => $user,
         ]);
     }
 
     public function register(Request $request)
     {
-        $validated = $request->validate([
-            'username' => 'required|string|max:50|unique:users',
-            'email' => 'required|email|max:100|unique:users',
-            'first_name' => 'required|string|max:50',
-            'last_name' => 'required|string|max:50',
-            'password' => 'required|string|min:8',
-        ]);
-
-        $user = User::create([
-            'username' => $validated['username'],
-            'email' => $validated['email'],
-            'first_name' => $validated['first_name'],
-            'last_name' => $validated['last_name'],
-            'password' => Hash::make($validated['password']),
-            'role' => 'student',
-            'status' => 'Active',
-        ]);
-
-        $token = $user->createToken('auth-token')->plainTextToken;
-
         return response()->json([
-            'message' => 'Registration successful',
-            'token' => $token,
-            'user' => $user,
-        ], 201);
+            'message' => 'Public self-registration is disabled. All student and institutional accounts are pre-provisioned by the administration.',
+        ], 403);
     }
 
     public function profile(Request $request)
     {
+        $user = $request->user();
+        if ($user) {
+            $user->load('student');
+        }
         return response()->json([
-            'user' => $request->user(),
+            'user' => $user,
         ]);
     }
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        if ($request->user() && $request->user()->currentAccessToken()) {
+            $request->user()->currentAccessToken()->delete();
+        }
 
         return response()->json([
             'message' => 'Successfully logged out',

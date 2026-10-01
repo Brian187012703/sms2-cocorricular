@@ -8,12 +8,28 @@ session_start();
 
 $configFile = __DIR__ . '/db.php';
 require_once $configFile;
+require_once __DIR__ . '/org_db_manager.php';
 
 $messages = [];
 $errors   = [];
 
 $lockFile = __DIR__ . '/install.lock';
-$is_locked = file_exists($lockFile);
+$has_installed_admin = false;
+if ($db_connected && $conn) {
+    try {
+        $tblChk = $conn->query("SHOW TABLES LIKE 'users'");
+        if ($tblChk && $tblChk->num_rows > 0) {
+            $adminCheck = $conn->query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+            if ($adminCheck && $adminCheck->num_rows > 0) {
+                $has_installed_admin = true;
+            }
+        }
+    } catch (Throwable $e) {
+        $has_installed_admin = false;
+    }
+}
+// Only lock if lockfile exists AND an admin user exists in database
+$is_locked = file_exists($lockFile) && $has_installed_admin;
 $is_admin = !empty($_SESSION['user_id']) && (($_SESSION['role'] ?? '') === 'admin' || ($_SESSION['real_role'] ?? '') === 'admin');
 
 // Helper to run raw SQL safely
@@ -29,30 +45,849 @@ function executeSQLScript(mysqli $conn, string $sqlFilePath, array &$errors): bo
         return false;
     }
 
-    // Enable multi-query execution
-    if ($conn->multi_query($content)) {
-        do {
-            if ($result = $conn->store_result()) {
-                $result->free();
-            }
-        } while ($conn->more_results() && $conn->next_result());
+    // Enable multi-query execution with exception safety for PHP 8.1+
+    try {
+        if ($conn->multi_query($content)) {
+            do {
+                if ($result = $conn->store_result()) {
+                    $result->free();
+                }
+            } while ($conn->more_results() && $conn->next_result());
 
-        if ($conn->errno) {
-            $errors[] = "Error executing $sqlFilePath: " . $conn->error;
+            if ($conn->errno) {
+                $errors[] = "Error executing $sqlFilePath: " . $conn->error;
+                return false;
+            }
+            return true;
+        } else {
+            $errors[] = "Multi-query failed for $sqlFilePath: " . $conn->error;
             return false;
         }
-        return true;
-    } else {
-        $errors[] = "Multi-query failed for $sqlFilePath: " . $conn->error;
+    } catch (Throwable $e) {
+        $errors[] = "Database execution error in $sqlFilePath: " . $e->getMessage();
         return false;
     }
 }
 
+// Passwords configurable via environment variables with default fallback
+$admin_plain = getenv('ADMIN_DEFAULT_PASSWORD') ?: ($_ENV['ADMIN_DEFAULT_PASSWORD'] ?? 'Bcp@Admin2026!');
+$ssc_plain   = getenv('SSC_DEFAULT_PASSWORD')   ?: ($_ENV['SSC_DEFAULT_PASSWORD']   ?? 'Bcp@SSC2026!');
+$std_plain   = getenv('STUDENT_DEFAULT_PASSWORD')?: ($_ENV['STUDENT_DEFAULT_PASSWORD'] ?? 'Bcp@Test2026!');
+$adv_plain   = getenv('ADVISER_DEFAULT_PASSWORD')?: ($_ENV['ADVISER_DEFAULT_PASSWORD'] ?? 'Bcp@Adviser2026!');
+
+// Helper: Seed Official System Accounts & Accredited Clubs from SYSTEM_ACCOUNTS.md
+function seedSystemAccountsAndClubs(mysqli $conn, array &$messages, array &$errors): bool {
+    global $admin_plain, $ssc_plain, $std_plain, $adv_plain;
+    $admin_plain = $admin_plain ?? (getenv('ADMIN_DEFAULT_PASSWORD') ?: ($_ENV['ADMIN_DEFAULT_PASSWORD'] ?? 'Bcp@Admin2026!'));
+    $ssc_plain   = $ssc_plain   ?? (getenv('SSC_DEFAULT_PASSWORD')   ?: ($_ENV['SSC_DEFAULT_PASSWORD']   ?? 'Bcp@SSC2026!'));
+    $std_plain   = $std_plain   ?? (getenv('STUDENT_DEFAULT_PASSWORD')?: ($_ENV['STUDENT_DEFAULT_PASSWORD'] ?? 'Bcp@Test2026!'));
+    $adv_plain   = $adv_plain   ?? (getenv('ADVISER_DEFAULT_PASSWORD')?: ($_ENV['ADVISER_DEFAULT_PASSWORD'] ?? 'Bcp@Adviser2026!'));
+
+    // Remove legacy generic testing accounts
+    $conn->query("DELETE FROM users WHERE username IN ('student', 'adviser', 'ssc', 'admin')");
+
+    // Password hashes based on configurable environment values or defaults
+    $admin_hash = password_hash($admin_plain, PASSWORD_DEFAULT);
+    $ssc_hash   = password_hash($ssc_plain,   PASSWORD_DEFAULT);
+    $std_hash   = password_hash($std_plain,   PASSWORD_DEFAULT);
+    $adv_hash   = password_hash($adv_plain,   PASSWORD_DEFAULT);
+
+    // 1. Central Admin & SSC
+    $admins = [
+        ['scc.admin',   'admin@bcp.edu.ph', 'System', 'Admin',   $admin_hash, 'admin'],
+        ['ssc.officer', 'ssc@bcp.edu.ph',   'SSC',    'Officer', $ssc_hash,   'ssc']
+    ];
+    $u_stmt = $conn->prepare("INSERT INTO users (username, email, first_name, last_name, password_hash, role) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE first_name=VALUES(first_name), last_name=VALUES(last_name), password_hash=VALUES(password_hash), role=VALUES(role)");
+    foreach ($admins as $adm) {
+        $u_stmt->bind_param('ssssss', $adm[0], $adm[1], $adm[2], $adm[3], $adm[4], $adm[5]);
+        $u_stmt->execute();
+    }
+
+    // 2. 16 Official Program Students
+    $students_list = [
+        ['2024-10001', 'Bachelor of Science in Information Technology', 'Juan', 'Santos', 'bsit.student', 'bsit@student.bcp.edu.ph', '2nd Year', 'IT-2A'],
+        ['2024-10002', 'Bachelor of Science in Hospitality Management', 'Maria', 'Cruz', 'bshm.student', 'bshm@student.bcp.edu.ph', '1st Year', 'HM-1B'],
+        ['2024-10003', 'Bachelor of Science in Accounting Information System', 'Jose', 'Reyes', 'bsais.student', 'bsais@student.bcp.edu.ph', '3rd Year', 'AIS-3A'],
+        ['2024-10004', 'Bachelor of Science in Tourism Management', 'Ana', 'Dela Cruz', 'bstm.student', 'bstm@student.bcp.edu.ph', '2nd Year', 'TM-2C'],
+        ['2024-10005', 'Bachelor of Science in Office Administration', 'Carlos', 'Garcia', 'bsoa.student', 'bsoa@student.bcp.edu.ph', '1st Year', 'OA-1A'],
+        ['2024-10006', 'Bachelor of Science in Entrepreneurship', 'Liza', 'Ramos', 'bse.student', 'bse@student.bcp.edu.ph', '3rd Year', 'ENT-3B'],
+        ['2024-10007', 'Bachelor of Science in Business Administration', 'Ramon', 'Villanueva', 'bsba.student', 'bsba@student.bcp.edu.ph', '2nd Year', 'BA-2A'],
+        ['2024-10008', 'Bachelor of Science in Information Science', 'Patricia', 'Aquino', 'bsis.student', 'bsis@student.bcp.edu.ph', '1st Year', 'IS-1A'],
+        ['2024-10009', 'Bachelor of Science in Computer Engineering', 'Mark', 'Bautista', 'bscpe.student', 'bscpe@student.bcp.edu.ph', '3rd Year', 'CPE-3A'],
+        ['2024-10010', 'Bachelor of Science in Psychology', 'Jenny', 'Navarro', 'bspsych.student', 'bspsych@student.bcp.edu.ph', '2nd Year', 'PSY-2B'],
+        ['2024-10011', 'Bachelor of Science in Criminology', 'Rico', 'Fernandez', 'bscrim.student', 'bscrim@student.bcp.edu.ph', '4th Year', 'CRIM-4A'],
+        ['2024-10012', 'Bachelor of Science in Physical Education', 'Sheila', 'Santos', 'bspe.student', 'bspe@student.bcp.edu.ph', '2nd Year', 'PE-2A'],
+        ['2024-10013', 'Technological and Livelihood Education', 'Angelo', 'Torres', 'tle.student', 'tle@student.bcp.edu.ph', '1st Year', 'TLE-1B'],
+        ['2024-10014', 'Bachelor of Science in Elementary Education', 'Claire', 'Mendoza', 'bseled.student', 'bseled@student.bcp.edu.ph', '3rd Year', 'ELED-3A'],
+        ['2024-10015', 'Bachelor of Science in Secondary Education', 'Danilo', 'Pascual', 'bsseed.student', 'bsseed@student.bcp.edu.ph', '2nd Year', 'SEED-2C'],
+        ['2024-10016', 'Bachelor of Science in Library Information Science', 'Rowena', 'Espinosa', 'bslis.student', 'bslis@student.bcp.edu.ph', '3rd Year', 'LIS-3A']
+    ];
+
+    $role_student = 'student';
+    foreach ($students_list as [$sno, $course, $fn, $ln, $un, $em, $yr, $sec]) {
+        $u_stmt->bind_param('ssssss', $un, $em, $fn, $ln, $std_hash, $role_student);
+        $u_stmt->execute();
+
+        $uidRes = $conn->query("SELECT id FROM users WHERE username = '{$un}' LIMIT 1");
+        $userId = ($uidRes && $row = $uidRes->fetch_assoc()) ? (int)$row['id'] : null;
+
+        // Sync student profile
+        $chk = $conn->query("SELECT id FROM students WHERE student_number = '{$sno}' LIMIT 1");
+        if ($chk && $chk->num_rows > 0) {
+            $sRow = $chk->fetch_assoc();
+            $conn->query("UPDATE students SET user_id = {$userId}, first_name = '" . $conn->real_escape_string($fn) . "', last_name = '" . $conn->real_escape_string($ln) . "', course = '" . $conn->real_escape_string($course) . "', year_level = '" . $conn->real_escape_string($yr) . "', section = '" . $conn->real_escape_string($sec) . "' WHERE id = {$sRow['id']}");
+        } else {
+            $conn->query("INSERT INTO students (user_id, student_number, first_name, last_name, birthday, course, year_level, section, phone, status) VALUES ({$userId}, '{$sno}', '" . $conn->real_escape_string($fn) . "', '" . $conn->real_escape_string($ln) . "', '2004-01-01', '" . $conn->real_escape_string($course) . "', '" . $conn->real_escape_string($yr) . "', '" . $conn->real_escape_string($sec) . "', '09123456789', 'Active')");
+        }
+    }
+
+    // 3. 40 Official Faculty Advisers & Clubs
+    $advisers_list = [
+        ['cssec.adviser',    'cssec@adviser.bcp.edu.ph',    'Alex',   'Reyes',   'CSSEC',   'Computer Science Student Exec Council', 'Academic', 'BSCS'],
+        ['acads.adviser',    'acads@adviser.bcp.edu.ph',    'Mark',   'Velo',    'ACADS',   'Association of Computer Eng Driven Students', 'Academic', 'BSCpE'],
+        ['aces.adviser',     'aces@adviser.bcp.edu.ph',     'Elena',  'Ramos',   'ACES',    'Association of Computer Engineering Students', 'Academic', 'BSCpE'],
+        ['aiss.adviser',     'aiss@adviser.bcp.edu.ph',     'Clara',  'Tan',     'AISS',    'Accounting Info System Society', 'Academic', 'BSAIS'],
+        ['bliss.adviser',    'bliss@adviser.bcp.edu.ph',    'Robert', 'Cruz',    'BLISS',   'Bestlink Library & Info Science Society', 'Academic', 'BLIS'],
+        ['brave.adviser',    'brave@adviser.bcp.edu.ph',    'Diana',  'Gomez',   'BRAVE',   'Values Education & Accountability Org', 'Academic', 'BSEd'],
+        ['cjsu.adviser',     'cjsu@adviser.bcp.edu.ph',     'Jose',   'Mercado', 'CJSU',    'Criminal Justice Student Unit', 'Academic', 'BSCrim'],
+        ['eyo.adviser',      'eyo@adviser.bcp.edu.ph',      'Lisa',   'Santos',  'EYO',     'Entrepreyouth Organization', 'Academic', 'BSBA'],
+        ['galaw.adviser',    'galaw@adviser.bcp.edu.ph',    'Manuel', 'Cruz',    'G.A.L.A.W', 'Athletes & Leaders Wellness Assoc', 'Sports', 'Institutional'],
+        ['gems.adviser',     'gems@adviser.bcp.edu.ph',     'Anna',   'Reyes',   'GEMs',    'Guild of English Majors', 'Academic', 'BSEd'],
+        ['gold.adviser',     'gold@adviser.bcp.edu.ph',     'Karen',  'Lim',     'GOLD',    'Guild of Officers to Lead Development', 'Academic', 'Institutional'],
+        ['jfinex.adviser',   'jfinex@adviser.bcp.edu.ph',   'Manuel', 'Cruz',    'JFINEX',  'Junior Financial Executives', 'Academic', 'BSBA'],
+        ['hrs.adviser',      'hrs@adviser.bcp.edu.ph',      'Alex',   'Reyes',   'HRS',     'Human Resources Society', 'Academic', 'BSBA'],
+        ['jma.adviser',      'jma@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'J.M.A',   'Junior Marketing Association', 'Academic', 'BSBA'],
+        ['lakas.adviser',    'lakas@adviser.bcp.edu.ph',    'Clara',  'Tan',     'LAKAS',   'Liga ng Aktibong Kabataan sa Araling Panlipunan', 'Academic', 'BSEd'],
+        ['lapis.adviser',    'lapis@adviser.bcp.edu.ph',    'Diana',  'Gomez',   'L.A.P.I.S', 'Leadership Assoc Program & Services', 'Advocacy', 'Institutional'],
+        ['libro.adviser',    'libro@adviser.bcp.edu.ph',    'Robert', 'Cruz',    'LIBRO',   'Lucid of Bright & Righteous Officers', 'Advocacy', 'BLIS'],
+        ['omega.adviser',    'omega@adviser.bcp.edu.ph',    'Jose',   'Mercado', 'OMEGA',   'Org for Mathematics in Engineering', 'Academic', 'BSCpE'],
+        ['psychsoc.adviser', 'psychsoc@adviser.bcp.edu.ph', 'Lisa',   'Santos',  'PsychSoc','Psychology Society', 'Academic', 'BSPsych'],
+        ['rsd.adviser',      'rsd@adviser.bcp.edu.ph',      'Anna',   'Reyes',   'RSD',     'Regnum Scientiae Discipulus', 'Academic', 'Institutional'],
+        ['sigma.adviser',    'sigma@adviser.bcp.edu.ph',    'Karen',  'Lim',     'SIGMA',   'Guild for Mathematics Majors', 'Academic', 'BSEd'],
+        ['techs.adviser',    'techs@adviser.bcp.edu.ph',    'Alex',   'Reyes',   'TECHs',   'Tech, Exploratory & Hospitality Skills', 'Academic', 'BSHM'],
+        ['tts.adviser',      'tts@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'TTS',     'Tourism Student Society', 'Academic', 'BSTM'],
+        ['wika.adviser',     'wika@adviser.bcp.edu.ph',     'Clara',  'Tan',     'WIKA',    'Wikang Filipino sa Akademya', 'Cultural', 'BSEd'],
+        ['acac.adviser',     'acac@adviser.bcp.edu.ph',     'Sarah',  'Mercado', 'ACAC',    'Association of Cultural Art Club', 'Cultural', 'Institutional'],
+        ['cesc.adviser',     'cesc@adviser.bcp.edu.ph',     'Mark',   'Velo',    'CESC',    'Computer Engineering Sports Club', 'Sports', 'BSCpE'],
+        ['ebcpct.adviser',   'ebcpct@adviser.bcp.edu.ph',   'Mark',   'Velo',    'EBCPCT',  'Elite BCP Chess Team', 'Sports', 'Institutional'],
+        ['rcyc.adviser',     'rcyc@adviser.bcp.edu.ph',     'Elena',  'Cruz',    'RCYC-BCP','Red Cross Youth Council - BCP', 'Advocacy', 'Institutional'],
+        ['smc.adviser',      'smc@adviser.bcp.edu.ph',      'Mark',   'Velo',    'SMC',     'Shuttle Master Club', 'Sports', 'Institutional'],
+        ['allstar.adviser',  'allstar@adviser.bcp.edu.ph',  'Sarah',  'Mercado', 'ALL STAR','All Star Talent Group', 'Cultural', 'Institutional'],
+        ['bforce.adviser',   'bforce@adviser.bcp.edu.ph',   'Sarah',  'Mercado', 'B-FORCE', 'B-Force Hip-Hop Crew', 'Cultural', 'Institutional'],
+        ['creative.adviser', 'creative@adviser.bcp.edu.ph', 'Sarah',  'Mercado', 'CREATIVE','Creative Arts Group', 'Cultural', 'Institutional'],
+        ['cdc.adviser',      'cdc@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'CDC',     'Criminology Dance Company', 'Cultural', 'BSCrim'],
+        ['dlc.adviser',      'dlc@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'DLC',     'Drum and Lyre Corporation', 'Cultural', 'Institutional'],
+        ['ikatlong.adviser', 'ikatlong@adviser.bcp.edu.ph', 'Sarah',  'Mercado', 'IKATLONG','Ikatlong Lahi Royalties', 'Cultural', 'Institutional'],
+        ['image.adviser',    'image@adviser.bcp.edu.ph',    'Sarah',  'Mercado', 'IMAGE',   'Image Alchemy Media Crew', 'Cultural', 'Institutional'],
+        ['sikat.adviser',    'sikat@adviser.bcp.edu.ph',    'Sarah',  'Mercado', 'S.I.K.A.T','Theater & Acting Group', 'Cultural', 'Institutional'],
+        ['uv.adviser',       'uv@adviser.bcp.edu.ph',       'Sarah',  'Mercado', 'UV',      'Unlimited Voice Choir', 'Cultural', 'Institutional'],
+        ['peer.adviser',     'peer@adviser.bcp.edu.ph',     'Elena',  'Cruz',    'PEER',    'Peer Counselor Support Group', 'Advocacy', 'Institutional'],
+        ['newslink.adviser', 'newslink@adviser.bcp.edu.ph', 'Elena',  'Cruz',    'NEWSLINK','School Publications', 'Advocacy', 'Institutional']
+    ];
+
+    $role_adviser = 'club_adviser';
+    $c_stmt = $conn->prepare("INSERT INTO clubs (code, name, category, description, adviser_name, status, program) VALUES (?, ?, ?, ?, ?, 'Active', ?) ON DUPLICATE KEY UPDATE name=VALUES(name), adviser_name=VALUES(adviser_name), status='Active', program=VALUES(program)");
+
+    foreach ($advisers_list as [$un, $em, $fn, $ln, $code, $cname, $cat, $prog]) {
+        $u_stmt->bind_param('ssssss', $un, $em, $fn, $ln, $adv_hash, $role_adviser);
+        $u_stmt->execute();
+
+        $advFullName = "Prof. {$fn} {$ln}";
+        $desc = "Official accredited campus student organization for {$cname}.";
+        $c_stmt->bind_param('ssssss', $code, $cname, $cat, $desc, $advFullName, $prog);
+        $c_stmt->execute();
+    }
+
+    $u_stmt->close();
+    $c_stmt->close();
+
+    // Link faculty advisers to their accredited clubs in club_memberships
+    $conn->query("
+        INSERT INTO club_memberships (club_id, user_id, role, status)
+        SELECT c.id, u.id, 'Adviser', 'Active'
+        FROM users u
+        JOIN clubs c ON (
+          UPPER(SUBSTRING_INDEX(u.username, '.', 1)) = UPPER(c.code)
+          OR UPPER(SUBSTRING_INDEX(u.username, '.', 1)) = UPPER(REPLACE(c.code, '-', ''))
+          OR UPPER(SUBSTRING_INDEX(u.username, '.', 1)) = UPPER(REPLACE(c.code, '.', ''))
+          OR UPPER(SUBSTRING_INDEX(u.username, '.', 1)) = UPPER(REPLACE(c.code, ' ', ''))
+          OR UPPER(SUBSTRING_INDEX(u.username, '.', 1)) = UPPER(REPLACE(REPLACE(c.code, '.', ''), '-', ''))
+          OR (u.username = 'rcyc.adviser' AND c.code = 'RCYC-BCP')
+        )
+    ");
+    // Ensure adviser_user_id column exists in clubs and populate it
+    $chkCol = $conn->query("SHOW COLUMNS FROM clubs LIKE 'adviser_user_id'");
+    if (!$chkCol || $chkCol->num_rows === 0) {
+        $conn->query("ALTER TABLE clubs ADD COLUMN adviser_user_id INT(10) UNSIGNED NULL AFTER adviser_name");
+    }
+    $conn->query("
+        UPDATE clubs c
+        JOIN club_memberships cm ON cm.club_id = c.id AND (cm.role = 'Adviser' OR cm.role = 'Club Adviser') AND cm.status = 'Active'
+        SET c.adviser_user_id = cm.user_id
+        WHERE c.adviser_user_id IS NULL
+    ");
+
+    $messages[] = "✨ Official system accounts (Admin, SSC, 16 Program Students, and 40 Faculty Advisers) successfully seeded from SYSTEM_ACCOUNTS.md!";
+    return true;
+}
+
+
+// Helper: Automatically Patch and Synchronize System Database Schemas
+function patchSystemDatabaseSchemas(mysqli $conn, array &$messages, array &$errors): bool {
+    // 0. Users Core Identity & Security Columns
+    $user_cols = [
+        'status'               => "ENUM('Active', 'Inactive') NOT NULL DEFAULT 'Active' AFTER `role`",
+        'last_login'           => "DATETIME NULL DEFAULT NULL AFTER `profile_pic`",
+        'last_password_change' => "DATETIME NULL DEFAULT NULL AFTER `last_login`",
+        'last_mfa_verified_at' => "DATETIME NULL DEFAULT NULL AFTER `last_password_change`"
+    ];
+    foreach ($user_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `users` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `users` ADD COLUMN `$col` $def");
+        }
+    }
+
+    // 1. RBAC Tables
+    $rbacSql = dirname(__DIR__, 2) . '/database/modules/12_rbac_and_master_data.sql';
+    if (file_exists($rbacSql)) {
+        $chkRoles = $conn->query("SHOW TABLES LIKE 'roles'");
+        if (!$chkRoles || $chkRoles->num_rows === 0) {
+            executeSQLScript($conn, $rbacSql, $errors);
+        }
+    }
+    $chkUserRoles = $conn->query("SHOW TABLES LIKE 'user_roles'");
+    if (!$chkUserRoles || $chkUserRoles->num_rows === 0) {
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS `user_roles` (
+              `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+              `user_id` INT(10) UNSIGNED NOT NULL,
+              `role_id` INT(10) UNSIGNED NOT NULL,
+              `assigned_by` INT(10) UNSIGNED DEFAULT NULL,
+              `assigned_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `uq_user_role` (`user_id`, `role_id`),
+              KEY `idx_ur_user` (`user_id`),
+              KEY `idx_ur_role` (`role_id`),
+              CONSTRAINT `fk_ur_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+              CONSTRAINT `fk_ur_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $conn->query("
+            INSERT INTO `user_roles` (`user_id`, `role_id`)
+            SELECT u.id, r.id 
+            FROM `users` u
+            JOIN `roles` r ON r.name = u.role
+            ON DUPLICATE KEY UPDATE `role_id`=`role_id`
+        ");
+    }
+
+
+    // 2. Budget Requests Workflow Columns
+    $budget_cols = [
+        'line_items'             => "JSON DEFAULT NULL AFTER description",
+        'recommended_amount'     => "DECIMAL(10,2) DEFAULT NULL AFTER amount",
+        'final_approved_amount'  => "DECIMAL(10,2) DEFAULT NULL AFTER recommended_amount",
+        'disbursed_at'           => "TIMESTAMP NULL DEFAULT NULL AFTER notes",
+        'disbursement_reference' => "VARCHAR(100) DEFAULT NULL AFTER disbursed_at",
+        'disbursed_by'           => "INT(10) UNSIGNED DEFAULT NULL AFTER disbursement_reference"
+    ];
+    foreach ($budget_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `budget_requests` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `budget_requests` ADD COLUMN `$col` $def");
+        }
+    }
+    // Update budget_requests status enum
+    $conn->query("ALTER TABLE `budget_requests` MODIFY COLUMN `status` ENUM('Pending Adviser', 'Pending SSC', 'Pending Admin', 'Approved', 'Disbursed', 'Rejected', 'Returned') NOT NULL DEFAULT 'Pending Adviser'");
+
+    // 3. Events Workflow Columns
+    $event_cols = [
+        'event_type'         => "ENUM('Club', 'Institutional') NOT NULL DEFAULT 'Club' AFTER club_id",
+        'expected_attendees' => "INT(10) UNSIGNED DEFAULT 0 AFTER venue",
+        'attachment'         => "VARCHAR(255) DEFAULT NULL AFTER expected_attendees",
+        'endorsement_notes'  => "TEXT DEFAULT NULL AFTER created_by",
+        'rejection_note'     => "TEXT DEFAULT NULL AFTER endorsement_notes"
+    ];
+    foreach ($event_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `events` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `events` ADD COLUMN `$col` $def");
+        }
+    }
+    // Update events status enum
+    $conn->query("ALTER TABLE `events` MODIFY COLUMN `status` ENUM('Upcoming', 'Approved', 'Completed', 'Pending SSC', 'Pending Admin', 'Returned', 'Rejected') NOT NULL DEFAULT 'Pending SSC'");
+
+    // 4. Club Memberships Workflow Columns
+    $cm_cols = [
+        'adviser_review' => "VARCHAR(50) NOT NULL DEFAULT 'Pending Adviser' AFTER letter_endorsement",
+        'ssc_review'     => "VARCHAR(50) NOT NULL DEFAULT 'Pending SSC' AFTER adviser_review",
+        'review_notes'   => "TEXT DEFAULT NULL AFTER ssc_review"
+    ];
+    foreach ($cm_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `club_memberships` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `club_memberships` ADD COLUMN `$col` $def");
+        }
+    }
+    // Update club_memberships status enum
+    $conn->query("ALTER TABLE `club_memberships` MODIFY COLUMN `status` ENUM('Active', 'Pending', 'Rejected', 'Returned') NOT NULL DEFAULT 'Pending'");
+
+    // 4b. Club Applications Workflow Columns
+    $ca_cols = [
+        'student_id_no'      => "VARCHAR(50) DEFAULT NULL AFTER last_name",
+        'course'             => "VARCHAR(150) DEFAULT NULL AFTER student_id_no",
+        'year_level'         => "VARCHAR(50) DEFAULT NULL AFTER course",
+        'phone'              => "VARCHAR(50) DEFAULT NULL AFTER email",
+        'sex'                => "VARCHAR(20) DEFAULT NULL AFTER phone",
+        'dob'                => "DATE DEFAULT NULL AFTER sex",
+        'address'            => "TEXT DEFAULT NULL AFTER dob",
+        'motivation'         => "TEXT DEFAULT NULL AFTER address",
+        'letter_intent'      => "VARCHAR(255) DEFAULT NULL AFTER motivation",
+        'letter_endorsement' => "VARCHAR(255) DEFAULT NULL AFTER letter_intent",
+        'rejection_reason'   => "TEXT DEFAULT NULL AFTER status",
+        'adviser_status'     => "ENUM('Pending', 'Endorsed', 'Rejected') DEFAULT 'Pending' AFTER rejection_reason",
+        'ssc_status'         => "ENUM('Pending', 'Approved', 'Rejected') DEFAULT 'Pending' AFTER adviser_status",
+        'adviser_review'     => "VARCHAR(50) DEFAULT 'Pending Adviser' AFTER ssc_status",
+        'ssc_review'         => "VARCHAR(50) DEFAULT 'Pending SSC' AFTER adviser_review",
+        'review_notes'       => "TEXT DEFAULT NULL AFTER ssc_review",
+        'adviser_reviewed_at'=> "DATETIME DEFAULT NULL AFTER reviewed_at",
+        'ssc_reviewed_at'    => "DATETIME DEFAULT NULL AFTER adviser_reviewed_at"
+    ];
+    foreach ($ca_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `club_applications` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `club_applications` ADD COLUMN `$col` $def");
+        }
+    }
+
+    // 5. Attendance Logs Columns & Key Adjustments
+    $conn->query("ALTER TABLE `attendance_logs` MODIFY COLUMN `user_id` INT(10) UNSIGNED DEFAULT NULL");
+    $chkIdx = $conn->query("SHOW INDEX FROM `attendance_logs` WHERE Key_name = 'uq_event_user'");
+    if ($chkIdx && $chkIdx->num_rows > 0) {
+        $conn->query("ALTER TABLE `attendance_logs` DROP INDEX `uq_event_user`");
+        $conn->query("ALTER TABLE `attendance_logs` ADD KEY `idx_event_user` (`event_id`, `user_id`)");
+    }
+
+    $att_cols = [
+        'override_reason' => "TEXT DEFAULT NULL AFTER logged_by",
+        'status'          => "VARCHAR(50) NOT NULL DEFAULT 'Valid' AFTER override_reason"
+    ];
+    foreach ($att_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `attendance_logs` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `attendance_logs` ADD COLUMN `$col` $def");
+        }
+    }
+
+    // 6. Security Monitoring & Audit Trail Columns
+    try {
+        $conn->query("ALTER TABLE `audit_logs` DROP FOREIGN KEY `fk_audit_user`");
+    } catch (Throwable $e) {}
+    $conn->query("ALTER TABLE `audit_logs` MODIFY COLUMN `user_id` INT(10) UNSIGNED DEFAULT NULL");
+    try {
+        $conn->query("ALTER TABLE `audit_logs` ADD CONSTRAINT `fk_audit_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL");
+    } catch (Throwable $e) {}
+
+    $audit_cols = [
+        'user_display'      => "VARCHAR(150) DEFAULT NULL AFTER `user_id`",
+        'severity'          => "ENUM('info', 'warning', 'critical') NOT NULL DEFAULT 'info' AFTER `detail`",
+        'resolution_status' => "ENUM('unresolved', 'investigating', 'resolved') NOT NULL DEFAULT 'unresolved' AFTER `severity`",
+        'resolved_by'       => "INT(10) UNSIGNED DEFAULT NULL AFTER `resolution_status`",
+        'resolution_notes'  => "TEXT DEFAULT NULL AFTER `resolved_by`",
+        'resolved_at'       => "TIMESTAMP NULL DEFAULT NULL AFTER `resolution_notes`"
+    ];
+    foreach ($audit_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `audit_logs` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `audit_logs` ADD COLUMN `$col` $def");
+        }
+    }
+
+    // 6b. Notifications Columns
+    $notif_cols = [
+        'priority'       => "ENUM('Normal', 'Important', 'Urgent') DEFAULT 'Normal' AFTER `type`",
+        'reference_type' => "VARCHAR(100) NULL AFTER `priority`",
+        'reference_id'   => "INT(10) UNSIGNED NULL AFTER `reference_type`",
+        'link'           => "VARCHAR(255) NULL AFTER `reference_id`"
+    ];
+    foreach ($notif_cols as $col => $def) {
+        $chk = $conn->query("SHOW COLUMNS FROM `notifications` LIKE '$col'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `notifications` ADD COLUMN `$col` $def");
+        }
+    }
+
+    // 7. System Settings Master Table & Defaults
+    $conn->query("CREATE TABLE IF NOT EXISTS system_settings (
+        setting_key VARCHAR(100) NOT NULL PRIMARY KEY,
+        setting_value TEXT DEFAULT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $default_settings = [
+        'academic_year'                 => '2025-2026',
+        'active_semester'               => '1st Semester',
+        'org_categories'                => "Academic\nAdvocacy\nCultural\nSports\nSpecial Interest\nReligious\nCommunity Outreach",
+        'allowed_org_types'             => "Departmental Council\nInstitutional Club\nFraternity / Sorority\nSpecial Interest Guild\nStudent Publication\nHonor Society\nSports Varsity Club",
+        'notification_templates'        => "Event Approval Notice\nBudget Disbursement Notice\nCouncil Endorsement Notice\nAccount Credentials Reset\nCharter Accreditation Update\nAttendance Check-in Alert",
+        'notification_default_priority' => 'Normal',
+        'notification_retention_days'   => '90 Days',
+        'ai_provider'                   => 'Google Gemini',
+        'ai_model'                      => 'gemini-2.0-flash',
+        'mfa_enabled'                   => '1',
+        'mfa_expiry_minutes'            => '10',
+        'mfa_resend_cooldown'           => '60',
+        'mfa_allow_dev_preview'         => '1',
+        'smtp_host'                     => '',
+        'smtp_port'                     => '587',
+        'smtp_user'                     => '',
+        'smtp_pass'                     => '',
+        'smtp_crypto'                   => 'tls',
+        'mail_from_name'                => 'BCP Co-Curricular Management System',
+        'mail_from_email'               => 'no-reply@bcp.edu.ph'
+    ];
+    $s_stmt = $conn->prepare("INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES (?, ?)");
+    if ($s_stmt) {
+        foreach ($default_settings as $sk => $sv) {
+            $s_stmt->bind_param('ss', $sk, $sv);
+            $s_stmt->execute();
+        }
+        $s_stmt->close();
+    }
+
+    // 8. Clubs adviser_user_id (Section 5.4 & 20.1)
+    $colChk = $conn->query("SHOW COLUMNS FROM clubs LIKE 'adviser_user_id'");
+    if ($colChk && $colChk->num_rows === 0) {
+        $conn->query("ALTER TABLE clubs ADD COLUMN adviser_user_id INT UNSIGNED NULL AFTER description");
+        $conn->query("ALTER TABLE clubs ADD INDEX idx_clubs_adviser_user_id (adviser_user_id)");
+    }
+    // Link clubs to official Faculty Advisers
+    $conn->query("
+        UPDATE clubs c
+        JOIN users u ON (
+            u.role = 'club_adviser' AND (
+                u.username = CONCAT(LOWER(REPLACE(REPLACE(REPLACE(c.code, '.', ''), '-', ''), ' ', '')), '.adviser')
+                OR u.username = CONCAT(LOWER(c.code), '.adviser')
+            )
+        )
+        SET c.adviser_user_id = u.id
+        WHERE c.adviser_user_id IS NULL
+    ");
+
+    // 9. Attendance Scan Attempts Table (Section 10.1 & 20.2)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `attendance_scan_attempts` (
+          `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+          `event_id` INT UNSIGNED NULL,
+          `user_id` INT UNSIGNED NULL,
+          `scanner_id` INT UNSIGNED NULL,
+          `token_hash` VARCHAR(255) NULL,
+          `result` VARCHAR(50) NOT NULL,
+          `reason` VARCHAR(255) NULL,
+          `scanned_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          INDEX `idx_scan_event` (`event_id`),
+          INDEX `idx_scan_user` (`user_id`),
+          INDEX `idx_scan_scanner` (`scanner_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // 9b. QR Sessions Table (Dynamic token rotation and session control)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `qr_sessions` (
+          `id` INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+          `event_id` INT UNSIGNED NOT NULL,
+          `created_by` INT UNSIGNED NOT NULL,
+          `current_token` VARCHAR(64) NOT NULL,
+          `token_seed` VARCHAR(64) NULL,
+          `status` ENUM('active', 'paused', 'closed', 'terminated') NOT NULL DEFAULT 'active',
+          `refresh_seconds` INT UNSIGNED NOT NULL DEFAULT 60,
+          `late_after_minutes` INT UNSIGNED NOT NULL DEFAULT 15,
+          `opened_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          `expires_at` DATETIME NULL,
+          `closed_at` DATETIME NULL,
+          `closed_by` INT UNSIGNED NULL,
+          `close_reason` VARCHAR(255) NULL,
+          `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX `idx_qrs_event` (`event_id`),
+          INDEX `idx_qrs_status` (`status`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // 10. Workflow History Table (Section 14.2 & 20.3)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `workflow_history` (
+          `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
+          `module` VARCHAR(80) NOT NULL,
+          `record_id` BIGINT NOT NULL,
+          `from_status` VARCHAR(50) NULL,
+          `to_status` VARCHAR(50) NOT NULL,
+          `action` VARCHAR(80) NOT NULL,
+          `performed_by` INT UNSIGNED NULL,
+          `remarks` TEXT NULL,
+          `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          INDEX `idx_workflow_record` (`module`, `record_id`),
+          INDEX `idx_workflow_user` (`performed_by`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // 11. Election Voters Table (Section 11.1)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `election_voters` (
+          `id` INT AUTO_INCREMENT PRIMARY KEY,
+          `election_id` INT NOT NULL,
+          `user_id` INT NOT NULL,
+          `eligibility_status` VARCHAR(50) DEFAULT 'eligible',
+          `voted_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY `uq_election_voter` (`election_id`, `user_id`),
+          INDEX `idx_ev_election` (`election_id`),
+          INDEX `idx_ev_user` (`user_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    // 12. MFA Verification Codes Table (Multi-Factor Authentication & OTPs)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `mfa_codes` (
+          `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+          `user_id` INT(10) UNSIGNED NOT NULL,
+          `email` VARCHAR(150) NOT NULL,
+          `code` VARCHAR(10) NOT NULL,
+          `purpose` ENUM('login', 'password_reset', 'account_update') NOT NULL DEFAULT 'login',
+          `expires_at` DATETIME NOT NULL,
+          `is_used` TINYINT(1) NOT NULL DEFAULT 0,
+          `attempts` INT NOT NULL DEFAULT 0,
+          `max_attempts` INT NOT NULL DEFAULT 5,
+          `ip_address` VARCHAR(45) NULL,
+          `user_agent` VARCHAR(255) NULL,
+          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          KEY `idx_mfa_user_purpose` (`user_id`, `purpose`, `is_used`, `expires_at`),
+          KEY `idx_mfa_code` (`code`),
+          CONSTRAINT `fk_mfa_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $messages[] = "🛠️ Database schemas and multi-stage workflow columns successfully verified and synchronized!";
+    return true;
+}
+
+// Helper: Seed Live System Data Across All Modules (Elections, Budgets, Events, QR Usages, Achievements, Officers)
+function seedLiveSystemData(mysqli $conn, array &$messages, array &$errors): bool {
+    // 1. Ensure schemas are up to date
+    patchSystemDatabaseSchemas($conn, $messages, $errors);
+
+    // 2. Ensure clubs sub_category and comprehensive descriptions
+    $clubs_data = [
+        ['CSSEC', 'Academic', 'CS & IT', 'Official executive council of Computer Science and IT students, fostering technical skills, collaborative software engineering, open-source innovation, and industry competitive programming.'],
+        ['ACADS', 'Academic', 'Computer Engineering', 'Association dedicated to academic rigor and engineering excellence through peer tutorials, embedded system research, circuit design workshops, and regional technical competitions.'],
+        ['ACES', 'Academic', 'Computer Engineering', 'Professional student chapter promoting hardware innovation, robotics, networking infrastructure, and industry certifications for computer engineering students.'],
+        ['AISS', 'Academic', 'Accounting & Finance', 'Advances accounting information literacy, enterprise resource planning, and financial technology integration across academic and commercial business applications.'],
+        ['BLISS', 'Academic', 'Library & Information Science', 'Fosters modern digital library science, information curation, scholarly database research, and knowledge preservation across BCP faculties.'],
+        ['BRAVE', 'Academic', 'Education & Values', 'Champions ethics, character formation, civic responsibility, and values-centered pedagogy among future educators and campus leaders.'],
+        ['CJSU', 'Academic', 'Criminal Justice', 'Strengthens criminology students through criminalistics workshops, tactical drills, moot court trials, and community law enforcement partnerships.'],
+        ['EYO', 'Academic', 'Business & Entrepreneurship', 'Incubates youth-led commercial startups, sustainable social ventures, and retail product exhibitions with professional mentorship.'],
+        ['G.A.L.A.W', 'Academic', 'Physical Education & Wellness', 'Promotes physical literacy, athletic conditioning, sports science education, and holistic campus wellness initiatives.'],
+        ['GEMs', 'Academic', 'Language & Humanities', 'Fosters English linguistic excellence, literary appreciation, forensic speech, parliamentary debate, and creative writing.'],
+        ['GOLD', 'Academic', 'Leadership & Governance', 'Develops executive leadership, organizational diplomacy, parliamentary procedure, and administrative excellence among campus leaders.'],
+        ['JFINEX', 'Academic', 'Accounting & Finance', 'Enhances financial literacy, stock exchange analytics, corporate financial management, and investment principles for business students.'],
+        ['HRS', 'Academic', 'Management & Administration', 'Equips office administration and business majors with modern talent management, labor law compliance, and organizational behavior skills.'],
+        ['J.M.A', 'Academic', 'Business & Entrepreneurship', 'Specializes in strategic brand marketing, digital media campaigns, market research, and consumer engagement case studies.'],
+        ['LAKAS', 'Academic', 'Education & Values', 'Promotes civic engagement, Philippine social history, political awareness, and transformative social studies pedagogy.'],
+        ['L.A.P.I.S', 'Academic', 'Leadership & Governance', 'Provides servant leadership training, grassroots outreach missions, disaster relief coordination, and youth volunteerism.'],
+        ['LIBRO', 'Academic', 'Library & Information Science', 'Champions reading campaigns, archival preservation, community mobile libraries, and digital book accessibility across campuses.'],
+        ['OMEGA', 'Academic', 'Mathematics & Applied Sciences', 'Applies advanced mathematical modeling, calculus, and computational algorithms to solving complex engineering and scientific problems.'],
+        ['PsychSoc', 'Academic', 'Social Sciences', 'Advances psychological awareness, mental health advocacy, behavioral research, and peer counseling support across the student community.'],
+        ['RSD', 'Academic', 'Mathematics & Applied Sciences', 'Fosters scientific inquiry, experimental laboratory research, STEM innovation, and peer tutoring in biological and physical sciences.'],
+        ['SIGMA', 'Academic', 'Mathematics & Applied Sciences', 'Explores pure and applied mathematics, statistics, competition mathematics, and quantitative problem-solving strategies.'],
+        ['TECHs', 'Academic', 'Hospitality & Culinary Arts', 'Develops culinary arts mastery, hotel operations proficiency, food service safety, and front-of-house hospitality standards.'],
+        ['TTS', 'Academic', 'Tourism & Travel', 'Equips tourism management students with airline ticketing, tour packaging, ecotourism development, and cultural heritage skills.'],
+        ['WIKA', 'Academic', 'Language & Humanities', 'Itinataguyod ang pananaliksik, pagpapahalaga, at pagpapaunlad ng wikang Filipino at panitikang pambansa sa antas tersyarya.'],
+        ['ACAC', 'Cultural', 'Department Based Talent Group', 'Visual and cultural arts collective representing folk arts, painting, theatrical installations, and cultural exhibitions.'],
+        ['CESC', 'Sports', 'Department Based Talent Group', 'Coordinates sports tournaments, e-sports invitationals, and athletic wellness leagues specifically for engineering students.'],
+        ['EBCPCT', 'Sports', 'Department Based Talent Group', 'Elite competitive chess team competing in inter-collegiate board championships, rapid chess tourneys, and strategic clinics.'],
+        ['RCYC-BCP', 'Advocacy', 'Department Based Talent Group', 'Official Red Cross youth chapter specializing in emergency first aid, blood donation drives, disaster relief, and safety education.'],
+        ['SMC', 'Sports', 'Department Based Talent Group', 'Competitive badminton club providing collegiate training, tactical drills, and inter-university tournament participation.'],
+        ['ALL STAR', 'Cultural', 'Talent Center', 'BCP premier multi-disciplinary talent troupe specializing in variety stage performances, singing, and modern choreography.'],
+        ['B-FORCE', 'Cultural', 'Talent Center', 'Award-winning campus hip-hop dance crew representing BCP in collegiate streetdance battles, choreography showcases, and concert stages.'],
+        ['CREATIVE', 'Cultural', 'Talent Center', 'Graphic design, digital illustration, and multimedia arts collective crafting visual branding and creative showcases.'],
+        ['CDC', 'Cultural', 'Talent Center', 'Dynamic performing dance troupe from the College of Criminology blending precision drill steps with modern street dance.'],
+        ['DLC', 'Cultural', 'Talent Center', 'BCP official marching drum and lyre corporation providing ceremonial music, parade fanfares, and collegiate rally anthems.'],
+        ['IKATLONG', 'Cultural', 'Talent Center', 'Cultural arts guild dedicated to celebrating Philippine indigenous heritage, traditional folk dances, and cultural storytelling.'],
+        ['IMAGE', 'Cultural', 'Talent Center', 'Student photojournalism, cinematic videography, and digital media production crew documenting campus events and student life.'],
+        ['S.I.K.A.T', 'Cultural', 'Talent Center', 'BCP premier theatrical and acting company producing stage dramas, musical plays, monologue workshops, and improvisational theater.'],
+        ['UV', 'Cultural', 'Talent Center', 'The official university chorale delivering classical choral arrangements, liturgical hymns, and contemporary vocal harmonies.'],
+        ['PEER', 'Advocacy', 'Campus-Wide Independent Bodies', 'Student-led emotional wellness and mental health peer counseling network working under Guidance and Counseling Services.'],
+        ['NEWSLINK', 'Advocacy', 'Campus-Wide Independent Bodies', 'The official autonomous student publication of Bestlink College of the Philippines, committed to responsible campus journalism.'],
+        ['GAD-CG', 'Advocacy', 'Campus-Wide Independent Bodies', 'Campus core group advancing gender equality, anti-discrimination initiatives, Safe Spaces Act awareness, and women empowerment.']
+    ];
+
+    $upd_stmt = $conn->prepare("UPDATE clubs SET category = ?, sub_category = ?, description = ? WHERE code = ?");
+    if ($upd_stmt) {
+        foreach ($clubs_data as [$code, $cat, $sub, $desc]) {
+            $upd_stmt->bind_param('ssss', $cat, $sub, $desc, $code);
+            $upd_stmt->execute();
+        }
+        $upd_stmt->close();
+    }
+
+    // 3. Ensure genuine Faculty Advisers are attached to their respective clubs
+    $conn->query("DELETE FROM club_memberships WHERE role = 'Adviser'");
+    $conn->query("
+        INSERT INTO club_memberships (club_id, user_id, role, status, adviser_review, ssc_review)
+        SELECT c.id, u.id, 'Adviser', 'Active', 'Endorsed', 'Endorsed'
+        FROM clubs c
+        JOIN users u ON (u.username = CONCAT(LOWER(REPLACE(REPLACE(REPLACE(c.code, '.', ''), '-', ''), ' ', '')), '.adviser') OR u.username = CONCAT(LOWER(c.code), '.adviser'))
+        WHERE u.role = 'club_adviser'
+        ON DUPLICATE KEY UPDATE role='Adviser', status='Active', adviser_review='Endorsed', ssc_review='Endorsed'
+    ");
+
+    // 4. Ensure achievements schema exists (Clean Slate — Populated through live user submissions)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `achievements` (
+          `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+          `club_id` INT(10) UNSIGNED NOT NULL,
+          `submitted_by` INT(10) UNSIGNED NOT NULL,
+          `title` VARCHAR(250) NOT NULL,
+          `competition` VARCHAR(250) NOT NULL,
+          `award_date` DATE NOT NULL,
+          `proof_file` VARCHAR(300) DEFAULT NULL,
+          `status` ENUM('Pending', 'Verified', 'Rejected') NOT NULL DEFAULT 'Pending',
+          `verified_by` INT(10) UNSIGNED DEFAULT NULL,
+          `notes` TEXT DEFAULT NULL,
+          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          KEY `idx_ach_club` (`club_id`),
+          KEY `idx_ach_submitter` (`submitted_by`),
+          KEY `idx_ach_status` (`status`),
+          CONSTRAINT `fk_ach_club` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
+          CONSTRAINT `fk_ach_user` FOREIGN KEY (`submitted_by`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+          CONSTRAINT `fk_ach_verifier` FOREIGN KEY (`verified_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // 5. Ensure elections, candidates, and votes tables exist
+    $conn->query("CREATE TABLE IF NOT EXISTS `elections` (
+        `id` INT AUTO_INCREMENT PRIMARY KEY,
+        `election_code` VARCHAR(50) UNIQUE NOT NULL,
+        `club_id` INT NOT NULL,
+        `scope` VARCHAR(50) DEFAULT 'Club',
+        `title` VARCHAR(255) NOT NULL,
+        `description` TEXT NULL,
+        `election_type` VARCHAR(100) DEFAULT 'Student Governance',
+        `starts_at` DATETIME NULL,
+        `closes_at` DATETIME NULL,
+        `status` VARCHAR(50) DEFAULT 'active',
+        `eligible_voters` INT DEFAULT 0,
+        `positions` TEXT NULL,
+        `verified_at` DATETIME NULL,
+        `verified_by` INT NULL,
+        `audit_notes` TEXT NULL,
+        `created_by` INT NOT NULL,
+        `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $conn->query("CREATE TABLE IF NOT EXISTS `election_candidates` (
+        `id` INT AUTO_INCREMENT PRIMARY KEY,
+        `election_id` INT NOT NULL,
+        `user_id` INT NULL,
+        `candidate_code` VARCHAR(50) NOT NULL,
+        `name` VARCHAR(150) NOT NULL,
+        `position` VARCHAR(100) NOT NULL,
+        `party` VARCHAR(150) NULL,
+        `year_level` VARCHAR(50) NULL,
+        `program` VARCHAR(50) NULL,
+        `gwa` VARCHAR(20) NULL,
+        `platform_tag` TEXT NULL,
+        `achievements` TEXT NULL,
+        `votes_count` INT DEFAULT 0,
+        `is_appointed` TINYINT(1) DEFAULT 0,
+        `status` VARCHAR(50) DEFAULT 'Active',
+        `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    $conn->query("CREATE TABLE IF NOT EXISTS `election_votes` (
+        `id` INT AUTO_INCREMENT PRIMARY KEY,
+        `election_id` INT NOT NULL,
+        `user_id` INT NULL,
+        `ballot_token` VARCHAR(255) NULL,
+        `ballot_data` TEXT NULL,
+        `votes_json` TEXT NOT NULL,
+        `cast_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        KEY `idx_vote_election` (`election_id`),
+        KEY `idx_ballot_token` (`ballot_token`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
+    // 8. Notification Templates Table & Defaults
+    $conn->query("CREATE TABLE IF NOT EXISTS `notification_templates` (
+        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        `code` VARCHAR(50) UNIQUE NOT NULL,
+        `title` VARCHAR(150) NOT NULL,
+        `category` VARCHAR(100) NOT NULL DEFAULT 'System Notice',
+        `subject_template` VARCHAR(255) NOT NULL,
+        `body_template` TEXT NOT NULL,
+        `default_priority` ENUM('Normal', 'Important', 'Urgent') DEFAULT 'Normal',
+        `default_target` VARCHAR(100) DEFAULT 'All Campus Users',
+        `status` ENUM('Active', 'Archived') DEFAULT 'Active',
+        `created_by` INT UNSIGNED NOT NULL DEFAULT 1,
+        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX `idx_tpl_cat` (`category`),
+        INDEX `idx_tpl_status` (`status`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    $chk_tpl = $conn->query("SELECT COUNT(*) FROM `notification_templates`");
+    if ($chk_tpl && (int)$chk_tpl->fetch_row()[0] === 0) {
+        $default_tpls = [
+            ['EVT_APPRV', 'Event Approval Notice', 'Activity & Event Operations', 'Official Approval: {{event_title}}', 'Greetings {{organizer_name}}, your proposed campus activity {{event_title}} scheduled for {{event_date}} at {{venue}} has received official administrative clearance and calendar placement.', 'Important', 'Club Leaders'],
+            ['BUD_DISB', 'Budget Disbursement Notice', 'Financial Administration', 'Fund Release Authorized: Requisition #{{req_id}}', 'Notice to {{club_name}} Executive Board: Funding in the amount of ₱{{amount}} for {{purpose}} has been officially authorized and disbursed.', 'Important', 'Treasurers & Officers'],
+            ['SSC_ENDRS', 'Council Endorsement Notice', 'Governance & Accreditation', 'SSC Endorsement Granted: {{proposal_title}}', 'The Supreme Student Council Executive Committee has officially reviewed and endorsed proposal {{proposal_title}} to the Office of Student Affairs.', 'Normal', 'Club Advisers & Leads'],
+            ['ACC_RESET', 'Account Credentials Reset', 'Security & Access', 'Temporary Access Pass Issued: {{user_name}}', 'Your account credentials for the BCP Co-Curricular Management Portal have been updated. Temporary login: {{temp_pass}}.', 'Urgent', 'Specific Users'],
+            ['CHR_ACCR', 'Charter Accreditation Update', 'Governance & Accreditation', 'Annual Charter Accreditation: {{org_name}}', 'Official resolution regarding {{org_name}} charter accreditation for AY {{academic_year}} has been released by the Office of Student Affairs.', 'Normal', 'Club Presidents & Advisers'],
+            ['ATT_ALERT', 'Attendance Check-in Alert', 'Event Attendance & Tracking', 'Attendance Confirmation: {{event_title}}', 'You have been recorded as an attendee for {{event_title}} at {{timestamp}}. Your co-curricular participation ledger has been credited.', 'Normal', 'All Students']
+        ];
+        $t_stmt = $conn->prepare("INSERT IGNORE INTO `notification_templates` (`code`, `title`, `category`, `subject_template`, `body_template`, `default_priority`, `default_target`, `created_by`, `status`) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'Active')");
+        if ($t_stmt) {
+            foreach ($default_tpls as $t) {
+                $t_stmt->bind_param('sssssss', $t[0], $t[1], $t[2], $t[3], $t[4], $t[5], $t[6]);
+                $t_stmt->execute();
+            }
+            $t_stmt->close();
+        }
+    }
+
+    // 9. Seed Authentic Student Applications with Uploaded Documents (Clean seeding if none exist)
+    $chk_apps = $conn->query("SELECT COUNT(*) FROM `club_applications`");
+    if ($chk_apps && (int)$chk_apps->fetch_row()[0] === 0) {
+        $sample_apps = [
+            [1, 7, 'Ramon', 'Villanueva', '2024-10007', 'Bachelor of Science in Business Administration', '2nd Year', 'bsba@student.bcp.edu.ph', '09171234567', 'Male', '2004-01-01', 'Quezon City, Metro Manila', 'I am enthusiastic about joining the Computer Science Student Executive Council to contribute my organizational, administrative, and event coordination skills to student life initiatives.', 'intent_7_1790074124_6f2270d3.pdf', 'endorsement_7_1790074489_4608d4be.docx'],
+            [3, 2, 'Maria', 'Cruz', '2024-10002', 'Bachelor of Science in Hospitality Management', '1st Year', 'bshm@student.bcp.edu.ph', '09189876543', 'Female', '2005-05-15', 'Novaliches, Quezon City', 'I aspire to be an active member of ACES, supporting inter-disciplinary events and campus hospitality initiatives.', 'intent_7_1790074130_113a6786.pdf', 'intent_7_1790074489_6d53dbc1.docx']
+        ];
+        $app_stmt = $conn->prepare("INSERT INTO club_applications (club_id, user_id, first_name, last_name, student_id_no, course, year_level, email, phone, sex, dob, address, motivation, letter_intent, letter_endorsement, status, applied_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NOW())");
+        $mem_stmt = $conn->prepare("INSERT INTO club_memberships (club_id, user_id, role, status, joined_at, letter_intent, letter_endorsement, adviser_review, ssc_review, review_notes) VALUES (?, ?, 'Member', 'Pending', NOW(), ?, ?, 'Pending Adviser', 'Pending SSC', 'Initial submission awaiting review.') ON DUPLICATE KEY UPDATE status='Pending', letter_intent=VALUES(letter_intent), letter_endorsement=VALUES(letter_endorsement)");
+        foreach ($sample_apps as $sa) {
+            if ($app_stmt) {
+                $app_stmt->bind_param('iisssssssssssss', $sa[0], $sa[1], $sa[2], $sa[3], $sa[4], $sa[5], $sa[6], $sa[7], $sa[8], $sa[9], $sa[10], $sa[11], $sa[12], $sa[13], $sa[14]);
+                $app_stmt->execute();
+            }
+            if ($mem_stmt) {
+                $mem_stmt->bind_param('iiss', $sa[0], $sa[1], $sa[13], $sa[14]);
+                $mem_stmt->execute();
+            }
+        }
+        if ($app_stmt) $app_stmt->close();
+        if ($mem_stmt) $mem_stmt->close();
+    }
+
+    // 10. Seed Authentic Events & Calendar Activities (Clean seeding if none exist)
+    $chk_evs = $conn->query("SELECT COUNT(*) FROM `events`");
+    if ($chk_evs && (int)$chk_evs->fetch_row()[0] === 0) {
+        $clubs_res = $conn->query("SELECT id, code FROM clubs ORDER BY id");
+        $clubs_map = [];
+        while ($r = $clubs_res->fetch_assoc()) {
+            $clubs_map[$r['code']] = (int)$r['id'];
+        }
+
+        $events_to_seed = [
+            [
+                $clubs_map['CSSEC'] ?? 1, 'Club',
+                'Annual Tech Symposium & Innovation Expo 2026',
+                'Annual technology summit bringing together industry speakers, artificial intelligence showcases, cloud workshops, and collaborative tech exhibits.',
+                '2026-09-18 09:00:00', 'Main Auditorium', 280, 'Completed', 17,
+                'Endorsed by SSC: Meets institutional academic standards. Clearance issued by Administration.'
+            ],
+            [
+                $clubs_map['CSSEC'] ?? 1, 'Club',
+                'BCP Inter-College Hackathon & Code Fest',
+                '24-hour collegiate software hackathon focusing on AI solutions for community development, smart campus utilities, and algorithmic problem-solving.',
+                '2026-09-30 08:30:00', 'IT Laboratory 3', 120, 'Approved', 17,
+                'Endorsed by SSC: Complete security and lab protocols approved.'
+            ],
+            [
+                NULL, 'Institutional',
+                'Campus Leadership Summit & Officer Synergy Forum',
+                'Mandatory university-wide leadership development summit for all recognized student organization officers, council delegates, and faculty advisers.',
+                '2026-10-05 09:00:00', 'Bulwagang Balagtas', 350, 'Approved', 58,
+                'Institutional Council Event: Fully endorsed by SSC and authorized by Office of Student Affairs.'
+            ],
+            [
+                $clubs_map['ALL STAR'] ?? 30, 'Club',
+                'Philippine Cultural Heritage & Folk Dance Showcase',
+                'Live performing arts festival presenting traditional Philippine folk dances, indigenous musical heritage, and theatrical expressions.',
+                '2026-10-12 13:00:00', 'Campus Plaza', 200, 'Approved', 17,
+                'Endorsed by SSC: Sound permits and outdoor pavilion reservation verified.'
+            ],
+            [
+                $clubs_map['RCYC-BCP'] ?? 28, 'Club',
+                'Red Cross Emergency First Aid & Voluntary Blood Drive',
+                'Campus-wide voluntary blood donation drive and certified emergency disaster response workshop conducted in coordination with the Philippine Red Cross.',
+                '2026-10-18 08:00:00', 'Health Services Center', 160, 'Approved', 17,
+                'Endorsed by SSC: Medical staff and sanitation protocols arranged.'
+            ],
+            [
+                $clubs_map['CESC'] ?? 26, 'Club',
+                'Collegiate Esports Invitational Cup',
+                'Inter-department competitive gaming tourney and esports sportsmanship seminar promoting strategic teamwork and digital wellness.',
+                '2026-10-22 10:00:00', 'Student Center Gymnasium', 220, 'Pending SSC', 17,
+                'Awaiting initial SSC review of network and power requirements.'
+            ],
+            [
+                $clubs_map['PEER'] ?? 39, 'Club',
+                'Youth Mental Health & Peer Counseling Colloquium',
+                'Empowering students through psychological first-aid training, emotional resilience seminars, and peer-to-peer counseling networks.',
+                '2026-10-26 13:30:00', 'Audio Visual Theater', 180, 'Pending Admin', 17,
+                'Endorsed by SSC: Approved for final Administrative calendar posting.'
+            ],
+            [
+                $clubs_map['TECHs'] ?? 22, 'Club',
+                'Hospitality & Culinary Arts Skills Championship',
+                'Live culinary cooking challenge, table setup exhibition, and front-of-house hospitality competitive showcase.',
+                '2026-11-06 09:00:00', 'Culinary Arts Pavilion', 200, 'Approved', 17,
+                'Endorsed by SSC: Kitchen safety and food safety compliance endorsed.'
+            ],
+            [
+                $clubs_map['EYO'] ?? 8, 'Club',
+                'Startup Incubation & Young Entrepreneurs Fair',
+                'Student business venture exposition featuring student-led commercial stalls, marketing pitches, and sustainable product showcases.',
+                '2026-11-14 09:00:00', 'Central Quadrangle', 400, 'Approved', 17,
+                'Endorsed by SSC: Trade permits and quadrangle booth layouts validated.'
+            ]
+        ];
+
+        $ev_stmt = $conn->prepare("INSERT INTO `events` (`club_id`, `event_type`, `title`, `description`, `event_date`, `venue`, `expected_attendees`, `status`, `created_by`, `endorsement_notes`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        if ($ev_stmt) {
+            foreach ($events_to_seed as $ev) {
+                $ev_stmt->bind_param('isssssisis', $ev[0], $ev[1], $ev[2], $ev[3], $ev[4], $ev[5], $ev[6], $ev[7], $ev[8], $ev[9]);
+                $ev_stmt->execute();
+            }
+            $ev_stmt->close();
+        }
+
+        $conn->query("INSERT IGNORE INTO `event_registrations` (`event_id`, `user_id`, `status`) SELECT id, 1, 'Registered' FROM `events` WHERE `status` = 'Approved' LIMIT 3");
+    }
+
+    $messages[] = "✨ Database schemas patched, club metadata categorized, Faculty Advisers linked, authentic events seeded, and clean transactional tables ready for live user input.";
+    return true;
+}
+
+// Helper: Ensure Upload Folders
+function ensureUploadDirectories(array $uploadDirs): void {
+    foreach ($uploadDirs as $rel => $abs) {
+        if (!is_dir($abs)) {
+            @mkdir($abs, 0755, true);
+        }
+    }
+}
+
 // ------------------------------------------------------------
-// POST ACTION DISPATCHER (GATED)
+// POST ACTION DISPATCHER
 // ------------------------------------------------------------
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-    if ($is_locked && !$is_admin) {
+    $action = $_POST['action'] ?? '';
+
+    // If locked, only authenticated admin can perform actions (or unlock)
+    if ($is_locked && !$is_admin && !in_array($action, ['unlock_setup'])) {
         http_response_code(403);
         if (!empty($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
             header('Content-Type: application/json');
@@ -61,7 +896,27 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         die('<div style="padding:40px;font-family:sans-serif;color:#991b1b;background:#fef2f2;border-radius:12px;max-width:600px;margin:50px auto;border:1px solid #f87171;"><h2>🔒 Setup Locked</h2><p>This system has finalized installation and is locked for security. Only authenticated System Administrators may modify database configurations or execute migrations.</p><p><a href="../auth/signin.php" style="color:#2563eb;font-weight:bold;">Sign In to System</a></p></div>');
     }
 
-    $action = $_POST['action'] ?? '';
+    // Action 0a: Lock Setup
+    if ($action === 'lock_setup') {
+        if ($is_admin || $has_installed_admin) {
+            @touch($lockFile);
+            $is_locked = true;
+            $messages[] = "🔒 Setup has been finalized and locked to prevent unauthorized tampering.";
+        }
+    }
+
+    // Action 0b: Unlock Setup
+    if ($action === 'unlock_setup') {
+        if ($is_admin) {
+            if (file_exists($lockFile)) {
+                @unlink($lockFile);
+            }
+            $is_locked = false;
+            $messages[] = "🔓 Setup unlocked successfully. Migrations and configuration adjustments are now enabled.";
+        } else {
+            $errors[] = "Authentication required: Only an active System Administrator can unlock the installer.";
+        }
+    }
 
     // Action 1: Save & Test Database Connection Credentials
     if ($action === 'save_config') {
@@ -80,45 +935,137 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $testConn->query("CREATE DATABASE IF NOT EXISTS `{$new_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
             $testConn->close();
 
+            // Also update .env file if it exists
+            $envPath = dirname(__DIR__, 2) . '/.env';
+            if (file_exists($envPath)) {
+                $envContent = file_get_contents($envPath);
+                $pairs = [
+                    'DB_HOST' => $new_host,
+                    'DB_PORT' => $new_port,
+                    'DB_NAME' => $new_name,
+                    'DB_USER' => $new_user,
+                    'DB_PASS' => $new_pass,
+                    'DB_DATABASE' => $new_name,
+                    'DB_USERNAME' => $new_user,
+                    'DB_PASSWORD' => $new_pass,
+                ];
+                foreach ($pairs as $k => $v) {
+                    if (preg_match('/^' . $k . '=.*/m', $envContent)) {
+                        $envContent = preg_replace('/^' . $k . '=.*/m', $k . '=' . $v, $envContent);
+                    } else {
+                        $envContent .= "\n{$k}={$v}";
+                    }
+                }
+                @file_put_contents($envPath, $envContent);
+            }
+
             // Write back to db.php cleanly
             $escaped_pass = addcslashes($new_pass, "'\\");
             $newConfigCode = "<?php\n"
-                . "// ── Database connection ──────────────────────────────────────\n"
-                . "if (!defined('DB_HOST')) define('DB_HOST', '{$new_host}');\n"
-                . "if (!defined('DB_PORT')) define('DB_PORT', {$new_port});\n"
-                . "if (!defined('DB_USER')) define('DB_USER', '{$new_user}');\n"
-                . "if (!defined('DB_PASS')) define('DB_PASS', '{$escaped_pass}');\n"
-                . "if (!defined('DB_NAME')) define('DB_NAME', '{$new_name}');\n\n"
-                . "\$conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, '', (int)DB_PORT);\n\n"
+                . "// ============================================================\n"
+                . "//  DB.PHP — Database Connection & Environment Loader\n"
+                . "// ============================================================\n\n"
+                . "// 1. Load environment variables from .env if available\n"
+                . "\$envFile = dirname(__DIR__, 2) . '/.env';\n"
+                . "if (file_exists(\$envFile)) {\n"
+                . "    \$lines = file(\$envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);\n"
+                . "    if (\$lines) {\n"
+                . "        foreach (\$lines as \$line) {\n"
+                . "            \$line = trim(\$line);\n"
+                . "            if (\$line === '' || strpos(\$line, '#') === 0) continue;\n"
+                . "            if (strpos(\$line, '=') !== false) {\n"
+                . "                list(\$key, \$val) = explode('=', \$line, 2);\n"
+                . "                \$key = trim(\$key);\n"
+                . "                \$val = trim(\$val, \" \\t\\n\\r\\0\\x0B\\\"'\");\n"
+                . "                if (getenv(\$key) === false && !array_key_exists(\$key, \$_SERVER) && !array_key_exists(\$key, \$_ENV)) {\n"
+                . "                    putenv(\"\$key=\$val\");\n"
+                . "                    \$_ENV[\$key] = \$val;\n"
+                . "                    \$_SERVER[\$key] = \$val;\n"
+                . "                }\n"
+                . "            }\n"
+                . "        }\n"
+                . "    }\n"
+                . "}\n\n"
+                . "// 2. Normalize database environment variables / aliases\n"
+                . "if (!getenv('DB_USER') && getenv('DB_USERNAME')) {\n"
+                . "    putenv('DB_USER=' . getenv('DB_USERNAME'));\n"
+                . "    \$_ENV['DB_USER'] = getenv('DB_USERNAME');\n"
+                . "}\n"
+                . "if (getenv('DB_PASS') === false && getenv('DB_PASSWORD') !== false) {\n"
+                . "    putenv('DB_PASS=' . getenv('DB_PASSWORD'));\n"
+                . "    \$_ENV['DB_PASS'] = getenv('DB_PASSWORD');\n"
+                . "}\n"
+                . "if (!getenv('DB_NAME') && getenv('DB_DATABASE')) {\n"
+                . "    putenv('DB_NAME=' . getenv('DB_DATABASE'));\n"
+                . "    \$_ENV['DB_NAME'] = getenv('DB_DATABASE');\n"
+                . "}\n\n"
+                . "\$host = getenv('DB_HOST') ?: '{$new_host}';\n"
+                . "\$user = getenv('DB_USER') ?: '{$new_user}';\n"
+                . "\$pass = getenv('DB_PASS') ?: '{$escaped_pass}';\n"
+                . "\$db   = getenv('DB_NAME') ?: '{$new_name}';\n"
+                . "\$port = (int)(getenv('DB_PORT') ?: {$new_port});\n\n"
+                . "// Define DB constants for backward compatibility across modules\n"
+                . "if (!defined('DB_HOST')) define('DB_HOST', \$host);\n"
+                . "if (!defined('DB_USER')) define('DB_USER', \$user);\n"
+                . "if (!defined('DB_PASS')) define('DB_PASS', \$pass);\n"
+                . "if (!defined('DB_NAME')) define('DB_NAME', \$db);\n"
+                . "if (!defined('DB_PORT')) define('DB_PORT', \$port);\n\n"
+                . "\$is_setup_script = (basename(\$_SERVER['PHP_SELF'] ?? '') === 'setup.php');\n\n"
+                . "// 3. Connect to MySQL server\n"
+                . "\$conn = @new mysqli(\$host, \$user, \$pass, \$is_setup_script ? '' : \$db, \$port);\n\n"
+                . "// If database does not exist (MySQL error 1049: Unknown database), auto-connect and create it\n"
+                . "if (!\$is_setup_script && \$conn->connect_errno === 1049) {\n"
+                . "    \$conn = @new mysqli(\$host, \$user, \$pass, '', \$port);\n"
+                . "    if (!\$conn->connect_error) {\n"
+                . "        \$conn->query(\"CREATE DATABASE IF NOT EXISTS `\" . \$db . \"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci\");\n"
+                . "        \$conn->select_db(\$db);\n"
+                . "    }\n"
+                . "}\n\n"
                 . "\$db_connected = true;\n"
                 . "\$db_error = null;\n\n"
                 . "if (\$conn->connect_error) {\n"
                 . "    \$db_connected = false;\n"
                 . "    \$db_error = \$conn->connect_error;\n\n"
-                . "    \$is_setup_script = (basename(\$_SERVER['PHP_SELF'] ?? '') === 'setup.php');\n"
                 . "    if (!\$is_setup_script) {\n"
                 . "        if (!empty(\$_SERVER['HTTP_ACCEPT']) && strpos(\$_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {\n"
                 . "            header('Content-Type: application/json');\n"
+                . "            http_response_code(500);\n"
                 . "            die(json_encode([\n"
                 . "                'success' => false,\n"
-                . "                'message' => 'Database connection failed: ' . \$conn->connect_error . '. Please configure database at /sms/app/shared/setup.php'\n"
+                . "                'message' => 'Database connection failed: ' . \$conn->connect_error . '. Please start MySQL or verify credentials in .env.'\n"
                 . "            ]));\n"
                 . "        }\n"
-                . "        \$host = \$_SERVER['HTTP_HOST'] ?? 'localhost';\n"
+                . "        \$http_host = \$_SERVER['HTTP_HOST'] ?? 'localhost';\n"
                 . "        \$proto = (isset(\$_SERVER['HTTPS']) && \$_SERVER['HTTPS'] === 'on') ? 'https' : 'http';\n"
-                . "        header(\"Location: {\$proto}://{\$host}/sms/app/shared/setup.php?error=db_connect\");\n"
+                . "        \$scriptName = \$_SERVER['SCRIPT_NAME'] ?? '';\n"
+                . "        if (strpos(\$scriptName, '/app/') !== false) {\n"
+                . "            \$base = substr(\$scriptName, 0, strpos(\$scriptName, '/app/'));\n"
+                . "        } else {\n"
+                . "            \$base = rtrim(dirname(\$scriptName), '/\\\\');\n"
+                . "            if (\$base === '/' || \$base === '\\\\') \$base = '';\n"
+                . "        }\n"
+                . "        \$setupUrl = \"{\$proto}://{\$http_host}{\$base}/app/shared/setup.php?error=db_connect\";\n"
+                . "        header(\"Location: {\$setupUrl}\");\n"
                 . "        exit;\n"
                 . "    }\n"
                 . "} else {\n"
-                . "    \$conn->query(\"CREATE DATABASE IF NOT EXISTS `\" . DB_NAME . \"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci\");\n"
-                . "    \$conn->select_db(DB_NAME);\n"
+                . "    if (\$is_setup_script) {\n"
+                . "        \$conn->query(\"CREATE DATABASE IF NOT EXISTS `\" . \$db . \"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci\");\n"
+                . "        \$conn->select_db(\$db);\n"
+                . "    }\n"
                 . "    \$conn->set_charset('utf8mb4');\n"
-                . "}\n"
-                . "?>\n";
+                . "}\n\n"
+                . "/**\n"
+                . " * Helper to get a dedicated connection to an organization's isolated database.\n"
+                . " * Accepts club ID or club code (e.g. 1, 'CSSEC', 'RCYC-BCP').\n"
+                . " */\n"
+                . "function getOrgDb(string|int \$club_identifier): ?mysqli {\n"
+                . "    require_once __DIR__ . '/org_db_manager.php';\n"
+                . "    return get_org_db_connection(\$club_identifier);\n"
+                . "}\n";
 
             if (file_put_contents($configFile, $newConfigCode)) {
                 $messages[] = "✅ Database connection successfully verified and updated!";
-                // Refresh connection in current execution
                 $conn = @new mysqli($new_host, $new_user, $new_pass, $new_name, $new_port);
                 if (!$conn->connect_error) {
                     $db_connected = true;
@@ -131,195 +1078,255 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }
     }
 
-    // Action 2: Initialize / Rebuild All 18 Database Tables from master schema
-    if ($action === 'init_database') {
-        if (!$db_connected) {
-            $errors[] = "Cannot initialize database: MySQL is not connected. Check connection parameters first.";
+    // Action 2: One-Click Automated Full Setup (Recommended for new devices)
+    if ($action === 'full_setup') {
+        if (!$db_connected && $conn->connect_error) {
+            $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, '', (int)DB_PORT);
+        }
+        if ($conn->connect_error) {
+            $errors[] = "Cannot perform full setup: MySQL connection failed (" . $conn->connect_error . "). Check database parameters.";
         } else {
+            $db_connected = true;
+            $conn->query("CREATE DATABASE IF NOT EXISTS `" . DB_NAME . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            $conn->select_db(DB_NAME);
+            $conn->set_charset('utf8mb4');
+
             $masterSql = dirname(__DIR__, 2) . '/database/sms_db.sql';
             if (executeSQLScript($conn, $masterSql, $errors)) {
-                $messages[] = "🎉 All 18 database tables and master schemas successfully initialized!";
+                $rbacSql = dirname(__DIR__, 2) . '/database/modules/12_rbac_and_master_data.sql';
+                if (file_exists($rbacSql)) {
+                    executeSQLScript($conn, $rbacSql, $errors);
+                }
+                seedSystemAccountsAndClubs($conn, $messages, $errors);
+                seedLiveSystemData($conn, $messages, $errors);
+                ensureUploadDirectories($uploadDirs ?? [
+                    'app/uploads/achievements/'   => dirname(__DIR__) . '/uploads/achievements/',
+                    'app/uploads/applications/'   => dirname(__DIR__) . '/uploads/applications/',
+                    'app/uploads/avatars/'        => dirname(__DIR__) . '/uploads/avatars/',
+                    'app/uploads/signatures/'     => dirname(__DIR__) . '/uploads/signatures/',
+                    'app/uploads/stamps/'         => dirname(__DIR__) . '/uploads/stamps/',
+                ]);
+                // Provision all 42 dedicated organization databases
+                $org_res = provision_all_org_databases($conn);
+                $org_ready = count(array_filter($org_res, fn($o) => $o['status'] === 'Ready'));
+                $messages[] = "🎉 One-Click Full Setup Completed! All database tables, verified accounts (Admin, SSC, 16 Students, 40 Advisers), accredited clubs, and {$org_ready} dedicated organization databases are installed and ready for live user input.";
             }
         }
     }
 
-    // Action 3: Seed Official System Accounts & Accredited Clubs from SYSTEM_ACCOUNTS.md
+    // Action 3: Initialize / Rebuild Tables Only
+    if ($action === 'init_database') {
+        if (!$db_connected && $conn->connect_error) {
+            $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, '', (int)DB_PORT);
+        }
+        if ($conn->connect_error) {
+            $errors[] = "Cannot initialize database: MySQL is not connected. Check connection parameters first.";
+        } else {
+            $conn->query("CREATE DATABASE IF NOT EXISTS `" . DB_NAME . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            $conn->select_db(DB_NAME);
+            $conn->set_charset('utf8mb4');
+
+            $masterSql = dirname(__DIR__, 2) . '/database/sms_db.sql';
+            if (executeSQLScript($conn, $masterSql, $errors)) {
+                $rbacSql = dirname(__DIR__, 2) . '/database/modules/12_rbac_and_master_data.sql';
+                if (file_exists($rbacSql)) {
+                    executeSQLScript($conn, $rbacSql, $errors);
+                }
+                seedSystemAccountsAndClubs($conn, $messages, $errors);
+                seedLiveSystemData($conn, $messages, $errors);
+                $org_res = provision_all_org_databases($conn);
+                $org_ready = count(array_filter($org_res, fn($o) => $o['status'] === 'Ready'));
+                $messages[] = "🎉 Master database schemas, tables, accredited clubs, official accounts, and {$org_ready} dedicated organization databases successfully initialized with clean transactional tables!";
+            }
+        }
+    }
+
+    // Action 4: Seed Official System Accounts, Clubs & Live System Data
     if ($action === 'seed_demo') {
         if (!$db_connected) {
             $errors[] = "Cannot seed data: MySQL is not connected.";
         } else {
-            // Remove legacy generic testing accounts
-            $conn->query("DELETE FROM users WHERE username IN ('student', 'adviser', 'ssc', 'admin')");
-
-            // Password hashes based on SYSTEM_ACCOUNTS.md
-            $admin_hash = password_hash('Bcp@Admin2026!',   PASSWORD_DEFAULT);
-            $ssc_hash   = password_hash('Bcp@SSC2026!',     PASSWORD_DEFAULT);
-            $std_hash   = password_hash('Bcp@Test2026!',    PASSWORD_DEFAULT);
-            $adv_hash   = password_hash('Bcp@Adviser2026!', PASSWORD_DEFAULT);
-
-            // 1. Central Admin & SSC
-            $admins = [
-                ['scc.admin',   'admin@bcp.edu.ph', 'System', 'Admin',   $admin_hash, 'admin'],
-                ['ssc.officer', 'ssc@bcp.edu.ph',   'SSC',    'Officer', $ssc_hash,   'ssc']
-            ];
-            $u_stmt = $conn->prepare("INSERT INTO users (username, email, first_name, last_name, password_hash, role) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE first_name=VALUES(first_name), last_name=VALUES(last_name), password_hash=VALUES(password_hash), role=VALUES(role)");
-            foreach ($admins as $adm) {
-                $u_stmt->bind_param('ssssss', $adm[0], $adm[1], $adm[2], $adm[3], $adm[4], $adm[5]);
-                $u_stmt->execute();
-            }
-
-            // 2. 16 Official Program Students
-            $students_list = [
-                ['2024-10001', 'Bachelor of Science in Information Technology', 'Juan', 'Santos', 'bsit.student', 'bsit@student.bcp.edu.ph', '2nd Year', 'IT-2A'],
-                ['2024-10002', 'Bachelor of Science in Hospitality Management', 'Maria', 'Cruz', 'bshm.student', 'bshm@student.bcp.edu.ph', '1st Year', 'HM-1B'],
-                ['2024-10003', 'Bachelor of Science in Accounting Information System', 'Jose', 'Reyes', 'bsais.student', 'bsais@student.bcp.edu.ph', '3rd Year', 'AIS-3A'],
-                ['2024-10004', 'Bachelor of Science in Tourism Management', 'Ana', 'Dela Cruz', 'bstm.student', 'bstm@student.bcp.edu.ph', '2nd Year', 'TM-2C'],
-                ['2024-10005', 'Bachelor of Science in Office Administration', 'Carlos', 'Garcia', 'bsoa.student', 'bsoa@student.bcp.edu.ph', '1st Year', 'OA-1A'],
-                ['2024-10006', 'Bachelor of Science in Entrepreneurship', 'Liza', 'Ramos', 'bse.student', 'bse@student.bcp.edu.ph', '3rd Year', 'ENT-3B'],
-                ['2024-10007', 'Bachelor of Science in Business Administration', 'Ramon', 'Villanueva', 'bsba.student', 'bsba@student.bcp.edu.ph', '2nd Year', 'BA-2A'],
-                ['2024-10008', 'Bachelor of Science in Information Science', 'Patricia', 'Aquino', 'bsis.student', 'bsis@student.bcp.edu.ph', '1st Year', 'IS-1A'],
-                ['2024-10009', 'Bachelor of Science in Computer Engineering', 'Mark', 'Bautista', 'bscpe.student', 'bscpe@student.bcp.edu.ph', '3rd Year', 'CPE-3A'],
-                ['2024-10010', 'Bachelor of Science in Psychology', 'Jenny', 'Navarro', 'bspsych.student', 'bspsych@student.bcp.edu.ph', '2nd Year', 'PSY-2B'],
-                ['2024-10011', 'Bachelor of Science in Criminology', 'Rico', 'Fernandez', 'bscrim.student', 'bscrim@student.bcp.edu.ph', '4th Year', 'CRIM-4A'],
-                ['2024-10012', 'Bachelor of Science in Physical Education', 'Sheila', 'Santos', 'bspe.student', 'bspe@student.bcp.edu.ph', '2nd Year', 'PE-2A'],
-                ['2024-10013', 'Technological and Livelihood Education', 'Angelo', 'Torres', 'tle.student', 'tle@student.bcp.edu.ph', '1st Year', 'TLE-1B'],
-                ['2024-10014', 'Bachelor of Science in Elementary Education', 'Claire', 'Mendoza', 'bseled.student', 'bseled@student.bcp.edu.ph', '3rd Year', 'ELED-3A'],
-                ['2024-10015', 'Bachelor of Science in Secondary Education', 'Danilo', 'Pascual', 'bsseed.student', 'bsseed@student.bcp.edu.ph', '2nd Year', 'SEED-2C'],
-                ['2024-10016', 'Bachelor of Science in Library Information Science', 'Rowena', 'Espinosa', 'bslis.student', 'bslis@student.bcp.edu.ph', '3rd Year', 'LIS-3A']
-            ];
-
-            $role_student = 'student';
-            foreach ($students_list as [$sno, $course, $fn, $ln, $un, $em, $yr, $sec]) {
-                $u_stmt->bind_param('ssssss', $un, $em, $fn, $ln, $std_hash, $role_student);
-                $u_stmt->execute();
-
-                $uidRes = $conn->query("SELECT id FROM users WHERE username = '{$un}' LIMIT 1");
-                $userId = ($uidRes && $row = $uidRes->fetch_assoc()) ? (int)$row['id'] : null;
-
-                // Sync student profile
-                $chk = $conn->query("SELECT id FROM students WHERE student_number = '{$sno}' LIMIT 1");
-                if ($chk && $chk->num_rows > 0) {
-                    $sRow = $chk->fetch_assoc();
-                    $conn->query("UPDATE students SET user_id = {$userId}, first_name = '" . $conn->real_escape_string($fn) . "', last_name = '" . $conn->real_escape_string($ln) . "', course = '" . $conn->real_escape_string($course) . "', year_level = '" . $conn->real_escape_string($yr) . "', section = '" . $conn->real_escape_string($sec) . "' WHERE id = {$sRow['id']}");
-                } else {
-                    $conn->query("INSERT INTO students (user_id, student_number, first_name, last_name, birthday, course, year_level, section, phone, status) VALUES ({$userId}, '{$sno}', '" . $conn->real_escape_string($fn) . "', '" . $conn->real_escape_string($ln) . "', '2004-01-01', '" . $conn->real_escape_string($course) . "', '" . $conn->real_escape_string($yr) . "', '" . $conn->real_escape_string($sec) . "', '09123456789', 'Active')");
-                }
-            }
-
-            // 3. 40 Official Faculty Advisers & Clubs
-            $advisers_list = [
-                ['cssec.adviser',    'cssec@adviser.bcp.edu.ph',    'Alex',   'Reyes',   'CSSEC',   'Computer Science Student Exec Council', 'Academic', 'BSCS'],
-                ['acads.adviser',    'acads@adviser.bcp.edu.ph',    'Mark',   'Velo',    'ACADS',   'Association of Computer Eng Driven Students', 'Academic', 'BSCpE'],
-                ['aces.adviser',     'aces@adviser.bcp.edu.ph',     'Elena',  'Ramos',   'ACES',    'Association of Computer Engineering Students', 'Academic', 'BSCpE'],
-                ['aiss.adviser',     'aiss@adviser.bcp.edu.ph',     'Clara',  'Tan',     'AISS',    'Accounting Info System Society', 'Academic', 'BSAIS'],
-                ['bliss.adviser',    'bliss@adviser.bcp.edu.ph',    'Robert', 'Cruz',    'BLISS',   'Bestlink Library & Info Science Society', 'Academic', 'BLIS'],
-                ['brave.adviser',    'brave@adviser.bcp.edu.ph',    'Diana',  'Gomez',   'BRAVE',   'Values Education & Accountability Org', 'Academic', 'BSEd'],
-                ['cjsu.adviser',     'cjsu@adviser.bcp.edu.ph',     'Jose',   'Mercado', 'CJSU',    'Criminal Justice Student Unit', 'Academic', 'BSCrim'],
-                ['eyo.adviser',      'eyo@adviser.bcp.edu.ph',      'Lisa',   'Santos',  'EYO',     'Entrepreyouth Organization', 'Academic', 'BSBA'],
-                ['galaw.adviser',    'galaw@adviser.bcp.edu.ph',    'Manuel', 'Cruz',    'G.A.L.A.W', 'Athletes & Leaders Wellness Assoc', 'Sports', 'Institutional'],
-                ['gems.adviser',     'gems@adviser.bcp.edu.ph',     'Anna',   'Reyes',   'GEMs',    'Guild of English Majors', 'Academic', 'BSEd'],
-                ['gold.adviser',     'gold@adviser.bcp.edu.ph',     'Karen',  'Lim',     'GOLD',    'Guild of Officers to Lead Development', 'Academic', 'Institutional'],
-                ['jfinex.adviser',   'jfinex@adviser.bcp.edu.ph',   'Manuel', 'Cruz',    'JFINEX',  'Junior Financial Executives', 'Academic', 'BSBA'],
-                ['hrs.adviser',      'hrs@adviser.bcp.edu.ph',      'Alex',   'Reyes',   'HRS',     'Human Resources Society', 'Academic', 'BSBA'],
-                ['jma.adviser',      'jma@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'J.M.A',   'Junior Marketing Association', 'Academic', 'BSBA'],
-                ['lakas.adviser',    'lakas@adviser.bcp.edu.ph',    'Clara',  'Tan',     'LAKAS',   'Liga ng Aktibong Kabataan sa Araling Panlipunan', 'Academic', 'BSEd'],
-                ['lapis.adviser',    'lapis@adviser.bcp.edu.ph',    'Diana',  'Gomez',   'L.A.P.I.S', 'Leadership Assoc Program & Services', 'Advocacy', 'Institutional'],
-                ['libro.adviser',    'libro@adviser.bcp.edu.ph',    'Robert', 'Cruz',    'LIBRO',   'Lucid of Bright & Righteous Officers', 'Advocacy', 'BLIS'],
-                ['omega.adviser',    'omega@adviser.bcp.edu.ph',    'Jose',   'Mercado', 'OMEGA',   'Org for Mathematics in Engineering', 'Academic', 'BSCpE'],
-                ['psychsoc.adviser', 'psychsoc@adviser.bcp.edu.ph', 'Lisa',   'Santos',  'PsychSoc','Psychology Society', 'Academic', 'BSPsych'],
-                ['rsd.adviser',      'rsd@adviser.bcp.edu.ph',      'Anna',   'Reyes',   'RSD',     'Regnum Scientiae Discipulus', 'Academic', 'Institutional'],
-                ['sigma.adviser',    'sigma@adviser.bcp.edu.ph',    'Karen',  'Lim',     'SIGMA',   'Guild for Mathematics Majors', 'Academic', 'BSEd'],
-                ['techs.adviser',    'techs@adviser.bcp.edu.ph',    'Alex',   'Reyes',   'TECHs',   'Tech, Exploratory & Hospitality Skills', 'Academic', 'BSHM'],
-                ['tts.adviser',      'tts@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'TTS',     'Tourism Student Society', 'Academic', 'BSTM'],
-                ['wika.adviser',     'wika@adviser.bcp.edu.ph',     'Clara',  'Tan',     'WIKA',    'Wikang Filipino sa Akademya', 'Cultural', 'BSEd'],
-                ['acac.adviser',     'acac@adviser.bcp.edu.ph',     'Sarah',  'Mercado', 'ACAC',    'Association of Cultural Art Club', 'Cultural', 'Institutional'],
-                ['cesc.adviser',     'cesc@adviser.bcp.edu.ph',     'Mark',   'Velo',    'CESC',    'Computer Engineering Sports Club', 'Sports', 'BSCpE'],
-                ['ebcpct.adviser',   'ebcpct@adviser.bcp.edu.ph',   'Mark',   'Velo',    'EBCPCT',  'Elite BCP Chess Team', 'Sports', 'Institutional'],
-                ['rcyc.adviser',     'rcyc@adviser.bcp.edu.ph',     'Elena',  'Cruz',    'RCYC-BCP','Red Cross Youth Council - BCP', 'Advocacy', 'Institutional'],
-                ['smc.adviser',      'smc@adviser.bcp.edu.ph',      'Mark',   'Velo',    'SMC',     'Shuttle Master Club', 'Sports', 'Institutional'],
-                ['allstar.adviser',  'allstar@adviser.bcp.edu.ph',  'Sarah',  'Mercado', 'ALL STAR','All Star Talent Group', 'Cultural', 'Institutional'],
-                ['bforce.adviser',   'bforce@adviser.bcp.edu.ph',   'Sarah',  'Mercado', 'B-FORCE', 'B-Force Hip-Hop Crew', 'Cultural', 'Institutional'],
-                ['creative.adviser', 'creative@adviser.bcp.edu.ph', 'Sarah',  'Mercado', 'CREATIVE','Creative Arts Group', 'Cultural', 'Institutional'],
-                ['cdc.adviser',      'cdc@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'CDC',     'Criminology Dance Company', 'Cultural', 'BSCrim'],
-                ['dlc.adviser',      'dlc@adviser.bcp.edu.ph',      'Sarah',  'Mercado', 'DLC',     'Drum and Lyre Corporation', 'Cultural', 'Institutional'],
-                ['ikatlong.adviser', 'ikatlong@adviser.bcp.edu.ph', 'Sarah',  'Mercado', 'IKATLONG','Ikatlong Lahi Royalties', 'Cultural', 'Institutional'],
-                ['image.adviser',    'image@adviser.bcp.edu.ph',    'Sarah',  'Mercado', 'IMAGE',   'Image Alchemy Media Crew', 'Cultural', 'Institutional'],
-                ['sikat.adviser',    'sikat@adviser.bcp.edu.ph',    'Sarah',  'Mercado', 'S.I.K.A.T','Theater & Acting Group', 'Cultural', 'Institutional'],
-                ['uv.adviser',       'uv@adviser.bcp.edu.ph',       'Sarah',  'Mercado', 'UV',      'Unlimited Voice Choir', 'Cultural', 'Institutional'],
-                ['peer.adviser',     'peer@adviser.bcp.edu.ph',     'Elena',  'Cruz',    'PEER',    'Peer Counselor Support Group', 'Advocacy', 'Institutional'],
-                ['newslink.adviser', 'newslink@adviser.bcp.edu.ph', 'Elena',  'Cruz',    'NEWSLINK','School Publications', 'Advocacy', 'Institutional']
-            ];
-
-            $role_adviser = 'club_adviser';
-            $c_stmt = $conn->prepare("INSERT INTO clubs (code, name, category, description, adviser_name, status, program) VALUES (?, ?, ?, ?, ?, 'Active', ?) ON DUPLICATE KEY UPDATE name=VALUES(name), adviser_name=VALUES(adviser_name), status='Active', program=VALUES(program)");
-
-            foreach ($advisers_list as [$un, $em, $fn, $ln, $code, $cname, $cat, $prog]) {
-                $u_stmt->bind_param('ssssss', $un, $em, $fn, $ln, $adv_hash, $role_adviser);
-                $u_stmt->execute();
-
-                $advFullName = "Prof. {$fn} {$ln}";
-                $desc = "Official accredited campus student organization for {$cname}.";
-                $c_stmt->bind_param('ssssss', $code, $cname, $cat, $desc, $advFullName, $prog);
-                $c_stmt->execute();
-            }
-
-            $u_stmt->close();
-            $c_stmt->close();
-
-            $messages[] = "✨ Official system accounts (Admin, SSC, 16 Program Students, and 40 Faculty Advisers) successfully seeded from SYSTEM_ACCOUNTS.md!";
+            seedSystemAccountsAndClubs($conn, $messages, $errors);
+            seedLiveSystemData($conn, $messages, $errors);
         }
     }
 
+    // Action 6: Provision / Resync All Dedicated Organization Databases
+    if ($action === 'provision_org_dbs') {
+        if (!$db_connected) {
+            $errors[] = "Cannot provision organization databases: MySQL is not connected.";
+        } else {
+            $org_res = provision_all_org_databases($conn);
+            $org_ready = count(array_filter($org_res, fn($o) => $o['status'] === 'Ready'));
+            $messages[] = "🏢 Dedicated Organization Databases Provisioned: {$org_ready} of " . count($org_res) . " organization databases are online and synchronized with categorized tables!";
+        }
+    }
+
+    // Action 7: Wipe All Simulation Data (Clean Slate for Real User Input)
+    if ($action === 'wipe_simulation') {
+        if (!$db_connected) {
+            $errors[] = "Cannot wipe simulation data: MySQL is not connected.";
+        } else {
+            require_once __DIR__ . '/org_db_manager.php';
+            try {
+                // 1. Wipe master database transactional tables
+                $conn->query("SET FOREIGN_KEY_CHECKS = 0;");
+                $tables_to_wipe = [
+                    'events',
+                    'event_registrations',
+                    'budget_requests',
+                    'attendance_logs',
+                    'achievements',
+                    'org_announcements',
+                    'notifications',
+                    'elections',
+                    'election_candidates',
+                    'election_votes',
+                    'club_applications',
+                    'audit_logs',
+                    'ai_recommendation_logs'
+                ];
+                foreach ($tables_to_wipe as $tbl) {
+                    $chk = $conn->query("SHOW TABLES LIKE '$tbl'");
+                    if ($chk && $chk->num_rows > 0) {
+                        $conn->query("TRUNCATE TABLE `$tbl`");
+                    }
+                }
+                // Clear any non-adviser dummy memberships
+                $conn->query("DELETE FROM club_memberships WHERE role != 'Adviser'");
+                $conn->query("SET FOREIGN_KEY_CHECKS = 1;");
+
+                // 2. Wipe simulation data across all dedicated org databases
+                $c_res = $conn->query("SELECT id, code FROM clubs WHERE deleted_at IS NULL");
+                $w_cnt = 0;
+                if ($c_res) {
+                    while ($cl = $c_res->fetch_assoc()) {
+                        $org_c = get_org_db_connection($cl['code']);
+                        if ($org_c) {
+                            $org_c->query("SET FOREIGN_KEY_CHECKS = 0;");
+                            foreach (['org_events', 'org_attendance', 'org_budgets', 'org_achievements', 'org_announcements', 'org_audit_trail'] as $tbl) {
+                                $org_c->query("TRUNCATE TABLE `$tbl`");
+                            }
+                            $org_c->query("DELETE FROM org_members WHERE role != 'Adviser'");
+                            $org_c->query("SET FOREIGN_KEY_CHECKS = 1;");
+                            $org_c->close();
+                            $w_cnt++;
+                        }
+                    }
+                }
+                $messages[] = "🧹 All simulation, testing, and hardcoded data has been completely wiped across master and all {$w_cnt} organization databases! System is in a clean slate ready for authentic database-driven user input.";
+            } catch (Throwable $e) {
+                $errors[] = "Failed to wipe simulation data: " . $e->getMessage();
+            }
+        }
+    }
+
+    // Action 8: Patch & Synchronize Database Schemas & Multi-Stage Workflows
+    if ($action === 'patch_schemas') {
+        if (!$db_connected) {
+            $errors[] = "Cannot patch schemas: MySQL is not connected.";
+        } else {
+            patchSystemDatabaseSchemas($conn, $messages, $errors);
+        }
+    }
 }
 
 // ------------------------------------------------------------
 // GATHER SYSTEM & TABLES TELEMETRY
 // ------------------------------------------------------------
 $expected_tables = [
-    'users'                 => 'Identity, Authentication & 4 Core Roles (student, adviser, ssc, admin)',
-    'students'              => 'Student Directory, Academic Profiles & Program Mapping',
-    'clubs'                 => 'Accredited Campus Student Organizations & Academic Programs',
-    'club_memberships'      => 'Active Roster, Leadership Roles & Advisers',
-    'club_applications'     => 'Student Application Submissions & Endorsement Letters',
-    'events'                => 'Campus Events, Activity Lifecycle & SSC/Admin Endorsements',
-    'event_registrations'   => 'Pre-Registrations & Attendee Participation Roster',
-    'budget_requests'       => 'Multi-Tier Budget Proposals (Adviser → SSC → Admin Approval)',
-    'attendance_logs'       => 'QR Code, RFID, Self-Check-in & Manual Verification Logs',
-    'elections'             => 'Digital Elections Management & Timeline Control',
-    'election_candidates'   => 'Candidate Profiles, Platforms & Taglines',
-    'election_votes'        => 'Audited, Tamper-Resistant Digital Ballots',
-    'achievements'          => 'External Competitions, Awards & Verification System',
-    'org_announcements'     => 'Targeted Club Announcements & Urgent Broadcasts',
-    'notifications'         => 'System-Wide Alert & Communication Center',
-    'audit_logs'            => 'Security, Access & Action Audit Trail',
-    'ai_recommendation_logs'=> 'AI Telemetry & Co-Curricular Analytics',
-    'system_settings'       => 'System Configurations & Integration API Keys'
+    'users'                     => 'Identity, Authentication & 4 Core Roles (student, adviser, ssc, admin)',
+    'students'                  => 'Student Directory, Academic Profiles & Program Mapping',
+    'academic_programs'         => 'Academic Degree Programs, Colleges & Department Directory',
+    'clubs'                     => 'Accredited Campus Student Organizations & Academic Programs',
+    'club_memberships'          => 'Active Roster, Leadership Roles & Advisers',
+    'club_applications'         => 'Student Application Submissions & Endorsement Letters',
+    'events'                    => 'Campus Events, Activity Lifecycle & SSC/Admin Endorsements',
+    'event_registrations'       => 'Pre-Registrations & Attendee Participation Roster',
+    'budget_requests'           => 'Multi-Tier Budget Proposals (Adviser → SSC → Admin Approval)',
+    'attendance_logs'           => 'QR Code, RFID, Self-Check-in & Manual Verification Logs',
+    'elections'                 => 'Digital Elections Management & Timeline Control',
+    'election_candidates'       => 'Candidate Profiles, Platforms & Taglines',
+    'election_votes'            => 'Audited, Tamper-Resistant Digital Ballots',
+    'achievements'              => 'External Competitions, Awards & Verification System',
+    'org_announcements'         => 'Targeted Club Announcements & Urgent Broadcasts',
+    'notification_templates'    => 'Official Notification Templates, System Notices & Standard Layouts',
+    'notifications'             => 'System-Wide Alert & Communication Center',
+    'audit_logs'                => 'Security, Access & Action Audit Trail',
+    'ai_recommendation_logs'    => 'AI Telemetry & Co-Curricular Analytics',
+    'system_settings'           => 'System Configurations & Integration API Keys',
+    'profile_photos'            => 'User Uploaded Profile Pictures & Avatars History',
+    'roles'                     => 'Database-Driven RBAC Roles (student, adviser, ssc, admin)',
+    'permissions'               => 'Granular Module & Action Permissions Catalog',
+    'role_permissions'          => 'Role-to-Permission Mapping Matrix',
+    'user_roles'                => 'User-to-Role Granular Assignment Ledger',
+    'mfa_codes'                 => 'Multi-Factor Authentication (Email Verification Codes & OTP Security)'
 ];
 
 $existing_tables = [];
 $table_counts = [];
 if ($db_connected && $conn) {
-    $res = $conn->query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = '" . DB_NAME . "' AND TABLE_TYPE = 'BASE TABLE'");
-    if ($res) {
-        while ($row = $res->fetch_row()) {
-            $existing_tables[] = $row[0];
-            $cnt = $conn->query("SELECT COUNT(*) FROM `{$row[0]}`");
-            $table_counts[$row[0]] = $cnt ? (int)$cnt->fetch_row()[0] : 0;
+    try {
+        $res = $conn->query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = '" . DB_NAME . "' AND TABLE_TYPE = 'BASE TABLE'");
+        if ($res) {
+            while ($row = $res->fetch_row()) {
+                $existing_tables[] = $row[0];
+                try {
+                    $cnt = $conn->query("SELECT COUNT(*) FROM `{$row[0]}`");
+                    $table_counts[$row[0]] = $cnt ? (int)$cnt->fetch_row()[0] : 0;
+                } catch (Throwable $e) {
+                    $table_counts[$row[0]] = 0;
+                }
+            }
         }
+    } catch (Throwable $e) {
+        $existing_tables = [];
+    }
+}
+
+// Organization Dedicated Databases Telemetry
+$org_dbs_telemetry = [];
+$total_org_dbs_ready = 0;
+if ($db_connected && $conn && in_array('clubs', $existing_tables)) {
+    try {
+        $c_res = $conn->query("SELECT id, code, name FROM clubs WHERE deleted_at IS NULL ORDER BY code ASC");
+        if ($c_res) {
+            while ($c = $c_res->fetch_assoc()) {
+                $expectedDb = get_org_db_name($c['code']);
+                $dbCheck = $conn->query("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{$expectedDb}'");
+                $exists = ($dbCheck && $dbCheck->num_rows > 0);
+                $tableCount = 0;
+                if ($exists) {
+                    $tRes = $conn->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{$expectedDb}'");
+                    $tableCount = $tRes ? (int)$tRes->fetch_row()[0] : 0;
+                    if ($tableCount >= 8) {
+                        $total_org_dbs_ready++;
+                    }
+                }
+                $org_dbs_telemetry[] = [
+                    'id'       => (int)$c['id'],
+                    'code'     => $c['code'],
+                    'name'     => $c['name'],
+                    'database' => $expectedDb,
+                    'exists'   => $exists,
+                    'tables'   => $tableCount
+                ];
+            }
+        }
+    } catch (Throwable $e) {
+        $org_dbs_telemetry = [];
     }
 }
 
 // Uploads directories check
 $uploadDirs = [
-    'uploads/achievements/'   => dirname(__DIR__, 2) . '/uploads/achievements/',
-    'uploads/applications/'   => dirname(__DIR__, 2) . '/uploads/applications/',
-    'uploads/avatars/'        => dirname(__DIR__, 2) . '/uploads/avatars/',
+    'app/uploads/achievements/'   => dirname(__DIR__) . '/uploads/achievements/',
+    'app/uploads/applications/'   => dirname(__DIR__) . '/uploads/applications/',
+    'app/uploads/avatars/'        => dirname(__DIR__) . '/uploads/avatars/',
+    'app/uploads/signatures/'     => dirname(__DIR__) . '/uploads/signatures/',
+    'app/uploads/stamps/'         => dirname(__DIR__) . '/uploads/stamps/',
 ];
-foreach ($uploadDirs as $rel => $abs) {
-    if (!is_dir($abs)) {
-        @mkdir($abs, 0755, true);
-    }
-}
+ensureUploadDirectories($uploadDirs);
 
 // Network and LAN IP Detection
 $hostName = gethostname();
@@ -352,6 +1359,8 @@ $allInstalled = ($installedCount === $totalExpected);
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
   <!-- Font Awesome -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <!-- Modern Centered System Notification & Decision Engine -->
+  <script src="../js/system-notifications.js?v=<?= filemtime(__DIR__ . '/../js/system-notifications.js') ?>"></script>
   <!-- QR Code Generator -->
   <script src="../../app/js/qrcode.min.js"></script>
 
@@ -661,11 +1670,16 @@ $allInstalled = ($installedCount === $totalExpected);
       <h1><i class="fa-solid fa-server"></i> SMS Database Setup &amp; Deployment</h1>
       <p>Configure local database, run schema migrations, or deploy to other devices on the network.</p>
     </div>
-    <div>
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
       <?php if ($db_connected): ?>
         <div class="status-pill"><span class="status-dot online"></span> MySQL Connected (<?= htmlspecialchars(DB_NAME) ?>)</div>
       <?php else: ?>
         <div class="status-pill"><span class="status-dot offline"></span> MySQL Disconnected</div>
+      <?php endif; ?>
+      <?php if ($is_locked): ?>
+        <div class="status-pill" style="background: rgba(239, 68, 68, 0.25); border-color: rgba(239, 68, 68, 0.5);"><i class="fa-solid fa-lock text-danger"></i> Installer Locked</div>
+      <?php else: ?>
+        <div class="status-pill" style="background: rgba(16, 185, 129, 0.25); border-color: rgba(16, 185, 129, 0.5);"><i class="fa-solid fa-lock-open text-success"></i> Installer Unlocked</div>
       <?php endif; ?>
     </div>
   </div>
@@ -768,27 +1782,87 @@ $allInstalled = ($installedCount === $totalExpected);
       </div>
     </div>
 
+    <!-- ONE-CLICK AUTOMATED FULL SETUP HERO BANNER -->
+    <div style="background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%); color: white; padding: 22px 24px; border-radius: 12px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; box-shadow: 0 4px 14px rgba(37,99,235,0.25);">
+      <div>
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 1.15rem; font-weight: 800;">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 🚀 One-Click Automated Full Setup
+          <span style="font-size: 0.72rem; background: rgba(255,255,255,0.25); padding: 3px 10px; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.5px;">Recommended for New Devices</span>
+        </div>
+        <p style="font-size: 0.88rem; color: #dbeafe; margin-top: 6px; max-width: 660px; line-height: 1.45;">
+          Zero-configuration automated installer. Automatically creates database <code><?= htmlspecialchars(DB_NAME) ?></code> if missing, executes master schema, seeds verified accounts &amp; clubs from <code>SYSTEM_ACCOUNTS.md</code>, and provisions file storage in one click.
+        </p>
+      </div>
+      <div>
+        <form method="POST" style="margin: 0;">
+          <input type="hidden" name="action" value="full_setup"/>
+          <button type="submit" class="btn" style="background: #ffffff; color: #1e3a8a; font-weight: 800; font-size: 0.96rem; padding: 13px 24px; border-radius: 9px; box-shadow: 0 4px 12px rgba(0,0,0,0.18);" onclick="event.preventDefault(); window.showConfirmModal('Run One-Click Full Setup?', 'Do you want to run one-click full setup? This will automatically initialize master database tables, seed verified accounts, and provision accredited clubs.', { type: 'decision', confirmText: 'Yes, Run Full Setup' }).then(yes => { if(yes) this.form.submit(); });">
+            <i class="fa-solid fa-bolt" style="color: #f59e0b;"></i> Run One-Click Full Setup
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- GRANULAR CONTROLS -->
     <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; background: #f8fafc; padding: 18px; border-radius: 10px; border: 1px solid var(--border);">
       <div>
-        <h4 style="font-size: 1rem; font-weight: 700; margin-bottom: 4px;">Initialize 18 Canonical Tables</h4>
-        <p style="font-size: 0.86rem; color: var(--text-muted);">
-          Executes master <code>database/sms_db.sql</code> with all foreign keys, indexes, modern ENUMs, and seed data.
+        <h4 style="font-size: 0.98rem; font-weight: 700; margin-bottom: 4px;">Granular Setup &amp; Maintenance Tools</h4>
+        <p style="font-size: 0.84rem; color: var(--text-muted);">
+          Perform individual schema migrations, seed verified accounts, update templates, or toggle security lock.
         </p>
       </div>
       <div style="display: flex; gap: 10px; flex-wrap: wrap;">
         <form method="POST" style="display: inline-block;">
           <input type="hidden" name="action" value="init_database"/>
-          <button type="submit" class="btn btn-primary" onclick="return confirm('Initialize / synchronize all 18 tables?');">
-            <i class="fa-solid fa-rocket"></i> <?= $allInstalled ? 'Re-Sync Database Schema' : 'Install All 18 Tables' ?>
+          <button type="submit" class="btn btn-primary" onclick="event.preventDefault(); window.showConfirmModal('Initialize / Synchronize Tables?', 'Do you want to initialize and synchronize all <?= $totalExpected ?> database tables?', { type: 'info', confirmText: 'Yes, Initialize Tables' }).then(yes => { if(yes) this.form.submit(); });">
+            <i class="fa-solid fa-rocket"></i> <?= $allInstalled ? "Re-Sync {$totalExpected} Tables" : "Install All {$totalExpected} Tables" ?>
+          </button>
+        </form>
+
+        <form method="POST" style="display: inline-block;">
+          <input type="hidden" name="action" value="patch_schemas"/>
+          <button type="submit" class="btn btn-secondary" onclick="event.preventDefault(); window.showConfirmModal('Patch Schemas & Workflows?', 'Do you want to apply schema and multi-stage workflow column patches?', { type: 'info', confirmText: 'Yes, Patch Schemas' }).then(yes => { if(yes) this.form.submit(); });">
+            <i class="fa-solid fa-screwdriver-wrench text-info"></i> Patch Workflows &amp; Schemas
           </button>
         </form>
 
         <form method="POST" style="display: inline-block;">
           <input type="hidden" name="action" value="seed_demo"/>
-          <button type="submit" class="btn btn-secondary">
-            <i class="fa-solid fa-seedling text-success"></i> Seed Demo Accounts &amp; Clubs
+          <button type="submit" class="btn btn-secondary" onclick="event.preventDefault(); window.showConfirmModal('Seed Official Accounts?', 'Do you want to seed official system accounts (Admin, SSC, 16 Students, 40 Advisers) and accredited club master data?', { type: 'info', confirmText: 'Yes, Seed Accounts' }).then(yes => { if(yes) this.form.submit(); });">
+            <i class="fa-solid fa-users text-primary"></i> Seed Official Accounts &amp; Master Data
           </button>
         </form>
+
+        <form method="POST" style="display: inline-block;">
+          <input type="hidden" name="action" value="provision_org_dbs"/>
+          <button type="submit" class="btn btn-secondary" onclick="event.preventDefault(); window.showConfirmModal('Provision Dedicated Org Databases?', 'Do you want to provision and sync all dedicated organization databases?', { type: 'info', confirmText: 'Yes, Provision Org DBs' }).then(yes => { if(yes) this.form.submit(); });">
+            <i class="fa-solid fa-server text-success"></i> Provision / Resync Org DBs
+          </button>
+        </form>
+
+        <form method="POST" style="display: inline-block;">
+          <input type="hidden" name="action" value="wipe_simulation"/>
+          <button type="submit" class="btn btn-secondary" style="color: #b91c1c; border-color: #fca5a5;" onclick="event.preventDefault(); window.showConfirmModal('Wipe All Simulation Data?', 'Do you want to wipe all simulation events, budgets, attendance, achievements, announcements, and mock memberships across master and all 42 organization databases?', { type: 'error', danger: true, confirmText: 'Yes, Wipe Simulation Data' }).then(yes => { if(yes) this.form.submit(); });">
+            <i class="fa-solid fa-broom text-danger"></i> Wipe All Simulation Data
+          </button>
+        </form>
+
+
+        <?php if ($is_locked): ?>
+          <form method="POST" style="display: inline-block;">
+            <input type="hidden" name="action" value="unlock_setup"/>
+            <button type="submit" class="btn btn-secondary" onclick="event.preventDefault(); window.showConfirmModal('Unlock Setup?', 'Do you want to unlock the installer to enable schema migrations and adjustments?', { type: 'warning', confirmText: 'Yes, Unlock Setup' }).then(yes => { if(yes) this.form.submit(); });">
+              <i class="fa-solid fa-lock-open text-warning"></i> Unlock Setup
+            </button>
+          </form>
+        <?php else: ?>
+          <form method="POST" style="display: inline-block;">
+            <input type="hidden" name="action" value="lock_setup"/>
+            <button type="submit" class="btn btn-secondary" onclick="event.preventDefault(); window.showConfirmModal('Lock Setup?', 'Do you want to lock the setup to prevent unauthorized changes or migrations?', { type: 'warning', confirmText: 'Yes, Lock Setup' }).then(yes => { if(yes) this.form.submit(); });">
+              <i class="fa-solid fa-lock text-primary"></i> Lock Setup
+            </button>
+          </form>
+        <?php endif; ?>
 
         <a href="../auth/signin.php" class="btn btn-success">
           <i class="fa-solid fa-right-to-bracket"></i> Go to Sign In
@@ -832,6 +1906,61 @@ $allInstalled = ($installedCount === $totalExpected);
     </div>
   </div>
 
+  <!-- Dedicated Organization Databases Card -->
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <h3><i class="fa-solid fa-server text-primary"></i> Dedicated Organization Databases (42 Databases)</h3>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span class="badge <?= $total_org_dbs_ready === count($org_dbs_telemetry) ? 'badge-success' : 'badge-info' ?>">
+          <?= $total_org_dbs_ready ?> / <?= count($org_dbs_telemetry) ?> Org DBs Online
+        </span>
+      </div>
+    </div>
+    <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 16px;">
+      Each accredited student organization has its own isolated, categorized MySQL database (<code>sms_org_*</code>) housing 8 categorized tables: <code>org_profile</code>, <code>org_members</code>, <code>org_events</code>, <code>org_attendance</code>, <code>org_budgets</code>, <code>org_achievements</code>, <code>org_announcements</code>, and <code>org_audit_trail</code>.
+    </p>
+    <div style="overflow-x: auto; max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px;">
+      <table class="table-list" style="margin-top: 0;">
+        <thead>
+          <tr style="position: sticky; top: 0; background: #f8fafc; z-index: 2;">
+            <th>Code</th>
+            <th>Organization Name</th>
+            <th>Dedicated Database</th>
+            <th>Tables</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php if (empty($org_dbs_telemetry)): ?>
+            <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No clubs found in master database. Run One-Click Full Setup first.</td></tr>
+          <?php else: ?>
+            <?php foreach ($org_dbs_telemetry as $odb): ?>
+              <tr>
+                <td><strong style="font-family: 'JetBrains Mono', monospace; color: #1e3a8a;"><?= htmlspecialchars($odb['code']) ?></strong></td>
+                <td><?= htmlspecialchars($odb['name']) ?></td>
+                <td><code style="font-family: 'JetBrains Mono', monospace; font-size: 0.84rem; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;"><?= htmlspecialchars($odb['database']) ?></code></td>
+                <td><span style="font-family: 'JetBrains Mono', monospace; font-weight: 600;"><?= $odb['tables'] ?>/8</span></td>
+                <td>
+                  <?php if ($odb['exists'] && $odb['tables'] >= 8): ?>
+                    <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> Online</span>
+                  <?php elseif ($odb['exists']): ?>
+                    <span class="badge badge-info"><i class="fa-solid fa-triangle-exclamation"></i> Partial (<?= $odb['tables'] ?>)</span>
+                  <?php else: ?>
+                    <span class="badge badge-danger"><i class="fa-solid fa-circle-xmark"></i> Not Created</span>
+                  <?php endif; ?>
+                </td>
+                <td>
+                  <span class="badge badge-info" style="font-size:0.75rem;">Provisioned</span>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          <?php endif; ?>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Official System Accounts Directory (Recognized by Database) -->
   <div class="card">
     <div class="card-header">
@@ -847,29 +1976,29 @@ $allInstalled = ($installedCount === $totalExpected);
       <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 12px 14px;">
         <span style="font-size: 0.74rem; font-weight: 800; color: #1d4ed8; text-transform: uppercase;">Central Admin Password</span>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-          <code style="font-size: 0.92rem; font-weight: 700; color: #1e3a8a;">Bcp@Admin2026!</code>
-          <button type="button" class="copy-btn" onclick="copyText('Bcp@Admin2026!')"><i class="fa-regular fa-copy"></i></button>
+          <code style="font-size: 0.92rem; font-weight: 700; color: #1e3a8a;"><?= htmlspecialchars($admin_plain) ?></code>
+          <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($admin_plain, ENT_QUOTES) ?>')"><i class="fa-regular fa-copy"></i></button>
         </div>
       </div>
       <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 12px 14px;">
         <span style="font-size: 0.74rem; font-weight: 800; color: #b45309; text-transform: uppercase;">SSC Officer Password</span>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-          <code style="font-size: 0.92rem; font-weight: 700; color: #78350f;">Bcp@SSC2026!</code>
-          <button type="button" class="copy-btn" onclick="copyText('Bcp@SSC2026!')"><i class="fa-regular fa-copy"></i></button>
+          <code style="font-size: 0.92rem; font-weight: 700; color: #78350f;"><?= htmlspecialchars($ssc_plain) ?></code>
+          <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($ssc_plain, ENT_QUOTES) ?>')"><i class="fa-regular fa-copy"></i></button>
         </div>
       </div>
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 12px 14px;">
         <span style="font-size: 0.74rem; font-weight: 800; color: #15803d; text-transform: uppercase;">Student Password (16 Programs)</span>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-          <code style="font-size: 0.92rem; font-weight: 700; color: #14532d;">Bcp@Test2026!</code>
-          <button type="button" class="copy-btn" onclick="copyText('Bcp@Test2026!')"><i class="fa-regular fa-copy"></i></button>
+          <code style="font-size: 0.92rem; font-weight: 700; color: #14532d;"><?= htmlspecialchars($std_plain) ?></code>
+          <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($std_plain, ENT_QUOTES) ?>')"><i class="fa-regular fa-copy"></i></button>
         </div>
       </div>
       <div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 10px; padding: 12px 14px;">
         <span style="font-size: 0.74rem; font-weight: 800; color: #7e22ce; text-transform: uppercase;">Faculty Adviser Password (40 Orgs)</span>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-          <code style="font-size: 0.92rem; font-weight: 700; color: #581c87;">Bcp@Adviser2026!</code>
-          <button type="button" class="copy-btn" onclick="copyText('Bcp@Adviser2026!')"><i class="fa-regular fa-copy"></i></button>
+          <code style="font-size: 0.92rem; font-weight: 700; color: #581c87;"><?= htmlspecialchars($adv_plain) ?></code>
+          <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($adv_plain, ENT_QUOTES) ?>')"><i class="fa-regular fa-copy"></i></button>
         </div>
       </div>
     </div>
@@ -898,7 +2027,7 @@ $allInstalled = ($installedCount === $totalExpected);
           <div style="font-size: 1.05rem; font-weight: 700; color: #0f172a; margin-bottom: 6px;">System Admin</div>
           <div class="account-cred" style="margin-bottom: 4px;">Username: <strong>scc.admin</strong> <button type="button" class="copy-btn" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyText('scc.admin')"><i class="fa-regular fa-copy"></i></button></div>
           <div class="account-cred" style="margin-bottom: 4px;">Email: <strong>admin@bcp.edu.ph</strong></div>
-          <div class="account-cred" style="margin-bottom: 6px;">Password: <strong>Bcp@Admin2026!</strong> <button type="button" class="copy-btn" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyText('Bcp@Admin2026!')"><i class="fa-regular fa-copy"></i></button></div>
+          <div class="account-cred" style="margin-bottom: 6px;">Password: <strong><?= htmlspecialchars($admin_plain) ?></strong> <button type="button" class="copy-btn" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyText('<?= htmlspecialchars($admin_plain, ENT_QUOTES) ?>')"><i class="fa-regular fa-copy"></i></button></div>
           <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px;">
             Full governance, institutional oversight, system settings, and user management.
           </div>
@@ -912,7 +2041,7 @@ $allInstalled = ($installedCount === $totalExpected);
           <div style="font-size: 1.05rem; font-weight: 700; color: #0f172a; margin-bottom: 6px;">SSC Officer</div>
           <div class="account-cred" style="margin-bottom: 4px;">Username: <strong>ssc.officer</strong> <button type="button" class="copy-btn" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyText('ssc.officer')"><i class="fa-regular fa-copy"></i></button></div>
           <div class="account-cred" style="margin-bottom: 4px;">Email: <strong>ssc@bcp.edu.ph</strong></div>
-          <div class="account-cred" style="margin-bottom: 6px;">Password: <strong>Bcp@SSC2026!</strong> <button type="button" class="copy-btn" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyText('Bcp@SSC2026!')"><i class="fa-regular fa-copy"></i></button></div>
+          <div class="account-cred" style="margin-bottom: 6px;">Password: <strong><?= htmlspecialchars($ssc_plain) ?></strong> <button type="button" class="copy-btn" style="padding: 2px 6px; font-size: 0.72rem;" onclick="copyText('<?= htmlspecialchars($ssc_plain, ENT_QUOTES) ?>')"><i class="fa-regular fa-copy"></i></button></div>
           <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 6px;">
             Inter-club activity approvals, budget allocations, achievement endorsements, and campus elections.
           </div>
@@ -968,7 +2097,7 @@ $allInstalled = ($installedCount === $totalExpected);
                   <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($sun) ?>')" title="Copy Username">
                     <i class="fa-regular fa-copy"></i>
                   </button>
-                  <button type="button" class="copy-btn" onclick="copyText('Bcp@Test2026!')" title="Copy Password">
+                  <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($std_plain, ENT_QUOTES) ?>')" title="Copy Password">
                     <i class="fa-solid fa-key"></i>
                   </button>
                 </td>
@@ -1049,7 +2178,7 @@ $allInstalled = ($installedCount === $totalExpected);
                   <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($un) ?>')" title="Copy Username">
                     <i class="fa-regular fa-copy"></i>
                   </button>
-                  <button type="button" class="copy-btn" onclick="copyText('Bcp@Adviser2026!')" title="Copy Password">
+                  <button type="button" class="copy-btn" onclick="copyText('<?= htmlspecialchars($adv_plain, ENT_QUOTES) ?>')" title="Copy Password">
                     <i class="fa-solid fa-key"></i>
                   </button>
                 </td>
@@ -1085,11 +2214,15 @@ $allInstalled = ($installedCount === $totalExpected);
   }
 
   function copyText(text) {
-    navigator.clipboard.writeText(text).then(() => {
-      alert('Copied to clipboard: ' + text);
-    }).catch(() => {
-      prompt('Copy text:', text);
-    });
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        window.showSystemModal({ title: 'Copied to Clipboard', message: text, type: 'success' });
+      }).catch(() => {
+        window.showDecisionModal('Copy Credentials', 'Select and copy the text below:', { defaultValue: text });
+      });
+    } else {
+      window.showDecisionModal('Copy Credentials', 'Select and copy the text below:', { defaultValue: text });
+    }
   }
 
   // Generate QR code for mobile connection

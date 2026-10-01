@@ -26,7 +26,11 @@ CREATE TABLE `users` (
   `last_name` VARCHAR(100) NOT NULL,
   `password_hash` VARCHAR(255) NOT NULL,
   `role` ENUM('admin', 'student', 'club_adviser', 'ssc') NOT NULL DEFAULT 'student',
+  `status` ENUM('Active', 'Inactive') NOT NULL DEFAULT 'Active',
   `profile_pic` VARCHAR(255) DEFAULT NULL,
+  `last_login` DATETIME DEFAULT NULL,
+  `last_password_change` DATETIME DEFAULT NULL,
+  `last_mfa_verified_at` DATETIME DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -36,6 +40,51 @@ CREATE TABLE `users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
+-- 1b. Table: `profile_photos`
+-- Subsystem: User Uploaded Profile Pictures & Avatars History
+-- ============================================================
+DROP TABLE IF EXISTS `profile_photos`;
+CREATE TABLE `profile_photos` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT(10) UNSIGNED NOT NULL,
+  `file_name` VARCHAR(255) NOT NULL,
+  `file_path` VARCHAR(255) NOT NULL,
+  `file_size` INT(10) UNSIGNED NOT NULL,
+  `mime_type` VARCHAR(100) NOT NULL DEFAULT 'image/jpeg',
+  `is_current` TINYINT(1) NOT NULL DEFAULT 1,
+  `uploaded_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_photos` (`user_id`),
+  KEY `idx_is_current` (`is_current`),
+  CONSTRAINT `fk_profile_photos_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 1c. Table: `mfa_codes`
+-- Subsystem: Multi-Factor Authentication & Email OTP Codes
+-- ============================================================
+DROP TABLE IF EXISTS `mfa_codes`;
+CREATE TABLE `mfa_codes` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT(10) UNSIGNED NOT NULL,
+  `email` VARCHAR(150) NOT NULL,
+  `code` VARCHAR(10) NOT NULL,
+  `purpose` ENUM('login', 'password_reset', 'account_update') NOT NULL DEFAULT 'login',
+  `expires_at` DATETIME NOT NULL,
+  `is_used` TINYINT(1) NOT NULL DEFAULT 0,
+  `attempts` INT NOT NULL DEFAULT 0,
+  `max_attempts` INT NOT NULL DEFAULT 5,
+  `ip_address` VARCHAR(45) NULL,
+  `user_agent` VARCHAR(255) NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_mfa_user_purpose` (`user_id`, `purpose`, `is_used`, `expires_at`),
+  KEY `idx_mfa_code` (`code`),
+  CONSTRAINT `fk_mfa_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- ============================================================
 -- 2. Table: `students`
 -- Subsystem: Student Records & Academic Mapping
 -- ============================================================
@@ -43,20 +92,20 @@ DROP TABLE IF EXISTS `students`;
 CREATE TABLE `students` (
   `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
   `user_id` INT(10) UNSIGNED DEFAULT NULL,
-  `student_number` VARCHAR(50) DEFAULT NULL,
+  `student_number` VARCHAR(50) NOT NULL,
   `first_name` VARCHAR(100) NOT NULL,
   `last_name` VARCHAR(100) NOT NULL,
-  `birthday` DATE NOT NULL,
+  `birthday` DATE DEFAULT NULL,
   `course` VARCHAR(150) NOT NULL,
   `year_level` VARCHAR(50) NOT NULL,
-  `section` VARCHAR(50) NOT NULL,
-  `phone` VARCHAR(20) NOT NULL,
+  `section` VARCHAR(50) NOT NULL DEFAULT '',
+  `phone` VARCHAR(20) NOT NULL DEFAULT '',
   `status` ENUM('Active', 'Inactive') NOT NULL DEFAULT 'Active',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_students_number` (`student_number`),
   KEY `idx_students_user` (`user_id`),
-  KEY `idx_students_number` (`student_number`),
   CONSTRAINT `fk_students_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -70,7 +119,9 @@ CREATE TABLE `clubs` (
   `code` VARCHAR(20) NOT NULL,
   `name` VARCHAR(150) NOT NULL,
   `category` ENUM('Academic', 'Cultural', 'Sports', 'Advocacy', 'Religious') NOT NULL DEFAULT 'Academic',
+  `sub_category` VARCHAR(150) DEFAULT NULL,
   `description` TEXT DEFAULT NULL,
+  `adviser_user_id` INT(10) UNSIGNED DEFAULT NULL,
   `adviser_name` VARCHAR(150) DEFAULT 'Unassigned',
   `status` ENUM('Active', 'Pending Charter', 'Suspended') NOT NULL DEFAULT 'Active',
   `program` VARCHAR(150) DEFAULT NULL,
@@ -78,7 +129,9 @@ CREATE TABLE `clubs` (
   `deleted_at` TIMESTAMP NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_clubs_code` (`code`),
-  KEY `idx_clubs_status` (`status`)
+  KEY `idx_clubs_adviser_user` (`adviser_user_id`),
+  KEY `idx_clubs_status` (`status`),
+  CONSTRAINT `fk_clubs_adviser_user` FOREIGN KEY (`adviser_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -91,11 +144,14 @@ CREATE TABLE `club_memberships` (
   `club_id` INT(10) UNSIGNED NOT NULL,
   `user_id` INT(10) UNSIGNED NOT NULL,
   `role` VARCHAR(50) DEFAULT 'Member',
-  `status` ENUM('Active', 'Pending', 'Rejected') NOT NULL DEFAULT 'Active',
+  `status` ENUM('Active', 'Pending', 'Rejected', 'Returned') NOT NULL DEFAULT 'Pending',
   `joined_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `approved_by` INT(10) UNSIGNED DEFAULT NULL,
   `letter_intent` VARCHAR(255) DEFAULT NULL,
   `letter_endorsement` VARCHAR(255) DEFAULT NULL,
+  `adviser_review` VARCHAR(50) NOT NULL DEFAULT 'Pending Adviser',
+  `ssc_review` VARCHAR(50) NOT NULL DEFAULT 'Pending SSC',
+  `review_notes` TEXT DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_club_user` (`club_id`, `user_id`),
   KEY `idx_cm_user` (`user_id`),
@@ -148,7 +204,9 @@ CREATE TABLE `events` (
   `description` TEXT DEFAULT NULL,
   `event_date` DATETIME NOT NULL,
   `venue` VARCHAR(150) NOT NULL,
-  `status` ENUM('Upcoming', 'Approved', 'Completed', 'Pending SSC', 'Pending Admin', 'Rejected') NOT NULL DEFAULT 'Pending SSC',
+  `expected_attendees` INT(10) UNSIGNED DEFAULT 0,
+  `attachment` VARCHAR(255) DEFAULT NULL,
+  `status` ENUM('Upcoming', 'Approved', 'Completed', 'Pending SSC', 'Pending Admin', 'Returned', 'Rejected') NOT NULL DEFAULT 'Pending SSC',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `created_by` INT(10) UNSIGNED DEFAULT NULL,
   `endorsement_notes` TEXT DEFAULT NULL,
@@ -191,10 +249,16 @@ CREATE TABLE `budget_requests` (
   `club_id` INT(10) UNSIGNED NOT NULL,
   `title` VARCHAR(200) NOT NULL,
   `description` TEXT DEFAULT NULL,
+  `line_items` JSON DEFAULT NULL,
   `amount` DECIMAL(10,2) NOT NULL,
-  `status` ENUM('Pending Adviser', 'Pending SSC', 'Pending Admin', 'Disbursed', 'Rejected') NOT NULL DEFAULT 'Pending Adviser',
+  `recommended_amount` DECIMAL(10,2) DEFAULT NULL,
+  `final_approved_amount` DECIMAL(10,2) DEFAULT NULL,
+  `status` ENUM('Pending Adviser', 'Pending SSC', 'Pending Admin', 'Approved', 'Disbursed', 'Rejected', 'Returned') NOT NULL DEFAULT 'Pending Adviser',
   `requested_by` INT(10) UNSIGNED NOT NULL,
   `notes` TEXT DEFAULT NULL,
+  `disbursed_at` TIMESTAMP NULL DEFAULT NULL,
+  `disbursement_reference` VARCHAR(100) DEFAULT NULL,
+  `disbursed_by` INT(10) UNSIGNED DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted_at` TIMESTAMP NULL DEFAULT NULL,
@@ -218,6 +282,8 @@ CREATE TABLE `attendance_logs` (
   `check_in` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `method` ENUM('QR', 'RFID', 'Manual', 'QR_SELF') NOT NULL DEFAULT 'QR',
   `logged_by` INT(10) UNSIGNED DEFAULT NULL,
+  `override_reason` TEXT DEFAULT NULL,
+  `status` VARCHAR(50) NOT NULL DEFAULT 'Valid',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_event_user` (`event_id`, `user_id`),
   KEY `idx_att_user` (`user_id`),
@@ -237,12 +303,19 @@ CREATE TABLE `elections` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `election_code` VARCHAR(50) NOT NULL,
   `club_id` INT(11) NOT NULL,
+  `scope` VARCHAR(50) DEFAULT 'Club',
   `title` VARCHAR(255) NOT NULL,
   `description` TEXT DEFAULT NULL,
+  `election_type` VARCHAR(100) DEFAULT 'Student Governance',
+  `starts_at` DATETIME DEFAULT NULL,
   `closes_at` DATETIME DEFAULT NULL,
-  `status` ENUM('open', 'closed', 'counting') DEFAULT 'open',
+  `status` VARCHAR(50) DEFAULT 'active',
+  `eligible_voters` INT DEFAULT 0,
   `positions` TEXT DEFAULT NULL,
   `created_by` INT(11) NOT NULL,
+  `verified_at` DATETIME DEFAULT NULL,
+  `verified_by` INT(11) DEFAULT NULL,
+  `audit_notes` TEXT DEFAULT NULL,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_election_code` (`election_code`),
@@ -258,6 +331,7 @@ DROP TABLE IF EXISTS `election_candidates`;
 CREATE TABLE `election_candidates` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `election_id` INT(11) NOT NULL,
+  `user_id` INT(11) DEFAULT NULL,
   `candidate_code` VARCHAR(50) NOT NULL,
   `name` VARCHAR(150) NOT NULL,
   `position` VARCHAR(100) NOT NULL,
@@ -268,6 +342,8 @@ CREATE TABLE `election_candidates` (
   `platform_tag` TEXT DEFAULT NULL,
   `achievements` TEXT DEFAULT NULL,
   `votes_count` INT(11) DEFAULT 0,
+  `is_appointed` TINYINT(1) DEFAULT 0,
+  `status` VARCHAR(50) DEFAULT 'Active',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_cand_election` (`election_id`),
@@ -282,13 +358,31 @@ DROP TABLE IF EXISTS `election_votes`;
 CREATE TABLE `election_votes` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `election_id` INT(11) NOT NULL,
-  `user_id` INT(11) NOT NULL,
+  `user_id` INT(11) DEFAULT NULL,
+  `ballot_token` VARCHAR(255) NULL,
+  `ballot_data` TEXT NULL,
   `votes_json` TEXT NOT NULL,
+  `cast_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `user_election` (`election_id`, `user_id`),
   KEY `idx_vote_election` (`election_id`),
-  KEY `idx_vote_user` (`user_id`)
+  KEY `idx_ballot_token` (`ballot_token`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ============================================================
+-- 12b. Table: `election_voters`
+-- Subsystem: Election Voter Eligibility & Audit Log
+-- ============================================================
+DROP TABLE IF EXISTS `election_voters`;
+CREATE TABLE `election_voters` (
+  `id` INT(11) NOT NULL AUTO_INCREMENT,
+  `election_id` INT(11) NOT NULL,
+  `user_id` INT(11) NOT NULL,
+  `eligibility_status` VARCHAR(50) DEFAULT 'Eligible',
+  `voted_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_election_voter` (`election_id`, `user_id`),
+  KEY `idx_ev_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ============================================================
@@ -324,19 +418,47 @@ CREATE TABLE `achievements` (
 DROP TABLE IF EXISTS `org_announcements`;
 CREATE TABLE `org_announcements` (
   `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `club_id` INT(10) UNSIGNED NOT NULL,
+  `club_id` INT(10) UNSIGNED NULL,
+  `scope` ENUM('System', 'Council', 'Club') NOT NULL DEFAULT 'Club',
   `author_id` INT(10) UNSIGNED NOT NULL,
   `title` VARCHAR(250) NOT NULL,
-  `category` ENUM('Event', 'Activity', 'Requirement / Submission', 'Meeting', 'General') NOT NULL DEFAULT 'General',
+  `category` VARCHAR(100) NOT NULL DEFAULT 'General',
   `priority` ENUM('Normal', 'Important', 'Urgent') NOT NULL DEFAULT 'Normal',
+  `status` ENUM('Draft', 'Published', 'Active', 'Archived') NOT NULL DEFAULT 'Published',
+  `is_pinned` TINYINT(1) NOT NULL DEFAULT 0,
+  `expires_at` DATETIME NULL,
   `content` TEXT NOT NULL,
   `target_group` VARCHAR(100) DEFAULT 'All Members',
+  `channels` VARCHAR(100) DEFAULT 'In-App',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_oa_club` (`club_id`),
   KEY `idx_oa_author` (`author_id`),
-  CONSTRAINT `fk_oa_club` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
+  KEY `idx_oa_scope_status` (`scope`, `status`),
   CONSTRAINT `fk_oa_author` FOREIGN KEY (`author_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 14b. Table: `notification_templates`
+-- Subsystem: Official Communication & Standard Notification Layouts
+-- ============================================================
+DROP TABLE IF EXISTS `notification_templates`;
+CREATE TABLE IF NOT EXISTS `notification_templates` (
+  `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  `code` VARCHAR(50) UNIQUE NOT NULL,
+  `title` VARCHAR(150) NOT NULL,
+  `category` VARCHAR(100) NOT NULL DEFAULT 'System Notice',
+  `subject_template` VARCHAR(255) NOT NULL,
+  `body_template` TEXT NOT NULL,
+  `default_priority` ENUM('Normal', 'Important', 'Urgent') DEFAULT 'Normal',
+  `default_target` VARCHAR(100) DEFAULT 'All Campus Users',
+  `status` ENUM('Active', 'Archived') DEFAULT 'Active',
+  `created_by` INT UNSIGNED NOT NULL DEFAULT 1,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_tpl_cat` (`category`),
+  INDEX `idx_tpl_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -364,17 +486,46 @@ CREATE TABLE `notifications` (
 DROP TABLE IF EXISTS `audit_logs`;
 CREATE TABLE `audit_logs` (
   `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
-  `user_id` INT(10) UNSIGNED NOT NULL,
+  `user_id` INT(10) UNSIGNED DEFAULT NULL,
+  `user_display` VARCHAR(150) DEFAULT NULL,
   `action` VARCHAR(100) NOT NULL,
   `target_table` VARCHAR(100) DEFAULT NULL,
   `target_id` INT(10) UNSIGNED DEFAULT NULL,
   `detail` TEXT DEFAULT NULL,
   `ip_address` VARCHAR(50) DEFAULT NULL,
+  `severity` ENUM('info', 'warning', 'critical') NOT NULL DEFAULT 'info',
+  `resolution_status` ENUM('unresolved', 'investigating', 'resolved') NOT NULL DEFAULT 'unresolved',
+  `resolved_by` INT(10) UNSIGNED DEFAULT NULL,
+  `resolution_notes` TEXT DEFAULT NULL,
+  `resolved_at` TIMESTAMP NULL DEFAULT NULL,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_audit_user` (`user_id`),
   KEY `idx_audit_created` (`created_at`),
-  CONSTRAINT `fk_audit_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+  KEY `idx_audit_severity` (`severity`),
+  KEY `idx_audit_status` (`resolution_status`),
+  CONSTRAINT `fk_audit_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================
+-- 16b. Table: `workflow_history`
+-- Subsystem: Multi-Tier Approval Workflow State Transitions
+-- ============================================================
+DROP TABLE IF EXISTS `workflow_history`;
+CREATE TABLE `workflow_history` (
+  `id` BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `module` VARCHAR(80) NOT NULL,
+  `record_id` BIGINT(20) UNSIGNED NOT NULL,
+  `from_status` VARCHAR(50) DEFAULT NULL,
+  `to_status` VARCHAR(50) NOT NULL,
+  `action` VARCHAR(80) NOT NULL,
+  `performed_by` INT(10) UNSIGNED DEFAULT NULL,
+  `remarks` TEXT DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_workflow_record` (`module`, `record_id`),
+  KEY `idx_workflow_user` (`performed_by`),
+  CONSTRAINT `fk_workflow_user` FOREIGN KEY (`performed_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -407,6 +558,37 @@ CREATE TABLE `system_settings` (
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`setting_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ============================================================
+-- 19. Table: `academic_programs`
+-- Subsystem: Academic Degree Programs & Departments
+-- ============================================================
+DROP TABLE IF EXISTS `academic_programs`;
+CREATE TABLE IF NOT EXISTS `academic_programs` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `code` VARCHAR(20) NOT NULL,
+  `name` VARCHAR(150) NOT NULL,
+  `department` VARCHAR(100) NOT NULL,
+  `status` ENUM('Active', 'Inactive') DEFAULT 'Active',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `academic_programs` (`id`, `code`, `name`, `department`, `status`) VALUES
+(1, 'BSIT', 'Bachelor of Science in Information Technology', 'College of Computer Studies', 'Active'),
+(2, 'BSCS', 'Bachelor of Science in Computer Science', 'College of Computer Studies', 'Active'),
+(3, 'BSCpE', 'Bachelor of Science in Computer Engineering', 'College of Engineering', 'Active'),
+(4, 'BSHM', 'Bachelor of Science in Hospitality Management', 'College of Hospitality Management', 'Active'),
+(5, 'BSTM', 'Bachelor of Science in Tourism Management', 'College of Hospitality Management', 'Active'),
+(6, 'BSBA', 'Bachelor of Science in Business Administration', 'College of Business and Accountancy', 'Active'),
+(7, 'BSA', 'Bachelor of Science in Accountancy', 'College of Business and Accountancy', 'Active'),
+(8, 'BEEd', 'Bachelor of Elementary Education', 'College of Education', 'Active'),
+(9, 'BSEd', 'Bachelor of Secondary Education', 'College of Education', 'Active'),
+(10, 'BAP', 'Bachelor of Arts in Psychology', 'College of Arts and Sciences', 'Active'),
+(11, 'BSN', 'Bachelor of Science in Nursing', 'College of Nursing', 'Active'),
+(12, 'BSCrim', 'Bachelor of Science in Criminology', 'College of Criminology', 'Active')
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`), `department`=VALUES(`department`), `status`=VALUES(`status`);
 
 SET FOREIGN_KEY_CHECKS = 1;
 
@@ -547,46 +729,75 @@ INSERT INTO `club_memberships` (`id`, `club_id`, `user_id`, `role`, `status`, `a
 (2, 1, 2, 'Member',  'Active', 3)
 ON DUPLICATE KEY UPDATE `role`=VALUES(`role`);
 
--- 5. Seed Events
-INSERT INTO `events` (`id`, `club_id`, `event_type`, `title`, `description`, `event_date`, `venue`, `status`, `created_by`) VALUES
-(1, 1, 'Club', 'Annual Tech Symposium 2026', 'A nationwide technology symposium featuring AI, Cloud Computing, and Cybersecurity workshops.', '2026-08-15 09:00:00', 'Main Auditorium', 'Approved', 59),
-(2, 1, 'Club', 'BCP Hackathon & Code Fest', '24-hour inter-college coding competition with cash prizes and industry mentors.', '2026-08-22 08:00:00', 'IT Laboratory 3', 'Approved', 59),
-(3, 12, 'Club', 'Community Outreach Drive', 'Barangay computer literacy workshop and donation drive.', '2026-09-05 08:30:00', 'Barangay Hall', 'Pending SSC', 58)
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);
-
--- 6. Event Registrations
-INSERT INTO `event_registrations` (`id`, `event_id`, `user_id`, `status`) VALUES
-(1, 1, 1, 'Registered'),
-(2, 1, 2, 'Registered')
-ON DUPLICATE KEY UPDATE `status`=VALUES(`status`);
-
--- 7. Budget Requests
-INSERT INTO `budget_requests` (`id`, `club_id`, `title`, `description`, `amount`, `status`, `requested_by`, `notes`) VALUES
-(1, 1, 'Tech Symposium Equipment & Honorarium', 'Funding for keynote speaker honorarium, certificates, and event badges.', 15000.00, 'Pending SSC', 3, 'Endorsed by Club Adviser.'),
-(2, 2, 'Hackathon Refreshments & Prizes', 'Food catering for 100 participants and trophy prizes for winners.', 25000.00, 'Pending SSC', 3, 'Pending initial SSC review.')
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);
-
--- 8. Attendance Logs
-INSERT INTO `attendance_logs` (`id`, `event_id`, `user_id`, `check_in`, `method`, `logged_by`) VALUES
-(1, 1, 1, '2026-08-15 08:55:00', 'QR', 59)
-ON DUPLICATE KEY UPDATE `check_in`=VALUES(`check_in`);
-
--- 9. Achievements
-INSERT INTO `achievements` (`id`, `club_id`, `submitted_by`, `title`, `competition`, `award_date`, `proof_file`, `status`, `verified_by`, `notes`) VALUES
-(1, 1, 1, 'Champion - National Web Development Challenge', 'PH Inter-College WebDev Expo 2025', '2025-11-20', NULL, 'Verified', 58, 'Verified and approved by SSC.')
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);
-
--- 10. Notifications
-INSERT INTO `notifications` (`id`, `user_id`, `title`, `message`, `type`, `is_read`) VALUES
-(1, 1, 'Welcome to SMS Portal', 'Your student account is active. Explore clubs and register for events!', 'info', 1)
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);
-
--- 11. System Audit Logs
-INSERT INTO `audit_logs` (`id`, `user_id`, `action`, `target_table`, `target_id`, `detail`, `ip_address`) VALUES
-(1, 59, 'system_init', 'system_settings', 1, 'Consolidated database schema initialized with 18 core tables.', '127.0.0.1')
-ON DUPLICATE KEY UPDATE `action`=VALUES(`action`);
 
 -- 12. System Settings
 INSERT INTO `system_settings` (`setting_key`, `setting_value`) VALUES
 ('gemini_api_key', '')
 ON DUPLICATE KEY UPDATE `setting_value`=VALUES(`setting_value`);
+
+-- ============================================================
+-- 14. Transactional Data (Clean Slate - Populated through Live User Workflows)
+-- ============================================================
+
+
+-- ============================================================
+-- RBAC ENGINE SCHEMAS & PERMISSION MATRIX
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `roles` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `name` VARCHAR(50) NOT NULL,
+  `display_name` VARCHAR(100) NOT NULL,
+  `description` TEXT DEFAULT NULL,
+  `status` ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_role_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `permissions` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `module` VARCHAR(50) NOT NULL,
+  `action` VARCHAR(50) NOT NULL,
+  `permission_key` VARCHAR(100) NOT NULL,
+  `description` VARCHAR(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_perm_key` (`permission_key`),
+  KEY `idx_perm_module` (`module`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `role_permissions` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `role_id` INT(10) UNSIGNED NOT NULL,
+  `permission_id` INT(10) UNSIGNED NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_role_perm` (`role_id`, `permission_id`),
+  KEY `idx_rp_role` (`role_id`),
+  KEY `idx_rp_perm` (`permission_id`),
+  CONSTRAINT `fk_rp_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_rp_perm` FOREIGN KEY (`permission_id`) REFERENCES `permissions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `user_roles` (
+  `id` INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `user_id` INT(10) UNSIGNED NOT NULL,
+  `role_id` INT(10) UNSIGNED NOT NULL,
+  `assigned_by` INT(10) UNSIGNED DEFAULT NULL,
+  `assigned_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_user_role` (`user_id`, `role_id`),
+  KEY `idx_ur_user` (`user_id`),
+  KEY `idx_ur_role` (`role_id`),
+  CONSTRAINT `fk_ur_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ur_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Containerized environment permission setup for dedicated organization databases
+CREATE USER IF NOT EXISTS 'sms_user'@'%' IDENTIFIED BY 'sms_secure_password';
+GRANT ALL PRIVILEGES ON `sms_org_%`.* TO 'sms_user'@'%';
+GRANT ALL PRIVILEGES ON `sms_db`.* TO 'sms_user'@'%';
+FLUSH PRIVILEGES;
+
+
+

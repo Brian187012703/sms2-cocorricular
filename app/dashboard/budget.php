@@ -6,8 +6,8 @@
 require_once __DIR__ . '/../shared/db.php';
 require_once __DIR__ . '/../shared/security.php';
 require_once __DIR__ . '/../shared/notification_actions.php';
-require_role(['club_adviser', 'ssc', 'admin']);
-header('Content-Type: text/html; charset=UTF-8');
+require_any_permission(['budget.disburse.admin', 'budget.review.ssc', 'budget.endorse.adviser', 'budget.create.own', 'budget.view.all']);
+if (!headers_sent()) { header('Content-Type: text/html; charset=UTF-8'); }
 
 $sess_first   = htmlspecialchars($_SESSION['first_name'] ?? '');
 $sess_last    = htmlspecialchars($_SESSION['last_name']  ?? '');
@@ -47,28 +47,106 @@ if ($sess_role === 'club_adviser') {
 // admin sees all active (non-deleted) requests
 
 $budget_requests = $conn->query(
-    "SELECT br.id, br.club_id, br.title, br.description, br.amount, br.status, br.notes, br.created_at, br.updated_at,
+    "SELECT br.id, br.club_id, br.title, br.description, br.line_items, br.amount, br.recommended_amount, br.final_approved_amount, br.disbursement_reference, br.disbursed_at, br.disbursed_by, br.status, br.notes, br.created_at, br.updated_at,
             c.name AS club_name, c.code AS club_code,
-            u.first_name, u.last_name, u.email
+            u.first_name, u.last_name, u.email,
+            du.first_name AS disburser_first, du.last_name AS disburser_last
      FROM budget_requests br
      JOIN clubs c ON c.id = br.club_id
      JOIN users u ON u.id = br.requested_by
+     LEFT JOIN users du ON du.id = br.disbursed_by
      $where ORDER BY br.created_at DESC"
 )->fetch_all(MYSQLI_ASSOC);
 
-// Metrics
-$total_requested = 0;
-$pending_count   = 0;
-$disbursed_total = 0;
-$rejected_count  = 0;
-foreach ($budget_requests as $req) {
-    $total_requested += (float)$req['amount'];
-    if (in_array($req['status'], ['Pending Adviser', 'Pending SSC', 'Pending Admin'])) {
-        $pending_count++;
-    } elseif ($req['status'] === 'Disbursed') {
-        $disbursed_total += (float)$req['amount'];
-    } elseif ($req['status'] === 'Rejected') {
-        $rejected_count++;
+// Metrics calculation
+if ($sess_role === 'admin') {
+    // 6.4 Budget & Financial Administration (Admin Metric Cards)
+    // Dynamic configured budget from system_settings or default institutional cap
+    $cfg_res = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'configured_budget' LIMIT 1");
+    $configured_budget = ($cfg_res && $cfg_res->num_rows > 0) ? (float)$cfg_res->fetch_row()[0] : 1000000.00;
+    if ($configured_budget <= 0) $configured_budget = 1000000.00;
+
+    $pending_admin_count    = 0;
+    $pending_admin_amount   = 0.0;
+    $approved_budget_total  = 0.0;
+    $disbursed_amount_total = 0.0;
+    $rejected_amount_total  = 0.0;
+    $total_released         = 0.0;
+
+    foreach ($budget_requests as $req) {
+        $st    = $req['status'];
+        $amt   = (float)$req['amount'];
+        $rec   = !empty($req['recommended_amount']) ? (float)$req['recommended_amount'] : $amt;
+        $final = !empty($req['final_approved_amount']) ? (float)$req['final_approved_amount'] : $rec;
+
+        if ($st === 'Pending Admin') {
+            $pending_admin_count++;
+            $pending_admin_amount += $rec;
+        } elseif ($st === 'Approved') {
+            $approved_budget_total += $final;
+        } elseif ($st === 'Disbursed') {
+            $approved_budget_total  += $final;
+            $disbursed_amount_total += $final;
+            $total_released         += $final;
+        } elseif ($st === 'Rejected') {
+            $rejected_amount_total += $amt;
+        }
+    }
+
+    $remaining_available_funds = max(0.0, $configured_budget - $total_released);
+
+} elseif ($sess_role === 'ssc') {
+    $pending_ssc_review     = 0;   // Requests waiting in SSC queue.
+    $total_under_review     = 0.0; // Total peso value in current SSC queue.
+    $recommended_this_month = 0.0; // Amount SSC forwarded / endorsed.
+    $rejected_requests      = 0;   // Requests rejected by SSC.
+    $pending_admin          = 0;   // Requests awaiting final administration.
+    $total_disbursed        = 0.0; // Amount already released.
+
+    $cur_m = date('m');
+    $cur_y = date('Y');
+
+    foreach ($budget_requests as $req) {
+        $st   = $req['status'];
+        $amt  = (float)$req['amount'];
+        $rec  = !empty($req['recommended_amount']) ? (float)$req['recommended_amount'] : $amt;
+        $disb = !empty($req['final_approved_amount']) ? (float)$req['final_approved_amount'] : (!empty($req['recommended_amount']) ? (float)$req['recommended_amount'] : $amt);
+
+        if ($st === 'Pending SSC') {
+            $pending_ssc_review++;
+            $total_under_review += $amt;
+        } elseif ($st === 'Pending Admin') {
+            $pending_admin++;
+            $req_m = date('m', strtotime($req['updated_at'] ?: $req['created_at']));
+            $req_y = date('Y', strtotime($req['updated_at'] ?: $req['created_at']));
+            if ($req_m === $cur_m && $req_y === $cur_y) {
+                $recommended_this_month += $rec;
+            }
+        } elseif ($st === 'Disbursed') {
+            $total_disbursed += $disb;
+            $req_m = date('m', strtotime($req['updated_at'] ?: $req['created_at']));
+            $req_y = date('Y', strtotime($req['updated_at'] ?: $req['created_at']));
+            if ($req_m === $cur_m && $req_y === $cur_y) {
+                $recommended_this_month += $rec;
+            }
+        } elseif ($st === 'Rejected') {
+            $rejected_requests++;
+        }
+    }
+} else {
+    $total_requested = 0;
+    $pending_count   = 0;
+    $disbursed_total = 0;
+    $rejected_count  = 0;
+    foreach ($budget_requests as $req) {
+        $total_requested += (float)$req['amount'];
+        if (in_array($req['status'], ['Pending Adviser', 'Pending SSC', 'Pending Admin'])) {
+            $pending_count++;
+        } elseif ($req['status'] === 'Disbursed') {
+            $disbursed_total += (float)$req['amount'];
+        } elseif ($req['status'] === 'Rejected') {
+            $rejected_count++;
+        }
     }
 }
 ?>
@@ -85,6 +163,7 @@ foreach ($budget_requests as $req) {
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
   <meta name="loader-logo" content="../images/BCP_LOGO.png"/>
+  <meta name="csrf-token" content="<?= csrf_token() ?>"/>
   <script src="../js/page-loader.js"></script>
   <style>
     /* Clean, Modern Professional Budget UI */
@@ -205,6 +284,25 @@ foreach ($budget_requests as $req) {
       gap: 16px;
       margin-bottom: 0;
     }
+    .kpi-grid.kpi-grid-ssc {
+      grid-template-columns: repeat(6, 1fr);
+      gap: 14px;
+    }
+    @media (max-width: 1400px) {
+      .kpi-grid.kpi-grid-ssc {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+    @media (max-width: 900px) {
+      .kpi-grid.kpi-grid-ssc {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    @media (max-width: 560px) {
+      .kpi-grid.kpi-grid-ssc {
+        grid-template-columns: 1fr;
+      }
+    }
     .kpi-box {
       background: #ffffff;
       border: 1px solid #e2e8f0;
@@ -249,6 +347,8 @@ foreach ($budget_requests as $req) {
     .kpi-icon-amber   { background: #fffbeb; color: #d97706; }
     .kpi-icon-green   { background: #f0fdf4; color: #16a34a; }
     .kpi-icon-red     { background: #fef2f2; color: #dc2626; }
+    .kpi-icon-indigo  { background: #e0e7ff; color: #4338ca; }
+    .kpi-icon-purple  { background: #f3e8ff; color: #7e22ce; }
     
     .kpi-num {
       font-size: 1.75rem;
@@ -433,64 +533,162 @@ foreach ($budget_requests as $req) {
       box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
     }
 
-    /* Table & Rows */
-    .ledger-table-wrap {
-      overflow-x: auto;
-      width: 100%;
-    }
-    .ledger-table {
-      width: 100%;
-      border-collapse: collapse;
-      text-align: left;
-    }
-    .ledger-table thead tr {
-      background: #f8fafc;
-      border-bottom: 1px solid #e2e8f0;
-    }
-    .ledger-table th {
-      padding: 13px 20px;
-      font-size: 0.72rem;
-      font-weight: 700;
-      color: #475569;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      white-space: nowrap;
-    }
-    .ledger-table th:first-child,
-    .ledger-table td:first-child {
-      padding-left: 24px;
-    }
-    .ledger-table th:last-child,
-    .ledger-table td:last-child {
-      padding-right: 24px;
-    }
-    .ledger-table tbody tr {
-      border-bottom: 1px solid #f1f5f9;
-      transition: background 0.15s ease;
-    }
-    .ledger-table tbody tr:last-child {
-      border-bottom: none;
-    }
-    .ledger-table tbody tr:hover {
-      background: #f8fafc;
-    }
-    .ledger-table td {
-      padding: 14px 20px;
-      vertical-align: middle;
-      color: #334155;
-      font-size: 0.85rem;
+    /* Desktop Table & Rows Layout */
+    @media (min-width: 769px) {
+      .table-wrap.budget-table {
+        overflow-x: auto;
+        width: 100%;
+      }
+      .table-wrap.budget-table table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+      }
+      .table-wrap.budget-table thead tr {
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .table-wrap.budget-table th {
+        padding: 10px 10px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      .table-wrap.budget-table th:first-child,
+      .table-wrap.budget-table td:first-child {
+        padding-left: 16px;
+      }
+      .table-wrap.budget-table th:last-child,
+      .table-wrap.budget-table td:last-child {
+        padding-right: 16px;
+      }
+      .table-wrap.budget-table tbody tr {
+        border-bottom: 1px solid #f1f5f9;
+        transition: background 0.15s ease;
+      }
+      .table-wrap.budget-table tbody tr:last-child {
+        border-bottom: none;
+      }
+      .table-wrap.budget-table tbody tr:hover {
+        background: #f8fafc;
+      }
+      .table-wrap.budget-table td {
+        padding: 9px 10px;
+        vertical-align: middle;
+        color: #334155;
+        font-size: 0.81rem;
+      }
+      .table-wrap.budget-table::-webkit-scrollbar {
+        height: 6px;
+      }
+      .table-wrap.budget-table::-webkit-scrollbar-track {
+        background: #f8fafc;
+      }
+      .table-wrap.budget-table::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 4px;
+      }
     }
 
     /* Uniform Ledger Pagination Layout */
     .ledger-container .pagination-toolbar {
-      padding: 16px 24px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 14px 20px;
       margin-top: 0;
       border-top: 1px solid #e2e8f0;
       background: #ffffff;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+    }
+    .ledger-container .pagination-info {
+      display: none !important;
     }
     .ledger-container .pagination-controls {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    /* ── Admin Budget Ledger Table: Compact & Fluid (No Side-Scrolling) ── */
+    #budgetLedgerTable {
+      width: 100% !important;
+      min-width: 0 !important;
+      max-width: 100% !important;
+      table-layout: fixed !important;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    #budgetLedgerTable th,
+    #budgetLedgerTable td {
+      padding: 8px 10px !important;
+      font-size: 0.78rem !important;
+      vertical-align: middle !important;
+      word-break: break-word;
+    }
+    #budgetLedgerTable th {
+      padding: 9px 10px !important;
+      font-size: 0.70rem !important;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #475569;
+      white-space: nowrap;
+      background: #f8fafc;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    #budgetLedgerTable .admin-act-btn-group {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: flex-end !important;
+      gap: 3px !important;
+      flex-wrap: nowrap !important;
       width: 100%;
-      justify-content: space-between;
+    }
+    #budgetLedgerTable .admin-tbl-act-btn {
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+      text-decoration: none;
+      line-height: 1;
+    }
+    #budgetLedgerTable .admin-tbl-act-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+      filter: brightness(1.1);
+    }
+    #budgetLedgerTable .admin-tbl-act-btn:disabled,
+    #budgetLedgerTable .admin-tbl-act-btn.btn-disabled {
+      background: #e2e8f0 !important;
+      color: #94a3b8 !important;
+      border: 1px solid #cbd5e1 !important;
+      cursor: not-allowed !important;
+      opacity: 0.65 !important;
+      transform: none !important;
+      box-shadow: none !important;
+    }
+    #budgetLedgerTable .admin-tbl-act-btn:disabled:hover,
+    #budgetLedgerTable .admin-tbl-act-btn.btn-disabled:hover {
+      transform: none !important;
+      box-shadow: none !important;
+      filter: none !important;
     }
 
     .empty-state-cell {
@@ -621,6 +819,13 @@ foreach ($budget_requests as $req) {
     .act-btn-approve:hover {
       background: #15803d;
     }
+    .act-btn-review {
+      background: #1a3a8c;
+      color: #ffffff;
+    }
+    .act-btn-review:hover {
+      background: #2563eb;
+    }
     .act-btn-edit {
       background: #d97706;
       color: #ffffff;
@@ -635,6 +840,20 @@ foreach ($budget_requests as $req) {
     .act-btn-reject:hover {
       background: #b91c1c;
     }
+    .act-btn-return {
+      background: #d97706;
+      color: #ffffff;
+    }
+    .act-btn-return:hover {
+      background: #b45309;
+    }
+    .act-btn-override {
+      background: #7c3aed;
+      color: #ffffff;
+    }
+    .act-btn-override:hover {
+      background: #6d28d9;
+    }
     .act-btn-view {
       background: #f1f5f9;
       color: #475569;
@@ -643,6 +862,130 @@ foreach ($budget_requests as $req) {
     .act-btn-view:hover {
       background: #e2e8f0;
       color: #0f172a;
+    }
+    .act-btn:disabled,
+    .act-btn.btn-disabled {
+      background: #e2e8f0 !important;
+      color: #94a3b8 !important;
+      border: 1px solid #cbd5e1 !important;
+      cursor: not-allowed !important;
+      box-shadow: none !important;
+      transform: none !important;
+      pointer-events: auto !important;
+      opacity: 0.65;
+    }
+
+    /* Stage Tags & Badges */
+    .stage-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      white-space: nowrap;
+      letter-spacing: 0.02em;
+    }
+    .stage-tag-ssc { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .stage-tag-admin { background: #fdf4ff; color: #a21caf; border: 1px solid #f5d0fe; }
+    .stage-tag-disbursed { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .stage-tag-rejected { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+    .adviser-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #a7f3d0;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      white-space: nowrap;
+    }
+
+    .days-pending-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #475569;
+      background: #f1f5f9;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .days-pending-badge.days-urgent {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
+
+    /* Itemization Breakdown Card & Table */
+    .itemization-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 16px 0;
+      background: #ffffff;
+    }
+    .itemization-header {
+      background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 11px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .itemization-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: #1e293b;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .itemization-count-chip {
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: #e2e8f0;
+      color: #475569;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+    .itemization-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .itemization-table th {
+      background: #f1f5f9;
+      padding: 9px 14px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .itemization-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #334155;
+      vertical-align: middle;
+    }
+    .itemization-table tbody tr:hover {
+      background: #f8fafc;
+    }
+    .itemization-foot-row td {
+      background: #f8fafc;
+      border-top: 2px solid #cbd5e1;
+      border-bottom: none;
+      padding: 12px 14px;
     }
 
     /* Modal Layouts */
@@ -770,6 +1113,71 @@ foreach ($budget_requests as $req) {
     @media (max-width: 576px) {
       .kpi-grid { grid-template-columns: 1fr; }
     }
+
+    /* Mobile Responsive Card Transformation */
+    @media (max-width: 768px) {
+      .table-wrap.budget-table {
+        overflow: visible;
+      }
+      .table-wrap.budget-table table,
+      .table-wrap.budget-table thead,
+      .table-wrap.budget-table tbody,
+      .table-wrap.budget-table th,
+      .table-wrap.budget-table td,
+      .table-wrap.budget-table tr {
+        display: block;
+      }
+      .table-wrap.budget-table thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+      }
+      .table-wrap.budget-table tbody tr.budget-data-row {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        margin-bottom: 16px;
+        padding: 16px 18px;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.04);
+      }
+      .table-wrap.budget-table tbody tr.budget-data-row td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 9px 0;
+        border: none;
+        border-bottom: 1px solid #f1f5f9;
+        text-align: right;
+        font-size: 0.84rem;
+        min-height: 38px;
+      }
+      .table-wrap.budget-table tbody tr.budget-data-row td:last-child {
+        border-bottom: none;
+        padding-top: 14px;
+        justify-content: flex-end;
+      }
+      .table-wrap.budget-table tbody tr.budget-data-row td::before {
+        content: attr(data-label);
+        font-weight: 700;
+        color: #64748b;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        text-align: left;
+        margin-right: 14px;
+        flex-shrink: 0;
+      }
+      .table-wrap.budget-table tbody tr.budget-data-row td[data-label="Action"] .action-btn-group {
+        width: 100%;
+        justify-content: flex-end;
+      }
+      .table-wrap.budget-table tbody tr.budget-data-row td[data-label="Organization"],
+      .table-wrap.budget-table tbody tr.budget-data-row td[data-label="Request Title"] {
+        flex-direction: column;
+        align-items: flex-end;
+        text-align: right;
+      }
+    }
   </style>
 </head>
 <body>
@@ -781,10 +1189,11 @@ foreach ($budget_requests as $req) {
       <button class="hamburger" id="hamburgerBtn"><i class="fa-solid fa-bars"></i></button>
       <span class="topbar-spacer"></span>
       <div class="topbar-right">
-        <div class="search-wrap">
-          <input type="text" placeholder="Search pages, events..." autocomplete="off" />
-          <i class="fa-solid fa-magnifying-glass"></i>
-        </div>
+        <div class="search-wrap" id="topbarSearchWrap">
+        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+        <input type="text" placeholder="Search modules, events, clubs..." autocomplete="off" />
+        <button type="button" class="search-clear-btn" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
+      </div>
         <button class="topbar-qr-btn" id="qrFabBtn" title="QR Code Center" type="button"><i class="fa-solid fa-qrcode"></i></button>
         <a href="../dashboard/account.php" class="avatar" id="avatarBtn" title="Account Settings">
           <?php if (!empty($sess_pic) && file_exists(__DIR__ . '/../uploads/avatars/' . $sess_pic)): ?>
@@ -798,12 +1207,137 @@ foreach ($budget_requests as $req) {
 
     <div class="content">
       <div class="page-title-bar" style="margin-bottom: 20px;">
-        <h2 class="page-title"><i class="fa-solid fa-hand-holding-dollar"></i> Budget &amp; Financial Management</h2>
+        <h2 class="page-title"><i class="fa-solid fa-hand-holding-dollar"></i> <?= $sess_role === 'admin' ? '6.4 Budget &amp; Financial Administration' : 'Budget &amp; Financial Management' ?></h2>
       </div>
 
       <div class="content-body">
 
         <!-- KPI Metrics Summary Grid -->
+        <?php if ($sess_role === 'admin'): ?>
+        <div class="kpi-grid kpi-grid-ssc">
+          <!-- Card 1: Pending Admin Disbursement -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Pending Admin Disbursement</span>
+              <div class="kpi-icon-wrap kpi-icon-amber"><i class="fa-solid fa-hourglass-half"></i></div>
+            </div>
+            <div class="kpi-num"><?= $pending_admin_count ?> <span style="font-size:0.75rem; font-weight:600; color:#64748b;">(₱<?= number_format($pending_admin_amount, 2) ?>)</span></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-clock"></i> Requests ready for final release.</div>
+          </div>
+
+          <!-- Card 2: Approved Budget -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Approved Budget</span>
+              <div class="kpi-icon-wrap kpi-icon-blue"><i class="fa-solid fa-stamp"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($approved_budget_total, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-circle-check"></i> Final approved value.</div>
+          </div>
+
+          <!-- Card 3: Disbursed -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Disbursed</span>
+              <div class="kpi-icon-wrap kpi-icon-green"><i class="fa-solid fa-money-bill-transfer"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($disbursed_amount_total, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-hand-holding-dollar"></i> Released amount.</div>
+          </div>
+
+          <!-- Card 4: Rejected -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Rejected</span>
+              <div class="kpi-icon-wrap kpi-icon-red"><i class="fa-solid fa-circle-xmark"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($rejected_amount_total, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-ban"></i> Rejected amount.</div>
+          </div>
+
+          <!-- Card 5: Total Released -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Total Released</span>
+              <div class="kpi-icon-wrap kpi-icon-indigo"><i class="fa-solid fa-vault"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($total_released, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-receipt"></i> Cumulative disbursement.</div>
+          </div>
+
+          <!-- Card 6: Remaining / Available Funds -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Remaining / Available Funds</span>
+              <div class="kpi-icon-wrap kpi-icon-purple"><i class="fa-solid fa-piggy-bank"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($remaining_available_funds, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-coins"></i> Available configured budget.</div>
+          </div>
+        </div>
+        <?php elseif ($sess_role === 'ssc'): ?>
+        <div class="kpi-grid kpi-grid-ssc">
+          <!-- Card 1: Pending SSC Review -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Pending SSC Review</span>
+              <div class="kpi-icon-wrap kpi-icon-amber"><i class="fa-solid fa-hourglass-half"></i></div>
+            </div>
+            <div class="kpi-num"><?= $pending_ssc_review ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-clock"></i> Requests waiting in SSC queue.</div>
+          </div>
+
+          <!-- Card 2: Total Under SSC Review -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Total Under SSC Review</span>
+              <div class="kpi-icon-wrap kpi-icon-blue"><i class="fa-solid fa-coins"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($total_under_review, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-calculator"></i> Total peso value in current SSC queue.</div>
+          </div>
+
+          <!-- Card 3: Recommended This Month -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Recommended This Month</span>
+              <div class="kpi-icon-wrap kpi-icon-indigo"><i class="fa-solid fa-thumbs-up"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($recommended_this_month, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-forward-step"></i> Amount SSC forwarded / endorsed.</div>
+          </div>
+
+          <!-- Card 4: Rejected Requests -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Rejected Requests</span>
+              <div class="kpi-icon-wrap kpi-icon-red"><i class="fa-solid fa-circle-xmark"></i></div>
+            </div>
+            <div class="kpi-num"><?= $rejected_requests ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-triangle-exclamation"></i> Requests rejected by SSC.</div>
+          </div>
+
+          <!-- Card 5: Pending Admin -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Pending Admin</span>
+              <div class="kpi-icon-wrap kpi-icon-purple"><i class="fa-solid fa-building-columns"></i></div>
+            </div>
+            <div class="kpi-num"><?= $pending_admin ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-user-shield"></i> Requests awaiting final administration.</div>
+          </div>
+
+          <!-- Card 6: Total Disbursed -->
+          <div class="kpi-box">
+            <div class="kpi-top">
+              <span class="kpi-label">Total Disbursed</span>
+              <div class="kpi-icon-wrap kpi-icon-green"><i class="fa-solid fa-circle-check"></i></div>
+            </div>
+            <div class="kpi-num"><span class="kpi-currency">₱</span><?= number_format($total_disbursed, 2) ?></div>
+            <div class="kpi-subtext"><i class="fa-solid fa-hand-holding-dollar"></i> Amount already released.</div>
+          </div>
+        </div>
+        <?php else: ?>
         <div class="kpi-grid">
           <!-- Total Requested -->
           <div class="kpi-box">
@@ -845,16 +1379,19 @@ foreach ($budget_requests as $req) {
             <div class="kpi-subtext"><i class="fa-solid fa-circle-info"></i> Returned with feedback</div>
           </div>
         </div>
+        <?php endif; ?>
 
         <!-- Ledger & Requisitions Management Container -->
         <div class="ledger-container">
           <div class="ledger-header">
             <div class="ledger-title">
               <div class="ledger-title-row">
-                <div class="ledger-title-icon"><i class="fa-solid fa-receipt"></i></div>
+                <div class="ledger-title-icon">
+                  <i class="fa-solid <?= $sess_role === 'ssc' ? 'fa-list-check' : 'fa-receipt' ?>"></i>
+                </div>
                 <div>
-                  <h3>Requisitions &amp; Disbursals Ledger</h3>
-                  <p>Real-time audit log of all organizational budget allocations and disbursements.</p>
+                  <h3><?= $sess_role === 'ssc' ? 'SSC Budget Review Queue' : 'Requisitions &amp; Disbursals Ledger' ?></h3>
+                  <p><?= $sess_role === 'ssc' ? 'Vetting, recommendation revision, and administrative endorsement queue for student organization requisitions.' : 'Real-time audit log of all organizational budget allocations and disbursements.' ?></p>
                 </div>
               </div>
             </div>
@@ -870,15 +1407,22 @@ foreach ($budget_requests as $req) {
               <div class="filter-select-wrap">
                 <select class="filter-select" id="budgetStatusFilter" onchange="filterLedgerTable()">
                   <option value="ALL">All Statuses</option>
-                  <option value="Pending Adviser">Stage 1: Pending Adviser</option>
-                  <option value="Pending SSC">Stage 2: Pending SSC</option>
-                  <option value="Pending Admin">Stage 3: Pending Admin</option>
-                  <option value="Disbursed">Disbursed (Released)</option>
-                  <option value="Rejected">Rejected</option>
+                  <?php if ($sess_role === 'ssc'): ?>
+                    <option value="Pending SSC">Pending SSC Review</option>
+                    <option value="Pending Admin">Endorsed to Admin</option>
+                    <option value="Disbursed">Disbursed (Released)</option>
+                    <option value="Rejected">Rejected</option>
+                  <?php else: ?>
+                    <option value="Pending Adviser">Stage 1: Pending Adviser</option>
+                    <option value="Pending SSC">Stage 2: Pending SSC</option>
+                    <option value="Pending Admin">Stage 3: Pending Admin</option>
+                    <option value="Disbursed">Disbursed (Released)</option>
+                    <option value="Rejected">Rejected</option>
+                  <?php endif; ?>
                 </select>
               </div>
 
-              <?php if (in_array($sess_role, ['student', 'club_adviser', 'admin'])): ?>
+              <?php if (can('budget.create.own')): ?>
               <button class="btn-create-req" onclick="openNewRequestModal()">
                 <i class="fa-solid fa-plus"></i> New Requisition
               </button>
@@ -887,9 +1431,34 @@ foreach ($budget_requests as $req) {
           </div>
 
           <!-- Responsive Table -->
-          <div class="ledger-table-wrap resp-table-wrap">
-            <table class="ledger-table" id="budgetLedgerTable">
+          <div class="table-wrap budget-table">
+            <table id="budgetLedgerTable" class="table-wide" data-page-size="5">
               <thead>
+                <?php if ($sess_role === 'admin'): ?>
+                <tr>
+                  <th style="width:17%;">Request</th>
+                  <th style="width:19%;">Organization</th>
+                  <th style="width:13%;">Amount</th>
+                  <th style="width:14%;">SSC Recommendation</th>
+                  <th style="width:12%;">Admin Status</th>
+                  <th style="width:11%;">Submitted</th>
+                  <th style="width:14%; text-align:right;">Action</th>
+                </tr>
+                <?php elseif ($sess_role === 'ssc'): ?>
+                <tr>
+                  <th style="white-space:nowrap; width:100px;">Request No.</th>
+                  <th style="min-width:130px; max-width:180px;">Organization</th>
+                  <th style="min-width:150px; max-width:200px;">Request Title</th>
+                  <th style="white-space:nowrap; width:105px;">Requested Amount</th>
+                  <th style="white-space:nowrap; width:105px;">Submitted By</th>
+                  <th style="white-space:nowrap; width:95px;">Submitted Date</th>
+                  <th style="white-space:nowrap; width:85px;">Adviser Status</th>
+                  <th style="white-space:nowrap; width:105px;">SSC Status</th>
+                  <th style="white-space:nowrap; width:120px;">Current Stage</th>
+                  <th style="white-space:nowrap; width:85px;">Days Pending</th>
+                  <th style="white-space:nowrap; width:85px; text-align:right;">Action</th>
+                </tr>
+                <?php else: ?>
                 <tr>
                   <th style="width:70px;">ID</th>
                   <th style="width:240px;">Organization &amp; Requester</th>
@@ -899,16 +1468,19 @@ foreach ($budget_requests as $req) {
                   <th>Review Notes</th>
                   <th style="width:160px; text-align:right;">Actions</th>
                 </tr>
+                <?php endif; ?>
               </thead>
               <tbody id="budgetTableBody">
                 <?php if (empty($budget_requests)): ?>
                   <tr id="emptyRow">
-                    <td colspan="7" class="empty-state-cell">
-                      <div class="empty-state-icon">
-                        <i class="fa-solid fa-folder-open"></i>
+                    <td colspan="<?= $sess_role === 'ssc' ? 11 : 7 ?>" class="empty-state-cell" style="text-align:center; padding:48px 16px;">
+                      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; width:100%; margin:0 auto;">
+                        <div class="empty-state-icon" style="margin:0 auto 12px; display:inline-flex; align-items:center; justify-content:center;">
+                          <i class="fa-solid fa-folder-open"></i>
+                        </div>
+                        <h4 class="empty-state-title" style="margin:0 0 6px 0; text-align:center; font-weight:700; width:100%;">No Budget Requisitions Found</h4>
+                        <p class="empty-state-desc" style="margin:0 auto; text-align:center; max-width:380px; width:100%;">There are currently no budget proposals filed under this category.</p>
                       </div>
-                      <h4 class="empty-state-title">No Budget Requisitions Found</h4>
-                      <p class="empty-state-desc">There are currently no budget proposals filed under this category.</p>
                     </td>
                   </tr>
                 <?php else: ?>
@@ -936,16 +1508,16 @@ foreach ($budget_requests as $req) {
                       $can_edit_ssc = false;
                       $can_reject   = false;
 
-                      if ($status === 'Pending Adviser' && in_array($sess_role, ['club_adviser', 'admin'])) {
+                      if ($status === 'Pending Adviser' && can_any(['budget.endorse.adviser', 'budget.disburse.admin'])) {
                           $can_approve = true;
                           $can_reject  = true;
                       }
-                      if ($status === 'Pending SSC' && in_array($sess_role, ['ssc', 'admin'])) {
+                      if ($status === 'Pending SSC' && can_any(['budget.review.ssc', 'budget.disburse.admin'])) {
                           $can_approve  = true;
                           $can_reject   = true;
                           $can_edit_ssc = true;
                       }
-                      if ($status === 'Pending Admin' && $sess_role === 'admin') {
+                      if ($status === 'Pending Admin' && can('budget.disburse.admin')) {
                           $can_approve = true;
                           $can_reject  = true;
                       }
@@ -954,95 +1526,399 @@ foreach ($budget_requests as $req) {
                       $safe_desc  = htmlspecialchars(addslashes($req['description'] ?? ''));
                       $safe_notes = htmlspecialchars(addslashes($req['notes'] ?? ''));
                       $date_str   = date('M d, Y', strtotime($req['created_at']));
+                      $ref_no     = 'REQ-' . date('Y', strtotime($req['created_at'])) . '-' . str_pad($req['id'], 4, '0', STR_PAD_LEFT);
+                      $days_pending = max(0, (int)floor((time() - strtotime($req['created_at'])) / 86400));
+                      $days_pending_str = $days_pending === 0 ? 'Today' : ($days_pending === 1 ? '1 day' : $days_pending . ' days');
+
+                      $ssc_status_lbl = match($status) {
+                          'Pending SSC'   => 'Pending Review',
+                          'Pending Admin' => 'Endorsed to Admin',
+                          'Disbursed'     => 'Disbursed',
+                          'Rejected'      => 'Rejected',
+                          default         => $status,
+                      };
+
+                      $current_stage_lbl = match($status) {
+                          'Pending Adviser' => 'Stage 1: Adviser Endorsement',
+                          'Pending SSC'     => 'Stage 2: SSC Review',
+                          'Pending Admin'   => 'Stage 3: Admin Clearance',
+                          'Disbursed'       => 'Stage 3: Released',
+                          'Rejected'        => 'Closed: Rejected',
+                          default           => $status,
+                      };
+
+                      $stage_tag_class = match($status) {
+                          'Pending SSC'   => 'stage-tag-ssc',
+                          'Pending Admin' => 'stage-tag-admin',
+                          'Disbursed'     => 'stage-tag-disbursed',
+                          'Rejected'      => 'stage-tag-rejected',
+                          default         => 'stage-tag-ssc',
+                      };
                     ?>
                     <tr class="budget-data-row" 
                         data-status="<?= htmlspecialchars($status) ?>"
-                        data-search="<?= htmlspecialchars(strtolower($req['title'] . ' ' . $req['club_name'] . ' ' . $req['club_code'] . ' ' . $req['first_name'] . ' ' . $req['last_name'])) ?>">
+                        data-search="<?= htmlspecialchars(strtolower($ref_no . ' ' . $req['title'] . ' ' . $req['club_name'] . ' ' . $req['club_code'] . ' ' . $req['first_name'] . ' ' . $req['last_name'])) ?>">
                       
-                      <!-- ID -->
-                      <td>
-                        <strong style="color:#64748b; font-size:0.8rem;">#<?= str_pad($req['id'], 4, '0', STR_PAD_LEFT) ?></strong>
-                      </td>
+                      <?php if ($sess_role === 'admin'): ?>
+                        <!-- 1. Request -->
+                        <td data-label="Request">
+                          <strong style="color:#1a3a8c; font-size:0.8rem; font-family:monospace;"><?= htmlspecialchars($ref_no) ?></strong>
+                          <div style="font-weight:700; font-size:0.83rem; color:#0f172a; margin-top:2px; line-height:1.25;"><?= htmlspecialchars($req['title']) ?></div>
+                          <div class="req-desc-excerpt" style="font-size:0.73rem; max-width:180px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
+                            <?= htmlspecialchars($req['description'] ?: 'No description specified.') ?>
+                          </div>
+                        </td>
 
-                      <!-- Org & Requester -->
-                      <td>
-                        <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
-                        <div class="org-name-text"><?= htmlspecialchars($req['club_name']) ?></div>
-                        <div class="requester-meta">
-                          <i class="fa-solid fa-user" style="font-size:0.65rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
-                          &bull; <?= $date_str ?>
-                        </div>
-                      </td>
+                        <!-- 2. Organization -->
+                        <td data-label="Organization">
+                          <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
+                          <div class="org-name-text" style="font-size:0.8rem; line-height:1.2; font-weight:600;"><?= htmlspecialchars($req['club_name']) ?></div>
+                          <div style="font-size:0.73rem; color:#64748b; margin-top:2px;">
+                            <i class="fa-solid fa-user" style="font-size:0.65rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
+                          </div>
+                        </td>
 
-                      <!-- Title & Excerpt -->
-                      <td>
-                        <div class="req-title-text"><?= htmlspecialchars($req['title']) ?></div>
-                        <div class="req-desc-excerpt" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
-                          <?= htmlspecialchars($req['description'] ?: 'No description specified.') ?>
-                        </div>
-                      </td>
-
-                      <!-- Amount -->
-                      <td>
-                        <div class="req-amount-val">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
-                      </td>
-
-                      <!-- Stage / Status -->
-                      <td>
-                        <span class="status-pill <?= $pill_class ?>">
-                          <?= $pill_icon ?> <?= htmlspecialchars($status) ?>
-                        </span>
-                      </td>
-
-                      <!-- Notes -->
-                      <td>
-                        <div style="font-size:0.78rem; color:#475569; line-height:1.35; max-width:220px;">
-                          <?= htmlspecialchars($req['notes'] ?: '—') ?>
-                        </div>
-                      </td>
-
-                      <!-- Actions -->
-                      <td>
-                        <div class="action-btn-group">
-                          <?php if ($can_approve): ?>
-                            <?php
-                              $action_lbl = match($status) {
-                                  'Pending Adviser' => 'Endorse',
-                                  'Pending SSC'     => 'Forward',
-                                  'Pending Admin'   => 'Disburse',
-                                  default           => 'Approve',
-                              };
-                            ?>
-                            <button type="button" class="act-btn act-btn-approve" 
-                                    onclick="promptApprove(<?= $req['id'] ?>, '<?= $safe_title ?>', '<?= $status ?>')" 
-                                    title="<?= $action_lbl ?> Requisition">
-                              <i class="fa-solid fa-check"></i> <?= $action_lbl ?>
-                            </button>
+                        <!-- 3. Amount -->
+                        <td data-label="Amount">
+                          <div class="req-amount-val" style="font-size:0.88rem; white-space:nowrap;">₱<?= number_format((float)$req['amount'], 2) ?></div>
+                          <?php if (!empty($req['final_approved_amount'])): ?>
+                            <div style="font-size:0.72rem; color:#15803d; font-weight:700; margin-top:2px; white-space:nowrap;" title="Final Released Amount">
+                              Final: ₱<?= number_format((float)$req['final_approved_amount'], 2) ?>
+                            </div>
                           <?php endif; ?>
+                        </td>
 
-                          <?php if ($can_edit_ssc): ?>
-                            <button type="button" class="act-btn act-btn-edit" 
-                                    onclick="openEditModal(<?= $req['id'] ?>, '<?= $safe_desc ?>', '<?= $safe_notes ?>')" 
-                                    title="Edit Line Items &amp; Notes">
-                              <i class="fa-solid fa-pen-to-square"></i> Audit
-                            </button>
+                        <!-- 4. SSC Recommendation -->
+                        <td data-label="SSC Recommendation">
+                          <?php if (!empty($req['recommended_amount'])): ?>
+                            <div style="font-weight:700; color:#6d28d9; font-size:0.84rem; white-space:nowrap;">
+                              ₱<?= number_format((float)$req['recommended_amount'], 2) ?>
+                            </div>
+                            <span style="font-size:0.68rem; background:#ede9fe; color:#6d28d9; padding:2px 6px; border-radius:4px; font-weight:700; display:inline-block; margin-top:2px; white-space:nowrap;">
+                              <i class="fa-solid fa-check-double"></i> Vetted
+                            </span>
+                          <?php else: ?>
+                            <span style="font-size:0.75rem; color:#94a3b8; font-style:italic;">Awaiting SSC</span>
                           <?php endif; ?>
+                        </td>
 
-                          <?php if ($can_reject): ?>
-                            <button type="button" class="act-btn act-btn-reject" 
-                                    onclick="promptReject(<?= $req['id'] ?>, '<?= $safe_title ?>')" 
-                                    title="Reject Requisition">
-                              <i class="fa-solid fa-xmark"></i> Reject
+                        <!-- 5. Admin Status -->
+                        <td data-label="Admin Status">
+                          <span class="status-pill <?= $pill_class ?>" style="font-size:0.7rem; padding:3px 8px; white-space:nowrap;">
+                            <?= $pill_icon ?> <?= htmlspecialchars($status) ?>
+                          </span>
+                        </td>
+
+                        <!-- 6. Submitted -->
+                        <td data-label="Submitted">
+                          <span style="font-size:0.78rem; color:#475569; font-weight:500; white-space:nowrap;"><?= $date_str ?></span>
+                        </td>
+
+                        <!-- 7. Action -->
+                        <td data-label="Action" style="text-align:right;">
+                          <div class="admin-act-btn-group">
+                            <!-- 1. Disburse / Release -->
+                            <?php if ($status === 'Pending Admin'): ?>
+                              <button type="button" class="admin-tbl-act-btn" style="background:#16a34a; color:#fff;" 
+                                      onclick="promptApprove(<?= $req['id'] ?>, '<?= $safe_title ?>', '<?= $status ?>', <?= (float)$req['amount'] ?>, <?= (float)($req['recommended_amount'] ?? $req['amount']) ?>)" 
+                                      title="Disburse and release funds" aria-label="Disburse">
+                                <i class="fa-solid fa-check"></i>
+                              </button>
+                            <?php else: ?>
+                              <button type="button" class="admin-tbl-act-btn btn-disabled" disabled 
+                                      title="Disbursement unavailable (Status: <?= htmlspecialchars($status) ?>)" aria-label="Disburse Disabled">
+                                <i class="fa-solid fa-check"></i>
+                              </button>
+                            <?php endif; ?>
+
+                            <!-- 2. Return -->
+                            <?php if ($status === 'Pending Admin'): ?>
+                              <button type="button" class="admin-tbl-act-btn" style="background:#f59e0b; color:#fff;" 
+                                      onclick="openAdminReturnModal(<?= $req['id'] ?>, '<?= $safe_title ?>')" 
+                                      title="Return requisition for revision" aria-label="Return">
+                                <i class="fa-solid fa-rotate-left"></i>
+                              </button>
+                            <?php else: ?>
+                              <button type="button" class="admin-tbl-act-btn btn-disabled" disabled 
+                                      title="<?= $status === 'Returned' ? 'Already Returned for Revision' : 'Return unavailable (Status: ' . htmlspecialchars($status) . ')' ?>" aria-label="Return Disabled">
+                                <i class="fa-solid fa-rotate-left"></i>
+                              </button>
+                            <?php endif; ?>
+
+                            <!-- 3. Reject -->
+                            <?php if (in_array($status, ['Pending Adviser', 'Pending SSC', 'Pending Admin'])): ?>
+                              <button type="button" class="admin-tbl-act-btn" style="background:#dc2626; color:#fff;" 
+                                      onclick="promptReject(<?= $req['id'] ?>, '<?= $safe_title ?>')" 
+                                      title="Reject requisition" aria-label="Reject">
+                                <i class="fa-solid fa-xmark"></i>
+                              </button>
+                            <?php else: ?>
+                              <button type="button" class="admin-tbl-act-btn btn-disabled" disabled 
+                                      title="<?= $status === 'Rejected' ? 'Already Rejected' : 'Rejection unavailable (Status: ' . htmlspecialchars($status) . ')' ?>" aria-label="Reject Disabled">
+                                <i class="fa-solid fa-xmark"></i>
+                              </button>
+                            <?php endif; ?>
+
+                            <!-- 4. Override -->
+                            <button type="button" class="admin-tbl-act-btn" style="background:#7c3aed; color:#fff;" 
+                                    onclick="openAdminBudgetOverrideModal(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
+                                    title="Administrative Override (Requires Reason &amp; Re-Authentication)" aria-label="Override">
+                              <i class="fa-solid fa-bolt"></i>
                             </button>
-                          <?php endif; ?>
 
-                          <button type="button" class="act-btn act-btn-view" 
-                                  onclick="viewRequisitionDetails(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
-                                  title="View Full Details">
-                            <i class="fa-solid fa-eye"></i>
-                          </button>
-                        </div>
-                      </td>
+                            <!-- 5. Details -->
+                            <button type="button" class="admin-tbl-act-btn" style="background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;" 
+                                    onclick="viewRequisitionDetails(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
+                                    title="View Complete Disbursement Details" aria-label="Details">
+                              <i class="fa-solid fa-eye"></i>
+                            </button>
+                          </div>
+                        </td>
+
+                      <?php elseif ($sess_role === 'ssc'): ?>
+                        <!-- 1. Request No. -->
+                        <td data-label="Request No.">
+                          <strong style="color:#1a3a8c; font-size:0.78rem; font-family:monospace; white-space:nowrap;"><?= htmlspecialchars($ref_no) ?></strong>
+                        </td>
+
+                        <!-- 2. Organization -->
+                        <td data-label="Organization">
+                          <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
+                          <div class="org-name-text" style="font-size:0.8rem; line-height:1.2; font-weight:600;"><?= htmlspecialchars($req['club_name']) ?></div>
+                        </td>
+
+                        <!-- 3. Request Title -->
+                        <td data-label="Request Title">
+                          <div class="req-title-text" style="font-size:0.83rem; font-weight:700; line-height:1.25; margin-bottom:2px;"><?= htmlspecialchars($req['title']) ?></div>
+                          <div class="req-desc-excerpt" style="font-size:0.73rem; max-width:180px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
+                            <?= htmlspecialchars($req['description'] ?: 'No description specified.') ?>
+                          </div>
+                        </td>
+
+                        <!-- 4. Requested Amount -->
+                        <td data-label="Requested Amount">
+                          <div class="req-amount-val" style="font-size:0.88rem; white-space:nowrap;">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
+                          <?php if (!empty($req['recommended_amount']) && (float)$req['recommended_amount'] != (float)$req['amount']): ?>
+                            <div style="font-size:0.7rem; color:#6d28d9; font-weight:700; margin-top:2px; white-space:nowrap;" title="SSC Recommended Amount">
+                              Rec: &#8369;<?= number_format((float)$req['recommended_amount'], 2) ?>
+                            </div>
+                          <?php endif; ?>
+                        </td>
+
+                        <!-- 5. Submitted By -->
+                        <td data-label="Submitted By">
+                          <div style="font-weight:600; color:#0f172a; font-size:0.8rem; white-space:nowrap;" title="<?= htmlspecialchars($req['email'] ?? '') ?>"><?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?></div>
+                        </td>
+
+                        <!-- 6. Submitted Date -->
+                        <td data-label="Submitted Date">
+                          <span style="font-size:0.78rem; color:#475569; font-weight:500; white-space:nowrap;"><?= $date_str ?></span>
+                        </td>
+
+                        <!-- 7. Adviser Status -->
+                        <td data-label="Adviser Status">
+                          <span class="adviser-badge" style="font-size:0.69rem; padding:2px 7px; white-space:nowrap;" title="Endorsed by Faculty Club Adviser">
+                            <i class="fa-solid fa-circle-check"></i> Endorsed
+                          </span>
+                        </td>
+
+                        <!-- 8. SSC Status -->
+                        <td data-label="SSC Status">
+                          <span class="status-pill <?= $pill_class ?>" style="font-size:0.69rem; padding:2px 8px; white-space:nowrap;">
+                            <?= $pill_icon ?> <?= htmlspecialchars($ssc_status_lbl) ?>
+                          </span>
+                        </td>
+
+                        <!-- 9. Current Stage -->
+                        <td data-label="Current Stage">
+                          <span class="stage-tag <?= $stage_tag_class ?>" style="font-size:0.69rem; padding:2px 7px; white-space:nowrap;">
+                            <?= htmlspecialchars($current_stage_lbl) ?>
+                          </span>
+                        </td>
+
+                        <!-- 10. Days Pending -->
+                        <td data-label="Days Pending">
+                          <span class="days-pending-badge <?= $days_pending > 7 ? 'days-urgent' : '' ?>" style="font-size:0.7rem; padding:2px 6px; white-space:nowrap;">
+                            <i class="fa-regular fa-clock"></i> <?= $days_pending_str ?>
+                          </span>
+                        </td>
+
+                        <!-- 11. Action -->
+                        <td data-label="Action" style="text-align:right;">
+                          <div class="action-btn-group" style="justify-content:flex-end; gap:4px;">
+                            <?php if ($status === 'Pending SSC'): ?>
+                              <button type="button" class="act-btn act-btn-review" style="height:28px; padding:0 8px; font-size:0.72rem; white-space:nowrap;" 
+                                      onclick="openSSCReviewModal(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
+                                      title="Review line items, revise recommendation, or endorse/reject">
+                                <i class="fa-solid fa-file-signature"></i> Review
+                              </button>
+                            <?php else: ?>
+                              <button type="button" class="act-btn act-btn-review btn-disabled" disabled style="height:28px; padding:0 8px; font-size:0.72rem; white-space:nowrap;" 
+                                      title="Review phase completed (Status: <?= htmlspecialchars($status) ?>)">
+                                <i class="fa-solid fa-file-signature"></i> Review
+                              </button>
+                            <?php endif; ?>
+                            <button type="button" class="act-btn act-btn-view" style="height:28px; padding:0 8px; font-size:0.72rem; white-space:nowrap;" 
+                                    onclick="openSSCReviewModal(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
+                                    title="View itemization breakdown and audit trail">
+                              <i class="fa-solid fa-eye"></i> View
+                            </button>
+                          </div>
+                        </td>
+
+                      <?php else: ?>
+                        <!-- ID -->
+                        <td>
+                          <strong style="color:#64748b; font-size:0.8rem;">#<?= str_pad($req['id'], 4, '0', STR_PAD_LEFT) ?></strong>
+                        </td>
+
+                        <!-- Org & Requester -->
+                        <td>
+                          <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
+                          <div class="org-name-text"><?= htmlspecialchars($req['club_name']) ?></div>
+                          <div class="requester-meta">
+                            <i class="fa-solid fa-user" style="font-size:0.65rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
+                            &bull; <?= $date_str ?>
+                          </div>
+                        </td>
+
+                        <!-- Title & Excerpt -->
+                        <td>
+                          <div class="req-title-text"><?= htmlspecialchars($req['title']) ?></div>
+                          <div class="req-desc-excerpt" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
+                            <?= htmlspecialchars($req['description'] ?: 'No description specified.') ?>
+                          </div>
+                        </td>
+
+                        <!-- Amount -->
+                        <td>
+                          <div class="req-amount-val">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
+                          <?php if (!empty($req['recommended_amount']) && (float)$req['recommended_amount'] != (float)$req['amount']): ?>
+                            <div style="font-size:0.72rem; color:#6d28d9; font-weight:700; margin-top:2px;" title="SSC Recommended Amount">
+                              SSC: &#8369;<?= number_format((float)$req['recommended_amount'], 2) ?>
+                            </div>
+                          <?php endif; ?>
+                          <?php if (!empty($req['final_approved_amount'])): ?>
+                            <div style="font-size:0.72rem; color:#15803d; font-weight:700; margin-top:2px;" title="Final Disbursed Amount">
+                              Released: &#8369;<?= number_format((float)$req['final_approved_amount'], 2) ?>
+                            </div>
+                          <?php endif; ?>
+                          <?php if (!empty($req['disbursement_reference'])): ?>
+                            <div style="font-size:0.68rem; color:#64748b; font-family:monospace; margin-top:2px;" title="Disbursement Reference">
+                              Ref: <?= htmlspecialchars($req['disbursement_reference']) ?>
+                            </div>
+                          <?php endif; ?>
+                        </td>
+
+                        <!-- Stage / Status with 3-Stage Progress Stepper -->
+                        <td>
+                          <div class="budget-stepper-wrap">
+                            <span class="status-pill <?= $pill_class ?>">
+                              <?= $pill_icon ?> <?= htmlspecialchars($status) ?>
+                            </span>
+                            <?php if ($status !== 'Rejected'): ?>
+                              <?php
+                                $s1_done = in_array($status, ['Pending SSC', 'Pending Admin', 'Disbursed']);
+                                $s1_act  = ($status === 'Pending Adviser');
+                                $s2_done = in_array($status, ['Pending Admin', 'Disbursed']);
+                                $s2_act  = ($status === 'Pending SSC');
+                                $s3_done = ($status === 'Disbursed');
+                                $s3_act  = ($status === 'Pending Admin');
+                              ?>
+                              <div class="budget-stepper-track" title="Pipeline: 1. Adviser Endorsement → 2. SSC Review → 3. Admin Release">
+                                <div class="b-step <?= $s1_done ? 'done' : ($s1_act ? 'active' : '') ?>">
+                                  <span class="b-dot"><?= $s1_done ? '<i class="fa-solid fa-check"></i>' : '1' ?></span>
+                                  <span class="b-lbl">Adviser</span>
+                                </div>
+                                <div class="b-line <?= $s1_done ? 'done' : '' ?>"></div>
+                                <div class="b-step <?= $s2_done ? 'done' : ($s2_act ? 'active' : '') ?>">
+                                  <span class="b-dot"><?= $s2_done ? '<i class="fa-solid fa-check"></i>' : '2' ?></span>
+                                  <span class="b-lbl">SSC</span>
+                                </div>
+                                <div class="b-line <?= $s2_done ? 'done' : '' ?>"></div>
+                                <div class="b-step <?= $s3_done ? 'done' : ($s3_act ? 'active' : '') ?>">
+                                  <span class="b-dot"><?= $s3_done ? '<i class="fa-solid fa-check"></i>' : '3' ?></span>
+                                  <span class="b-lbl">Admin</span>
+                                </div>
+                              </div>
+                            <?php endif; ?>
+                          </div>
+                        </td>
+
+                        <!-- Notes -->
+                        <td>
+                          <div style="font-size:0.78rem; color:#475569; line-height:1.35; max-width:220px;">
+                            <?= htmlspecialchars($req['notes'] ?: '—') ?>
+                          </div>
+                        </td>
+
+                        <!-- Actions -->
+                        <td>
+                          <div class="action-btn-group" style="justify-content:flex-end; gap:4px;">
+                            <?php if ($can_approve): ?>
+                              <?php
+                                $action_lbl = match($status) {
+                                    'Pending Adviser' => 'Endorse',
+                                    'Pending SSC'     => 'Forward',
+                                    'Pending Admin'   => 'Disburse',
+                                    default           => 'Approve',
+                                };
+                              ?>
+                              <button type="button" class="act-btn act-btn-approve" 
+                                      onclick="promptApprove(<?= $req['id'] ?>, '<?= $safe_title ?>', '<?= $status ?>', <?= (float)$req['amount'] ?>, <?= (float)($req['recommended_amount'] ?? $req['amount']) ?>)" 
+                                      title="<?= $action_lbl ?> Requisition">
+                                <i class="fa-solid fa-check"></i> <?= $action_lbl ?>
+                              </button>
+                            <?php else: ?>
+                              <?php
+                                $action_lbl = match($status) {
+                                    'Disbursed' => 'Disbursed',
+                                    'Rejected'  => 'Approve',
+                                    default     => ($sess_role === 'club_adviser' ? 'Endorse' : 'Disburse'),
+                                };
+                              ?>
+                              <button type="button" class="act-btn act-btn-approve btn-disabled" disabled 
+                                      title="Approval unavailable (Status: <?= htmlspecialchars($status) ?>)">
+                                <i class="fa-solid fa-check"></i> <?= $action_lbl ?>
+                              </button>
+                            <?php endif; ?>
+
+                            <?php if ($sess_role === 'admin' || $sess_role === 'ssc'): ?>
+                              <?php if ($can_edit_ssc): ?>
+                                <button type="button" class="act-btn act-btn-edit" 
+                                        onclick="openEditModal(<?= $req['id'] ?>, '<?= $safe_desc ?>', '<?= $safe_notes ?>')" 
+                                        title="Edit Line Items &amp; Notes">
+                                  <i class="fa-solid fa-pen-to-square"></i> Audit
+                                </button>
+                              <?php else: ?>
+                                <button type="button" class="act-btn act-btn-edit btn-disabled" disabled 
+                                        title="Audit / edit line items only available during pending review">
+                                  <i class="fa-solid fa-pen-to-square"></i> Audit
+                                </button>
+                              <?php endif; ?>
+                            <?php endif; ?>
+
+                            <?php if ($can_reject): ?>
+                              <button type="button" class="act-btn act-btn-reject" 
+                                      onclick="promptReject(<?= $req['id'] ?>, '<?= $safe_title ?>')" 
+                                      title="Reject Requisition">
+                                <i class="fa-solid fa-xmark"></i> Reject
+                              </button>
+                            <?php else: ?>
+                              <button type="button" class="act-btn act-btn-reject btn-disabled" disabled 
+                                      title="Rejection unavailable (Status: <?= htmlspecialchars($status) ?>)">
+                                <i class="fa-solid fa-xmark"></i> Reject
+                              </button>
+                            <?php endif; ?>
+
+                            <button type="button" class="act-btn act-btn-view" 
+                                    onclick="viewRequisitionDetails(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
+                                    title="View Full Details">
+                              <i class="fa-solid fa-eye"></i> View
+                            </button>
+                          </div>
+                        </td>
+                      <?php endif; ?>
                     </tr>
                   <?php endforeach; ?>
                 <?php endif; ?>
@@ -1164,6 +2040,20 @@ foreach ($budget_requests as $req) {
       </div>
       <div class="modal-body-pad">
         <p id="actionPromptMessage" style="font-size:0.9rem; color:#1e293b; line-height:1.45; margin-top:0; font-weight:600;"></p>
+        
+        <div id="actionPromptAmountContainer" style="display:none; margin-bottom:14px;">
+          <label id="actionPromptAmountLabel" style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">Amount</label>
+          <div class="currency-input-wrap">
+            <span class="currency-prefix">&#8369;</span>
+            <input type="number" step="0.01" min="1" id="actionPromptAmountInput" class="form-control-custom" placeholder="0.00"/>
+          </div>
+        </div>
+
+        <div id="actionPromptRefContainer" style="display:none; margin-bottom:14px;">
+          <label style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">Disbursement Reference / Voucher No. (Optional)</label>
+          <input type="text" id="actionPromptRefInput" class="form-control-custom" placeholder="e.g. CHK-2026-0042 / VCH-8821"/>
+        </div>
+
         <div class="form-group-custom" style="margin-bottom:0;">
           <label id="actionPromptInputLabel">Notes / Feedback (Optional)</label>
           <textarea id="actionPromptInput" rows="3" class="form-control-custom" placeholder="Provide notes or justification..."></textarea>
@@ -1178,7 +2068,142 @@ foreach ($budget_requests as $req) {
     </div>
   </div>
 
+  <!-- -------------------------------------------------------------------------
+       MODAL 5: SSC Budget Detail, Itemization & Review Modal
+  -------------------------------------------------------------------------- -->
+  <div class="modal-overlay" id="sscReviewModal">
+    <div class="modal-dialog" style="max-width:760px;">
+      <div class="modal-header-solid" style="background:#1a3a8c;">
+        <h3><i class="fa-solid fa-file-invoice-dollar" style="color:#facc15;"></i> Budget Detail &amp; Itemization Review</h3>
+        <button class="modal-close-btn" onclick="closeModal('sscReviewModal')" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body-pad" id="sscReviewModalBody">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- -------------------------------------------------------------------------
+       MODAL 6: Admin Return Requisition for Revision Modal
+  -------------------------------------------------------------------------- -->
+  <div class="modal-overlay" id="adminReturnModal">
+    <div class="modal-dialog" style="max-width:480px;">
+      <div class="modal-header-solid" style="background:#d97706;">
+        <h3><i class="fa-solid fa-rotate-left"></i> Return Requisition for Revision</h3>
+        <button class="modal-close-btn" onclick="closeModal('adminReturnModal')" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="adminReturnForm" onsubmit="handleAdminReturn(event)">
+        <input type="hidden" name="id" id="adminReturnId"/>
+        <div class="modal-body-pad">
+          <p id="adminReturnTitleDisplay" style="font-size:0.9rem; color:#1e293b; line-height:1.45; margin-top:0; font-weight:700;"></p>
+          <div class="form-group-custom" style="margin-bottom:0;">
+            <label style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">
+              Reason for Return &amp; Revision Instructions <span style="color:#ef4444;">*</span>
+            </label>
+            <textarea name="reason" id="adminReturnReason" rows="4" class="form-control-custom" required placeholder="Specify what line items need revision, additional documentation required, or budget adjustments needed..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer-pad">
+          <button type="button" onclick="closeModal('adminReturnModal')" class="act-btn act-btn-view">Cancel</button>
+          <button type="submit" class="act-btn act-btn-return" id="adminReturnConfirmBtn" style="padding:9px 18px;">
+            <i class="fa-solid fa-rotate-left"></i> Return Requisition
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- -------------------------------------------------------------------------
+       MODAL 7: Admin Budget Override (Reason + Re-Authentication + Audit)
+  -------------------------------------------------------------------------- -->
+  <div class="modal-overlay" id="adminBudgetOverrideModal">
+    <div class="modal-dialog" style="max-width:540px;">
+      <div class="modal-header-solid" style="background:linear-gradient(135deg, #4f46e5 0%, #312e81 100%);">
+        <h3><i class="fa-solid fa-bolt" style="color:#facc15;"></i> Administrative Budget Override</h3>
+        <button class="modal-close-btn" onclick="closeModal('adminBudgetOverrideModal')" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form id="adminBudgetOverrideForm" onsubmit="handleAdminBudgetOverride(event)">
+        <input type="hidden" name="id" id="overrideReqId"/>
+        <div class="modal-body-pad">
+          <div style="background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:12px 14px; margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span id="overrideRefCode" style="font-family:monospace; font-weight:700; color:#4338ca; font-size:0.85rem;"></span>
+              <span id="overrideOrgChip" class="org-code-chip"></span>
+            </div>
+            <h4 id="overrideReqTitle" style="margin:4px 0 0; font-size:0.95rem; color:#1e1b4b; font-weight:700;"></h4>
+            <div id="overrideCurrentStatus" style="font-size:0.75rem; color:#6366f1; margin-top:4px; font-weight:600;"></div>
+          </div>
+
+          <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px; margin-bottom:16px; font-size:0.78rem; color:#92400e; display:flex; gap:8px; align-items:flex-start;">
+            <i class="fa-solid fa-triangle-exclamation" style="margin-top:2px; font-size:0.9rem; flex-shrink:0;"></i>
+            <div>
+              <strong>Security Protocol:</strong> Any administrative override requires a stated justification, administrator password re-authentication, and creates an immutable audit event in the system log.
+            </div>
+          </div>
+
+          <div class="form-group-custom">
+            <label style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">Override Action Target <span style="color:#ef4444;">*</span></label>
+            <select name="override_type" id="overrideTypeSelect" class="form-control-custom" onchange="toggleOverrideTypeFields()" required>
+              <option value="disburse">Force Disburse &amp; Release Funds (Disbursed)</option>
+              <option value="return">Force Return for Revision (Returned)</option>
+              <option value="reject">Force Administrative Rejection (Rejected)</option>
+            </select>
+          </div>
+
+          <div id="overrideDisburseFields">
+            <div class="form-group-custom">
+              <label style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">Final Disbursed Amount (₱) <span style="color:#ef4444;">*</span></label>
+              <div class="currency-input-wrap">
+                <span class="currency-prefix">&#8369;</span>
+                <input type="number" step="0.01" min="1" name="override_amount" id="overrideAmountInput" class="form-control-custom" placeholder="0.00"/>
+              </div>
+            </div>
+
+            <div class="form-group-custom">
+              <label style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">Disbursement Reference / Voucher No. (Optional)</label>
+              <input type="text" name="disbursement_reference" id="overrideRefInput" class="form-control-custom" placeholder="e.g. OVR-DISB-2026-0091"/>
+            </div>
+          </div>
+
+          <div class="form-group-custom">
+            <label style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:block;">
+              Administrative Reason / Justification <span style="color:#ef4444;">*</span>
+            </label>
+            <textarea name="reason" id="overrideReasonInput" rows="3" class="form-control-custom" required placeholder="Mandatory: Specify why this administrative override is authorized (e.g. emergency campus initiative clearance, revised executive council agreement)..."></textarea>
+          </div>
+
+          <div class="form-group-custom" style="margin-bottom:0;">
+            <label style="font-size:0.8rem; font-weight:700; color:#b91c1c; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+              <i class="fa-solid fa-lock"></i> Re-Authentication: Administrator Password <span style="color:#ef4444;">*</span>
+            </label>
+            <input type="password" name="admin_password" id="overrideAdminPassword" class="form-control-custom" required placeholder="Enter your administrator password to authenticate" autocomplete="current-password"/>
+          </div>
+        </div>
+        <div class="modal-footer-pad">
+          <button type="button" onclick="closeModal('adminBudgetOverrideModal')" class="act-btn act-btn-view">Cancel</button>
+          <button type="submit" class="act-btn act-btn-override" id="overrideSubmitBtn" style="padding:9px 18px;">
+            <i class="fa-solid fa-bolt"></i> Authorize &amp; Execute Override
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
+    const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str).replace(/[&<>"']/g, function (m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    function addslashes(str) {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/\'/g, "\\'").replace(/\"/g, '\\"').replace(/\0/g, '\\0');
+    }
+
     // Live Ledger Table Search & Filter
     function filterLedgerTable() {
       const q = document.getElementById('budgetSearchInput').value.toLowerCase().trim();
@@ -1187,23 +2212,29 @@ foreach ($budget_requests as $req) {
       let visibleCount = 0;
 
       rows.forEach(row => {
-        const rowSearch = row.dataset.search || '';
+        const rowSearch = (row.dataset.search || row.textContent).toLowerCase();
         const rowStatus = row.dataset.status || '';
 
         const matchesQuery = !q || rowSearch.includes(q);
         const matchesStatus = statusFilter === 'ALL' || rowStatus === statusFilter;
 
         if (matchesQuery && matchesStatus) {
-          row.style.display = '';
+          row.removeAttribute('data-search-hidden');
           visibleCount++;
         } else {
-          row.style.display = 'none';
+          row.setAttribute('data-search-hidden', 'true');
         }
       });
 
       const emptyRow = document.getElementById('emptyRow');
       if (emptyRow) {
         emptyRow.style.display = visibleCount === 0 ? '' : 'none';
+      }
+
+      const tbl = document.getElementById('budgetLedgerTable');
+      if (tbl && tbl._paginator) {
+        tbl._paginator.currentPage = 1;
+        tbl._paginator.render();
       }
     }
 
@@ -1223,21 +2254,66 @@ foreach ($budget_requests as $req) {
       if (el) el.style.display = 'none';
     }
 
-    // View Requisition Details
+    // Helper to parse line items safely
+    function getParsedLineItems(req) {
+      let lineItems = [];
+      if (req.line_items) {
+        try {
+          lineItems = typeof req.line_items === 'string' ? JSON.parse(req.line_items) : req.line_items;
+        } catch(e) {
+          console.warn('Could not parse line items JSON:', e);
+        }
+      }
+      if (!Array.isArray(lineItems) || lineItems.length === 0) {
+        lineItems = [
+          {
+            item: req.title || 'General Requisition Items',
+            description: req.description || 'Program materials & supplies',
+            qty: 1,
+            unit_cost: parseFloat(req.amount),
+            total: parseFloat(req.amount)
+          }
+        ];
+      }
+      return lineItems;
+    }
+
+    // View Requisition Details Modal (With Budget Detail and Itemization)
     function viewRequisitionDetails(req) {
       const body = document.getElementById('viewReqDetailsBody');
       const formattedAmount = '₱' + parseFloat(req.amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const formattedDate = new Date(req.created_at).toLocaleDateString('en-PH', { dateStyle: 'medium' });
+      const refNo = 'REQ-' + new Date(req.created_at).getFullYear() + '-' + String(req.id).padStart(4, '0');
+      const lineItems = getParsedLineItems(req);
+
+      let tableRowsHtml = '';
+      let grandTotal = 0;
+      lineItems.forEach(it => {
+        const itemTotal = parseFloat(it.total || (it.qty * it.unit_cost));
+        grandTotal += itemTotal;
+        tableRowsHtml += `
+          <tr>
+            <td><strong>${escapeHtml(it.item || 'Item')}</strong></td>
+            <td style="color:#475569;">${escapeHtml(it.description || '—')}</td>
+            <td style="text-align:center; font-weight:600;">${it.qty || 1}</td>
+            <td style="text-align:right;">Php ${parseFloat(it.unit_cost || 0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+            <td style="text-align:right; font-weight:700; color:#0f172a;">Php ${itemTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          </tr>
+        `;
+      });
 
       body.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:16px;">
           <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:12px;">
             <div>
-              <span class="org-code-chip">${req.club_code}</span>
-              <h4 style="margin:4px 0 0; font-size:1.1rem; color:#0f172a;">${req.title}</h4>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="org-code-chip">${escapeHtml(req.club_code)}</span>
+                <span style="font-size:0.8rem; font-weight:700; color:#1a3a8c; font-family:monospace;">${refNo}</span>
+              </div>
+              <h4 style="margin:4px 0 0; font-size:1.1rem; color:#0f172a;">${escapeHtml(req.title)}</h4>
             </div>
             <div style="text-align:right;">
-              <div style="font-size:0.75rem; color:#64748b; font-weight:700; text-transform:uppercase;">Amount</div>
+              <div style="font-size:0.75rem; color:#64748b; font-weight:700; text-transform:uppercase;">Requested Amount</div>
               <div style="font-size:1.3rem; font-weight:800; color:#1a3a8c;">${formattedAmount}</div>
             </div>
           </div>
@@ -1245,11 +2321,11 @@ foreach ($budget_requests as $req) {
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; background:#f8fafc; padding:14px; border-radius:10px; border:1px solid #e2e8f0;">
             <div>
               <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Organization</span>
-              <div style="font-size:0.85rem; font-weight:700; color:#0f172a; margin-top:2px;">${req.club_name}</div>
+              <div style="font-size:0.85rem; font-weight:700; color:#0f172a; margin-top:2px;">${escapeHtml(req.club_name)}</div>
             </div>
             <div>
               <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Requested By</span>
-              <div style="font-size:0.85rem; font-weight:600; color:#0f172a; margin-top:2px;">${req.first_name} ${req.last_name}</div>
+              <div style="font-size:0.85rem; font-weight:600; color:#0f172a; margin-top:2px;">${escapeHtml(req.first_name + ' ' + req.last_name)}</div>
             </div>
             <div>
               <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Date Filed</span>
@@ -1257,18 +2333,97 @@ foreach ($budget_requests as $req) {
             </div>
             <div>
               <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Current Stage</span>
-              <div style="font-size:0.85rem; font-weight:700; color:#1a3a8c; margin-top:2px;">${req.status}</div>
+              <div style="font-size:0.85rem; font-weight:700; color:#1a3a8c; margin-top:2px;">${escapeHtml(req.status)}</div>
+            </div>
+          </div>
+
+          <!-- Official Disbursement Detail Section -->
+          <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:10px; padding:16px;">
+            <div style="font-size:0.85rem; font-weight:800; color:#1a3a8c; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+              <i class="fa-solid fa-file-invoice-dollar"></i> Disbursement detail
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px 16px;">
+              <div>
+                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Requested Amount</span>
+                <span style="font-size:1.05rem; font-weight:800; color:#0f172a;">${formattedAmount}</span>
+              </div>
+              <div>
+                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">SSC Recommended Amount</span>
+                <span style="font-size:1.05rem; font-weight:800; color:${req.recommended_amount ? '#6d28d9' : '#64748b'};">
+                  ${req.recommended_amount ? ('₱' + parseFloat(req.recommended_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})) : '—'}
+                </span>
+              </div>
+              <div>
+                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Final Approved Amount</span>
+                <span style="font-size:1.05rem; font-weight:800; color:${req.final_approved_amount ? '#15803d' : '#64748b'};">
+                  ${req.final_approved_amount ? ('₱' + parseFloat(req.final_approved_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})) : '—'}
+                </span>
+              </div>
+              <div>
+                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursement Date</span>
+                <span style="font-size:0.9rem; font-weight:600; color:#0f172a;">
+                  ${req.disbursed_at ? new Date(req.disbursed_at).toLocaleDateString('en-PH', {dateStyle:'medium'}) : '—'}
+                </span>
+              </div>
+              <div>
+                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursement Reference</span>
+                <span style="font-size:0.9rem; font-family:monospace; font-weight:700; color:#1a3a8c;">
+                  ${escapeHtml(req.disbursement_reference || '—')}
+                </span>
+              </div>
+              <div>
+                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursed By</span>
+                <span style="font-size:0.9rem; font-weight:600; color:#0f172a;">
+                  ${req.disburser_first ? escapeHtml(req.disburser_first + ' ' + req.disburser_last) : (req.disbursed_by ? ('Admin #' + req.disbursed_by) : '—')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Budget Detail and Itemization Table -->
+          <div class="itemization-card">
+            <div class="itemization-header">
+              <div class="itemization-title">
+                <i class="fa-solid fa-receipt" style="color:#1a3a8c;"></i> Budget detail and itemization
+              </div>
+              <span class="itemization-count-chip">${lineItems.length} Entries</span>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="itemization-table">
+                <thead>
+                  <tr>
+                    <th style="min-width:120px;">Item</th>
+                    <th style="min-width:160px;">Description</th>
+                    <th style="text-align:center; width:60px;">Qty</th>
+                    <th style="text-align:right; width:110px;">Unit Cost</th>
+                    <th style="text-align:right; width:120px;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tableRowsHtml}
+                </tbody>
+                <tfoot>
+                  <tr class="itemization-foot-row">
+                    <td colspan="4" style="text-align:right; font-weight:700; text-transform:uppercase; font-size:0.76rem; letter-spacing:0.04em; color:#475569;">
+                      Grand Total:
+                    </td>
+                    <td style="text-align:right; font-weight:800; font-size:1.05rem; color:#1a3a8c;">
+                      Php ${grandTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </div>
 
           <div>
-            <span style="font-size:0.72rem; font-weight:800; color:#64748b; text-transform:uppercase;">Itemized Description &amp; Justification</span>
-            <p style="margin:6px 0 0; font-size:0.88rem; line-height:1.55; color:#334155; white-space:pre-line;">${req.description || 'No description specified.'}</p>
+            <span style="font-size:0.72rem; font-weight:800; color:#64748b; text-transform:uppercase;">General Justification &amp; Narrative</span>
+            <p style="margin:6px 0 0; font-size:0.88rem; line-height:1.55; color:#334155; white-space:pre-line;">${escapeHtml(req.description || 'No description specified.')}</p>
           </div>
 
           <div>
             <span style="font-size:0.72rem; font-weight:800; color:#64748b; text-transform:uppercase;">Audit &amp; Review History</span>
-            <p style="margin:6px 0 0; font-size:0.85rem; color:#475569; background:#f1f5f9; padding:10px 12px; border-radius:8px;">${req.notes || 'No review notes logged yet.'}</p>
+            <p style="margin:6px 0 0; font-size:0.85rem; color:#475569; background:#f1f5f9; padding:10px 12px; border-radius:8px;">${escapeHtml(req.notes || 'No review notes logged yet.')}</p>
           </div>
         </div>
       `;
@@ -1276,19 +2431,287 @@ foreach ($budget_requests as $req) {
       document.getElementById('viewReqDetailsModal').style.display = 'flex';
     }
 
+    // SSC Review & Endorsement Modal (With Budget Detail and Itemization)
+    function openSSCReviewModal(req) {
+      const modal = document.getElementById('sscReviewModal');
+      const body = document.getElementById('sscReviewModalBody');
+      const refNo = 'REQ-' + new Date(req.created_at).getFullYear() + '-' + String(req.id).padStart(4, '0');
+      const formattedAmount = '₱' + parseFloat(req.amount).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const dateStr = new Date(req.created_at).toLocaleDateString('en-PH', { dateStyle: 'medium' });
+      const lineItems = getParsedLineItems(req);
+
+      let tableRowsHtml = '';
+      let grandTotal = 0;
+      lineItems.forEach(it => {
+        const itemTotal = parseFloat(it.total || (it.qty * it.unit_cost));
+        grandTotal += itemTotal;
+        tableRowsHtml += `
+          <tr>
+            <td><strong>${escapeHtml(it.item || 'Item')}</strong></td>
+            <td style="color:#475569;">${escapeHtml(it.description || '—')}</td>
+            <td style="text-align:center; font-weight:600;">${it.qty || 1}</td>
+            <td style="text-align:right;">Php ${parseFloat(it.unit_cost || 0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+            <td style="text-align:right; font-weight:700; color:#0f172a;">Php ${itemTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+          </tr>
+        `;
+      });
+
+      const isPendingSSC = (req.status === 'Pending SSC');
+      const currentRecVal = (req.recommended_amount && parseFloat(req.recommended_amount) > 0) 
+        ? parseFloat(req.recommended_amount).toFixed(2) 
+        : parseFloat(req.amount).toFixed(2);
+
+      body.innerHTML = `
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <!-- Header Meta Banner -->
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:1px solid #e2e8f0; padding-bottom:14px; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="org-code-chip">${escapeHtml(req.club_code)}</span>
+                <span style="font-size:0.82rem; font-weight:700; color:#1a3a8c; font-family:monospace;">${refNo}</span>
+              </div>
+              <h3 style="margin:4px 0 2px; font-size:1.12rem; color:#0f172a; font-weight:700;">${escapeHtml(req.title)}</h3>
+              <div style="font-size:0.78rem; color:#64748b;">
+                Organization: <strong style="color:#0f172a;">${escapeHtml(req.club_name)}</strong> &bull; Requested by <strong style="color:#0f172a;">${escapeHtml(req.first_name + ' ' + req.last_name)}</strong> on ${dateStr}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.04em;">Original Requested</div>
+              <div style="font-size:1.35rem; font-weight:800; color:#1a3a8c;">${formattedAmount}</div>
+              <span class="adviser-badge" style="margin-top:4px;"><i class="fa-solid fa-circle-check"></i> Endorsed by Adviser</span>
+            </div>
+          </div>
+
+          <!-- Budget Detail and Itemization Table -->
+          <div class="itemization-card">
+            <div class="itemization-header">
+              <div class="itemization-title">
+                <i class="fa-solid fa-receipt" style="color:#1a3a8c;"></i> Budget detail and itemization
+              </div>
+              <span class="itemization-count-chip">${lineItems.length} Itemized Entries</span>
+            </div>
+            <div style="overflow-x:auto;">
+              <table class="itemization-table">
+                <thead>
+                  <tr>
+                    <th style="min-width:130px;">Item</th>
+                    <th style="min-width:180px;">Description</th>
+                    <th style="text-align:center; width:65px;">Qty</th>
+                    <th style="text-align:right; width:115px;">Unit Cost</th>
+                    <th style="text-align:right; width:125px;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${tableRowsHtml}
+                </tbody>
+                <tfoot>
+                  <tr class="itemization-foot-row">
+                    <td colspan="4" style="text-align:right; font-weight:700; text-transform:uppercase; font-size:0.76rem; letter-spacing:0.04em; color:#475569;">
+                      Grand Total:
+                    </td>
+                    <td style="text-align:right; font-weight:800; font-size:1.05rem; color:#1a3a8c;">
+                      Php ${grandTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <!-- Description / Narrative -->
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 16px;">
+            <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.04em;">
+              Requisition Purpose &amp; Justification
+            </div>
+            <div style="font-size:0.85rem; color:#334155; line-height:1.45;">
+              ${escapeHtml(req.description || 'No additional narrative specified.')}
+            </div>
+          </div>
+
+          ${isPendingSSC ? `
+            <!-- SSC Review and Vetting Box -->
+            <div style="background:#f0f7ff; border:1px solid #bfdbfe; border-radius:12px; padding:16px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+                <i class="fa-solid fa-sliders" style="color:#2563eb; font-size:1rem;"></i>
+                <h4 style="margin:0; font-size:0.92rem; font-weight:700; color:#1e40af;">SSC Audit &amp; Recommendation Control</h4>
+              </div>
+
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:12px;">
+                <div>
+                  <label style="font-size:0.75rem; font-weight:700; color:#475569; text-transform:uppercase; margin-bottom:5px; display:block;">Original Requested</label>
+                  <div style="font-size:1.05rem; font-weight:700; color:#475569; padding:8px 12px; background:#ffffff; border:1px solid #cbd5e1; border-radius:8px;">
+                    ${formattedAmount}
+                  </div>
+                </div>
+                <div>
+                  <label style="font-size:0.75rem; font-weight:700; color:#1a3a8c; text-transform:uppercase; margin-bottom:5px; display:block;">
+                    SSC Recommended Amount (Php) <span style="color:#ef4444;">*</span>
+                  </label>
+                  <div class="currency-input-wrap">
+                    <span class="currency-prefix">₱</span>
+                    <input type="number" step="0.01" min="1" id="modalSSCAmount" class="form-control-custom" value="${currentRecVal}" style="font-weight:700; color:#1a3a8c; font-size:1.05rem;"/>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group-custom" style="margin-bottom:0;">
+                <label style="font-size:0.75rem; font-weight:700; color:#475569; text-transform:uppercase; margin-bottom:5px; display:block;">
+                  SSC Review &amp; Audit Notes
+                </label>
+                <textarea id="modalSSCNotes" rows="3" class="form-control-custom" placeholder="Specify line-item vetting observations, justification for recommended revision, or endorsement remarks...">${escapeHtml(req.notes || '')}</textarea>
+              </div>
+            </div>
+
+            <!-- Action Buttons Bar -->
+            <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:8px; border-top:1px solid #e2e8f0; padding-top:16px;">
+              <div>
+                <button type="button" class="act-btn act-btn-reject" onclick="handleSSCReject(${req.id}, '${escapeHtml(addslashes(req.title))}')" style="padding:9px 16px;">
+                  <i class="fa-solid fa-xmark"></i> Reject Requisition
+                </button>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <button type="button" class="act-btn act-btn-view" onclick="closeModal('sscReviewModal')">Cancel</button>
+                <button type="button" class="act-btn act-btn-edit" onclick="handleSSCRevise(${req.id})" style="padding:9px 16px;" title="Save revised recommended amount without forwarding yet">
+                  <i class="fa-solid fa-floppy-disk"></i> Revise Recommendation
+                </button>
+                <button type="button" class="act-btn act-btn-approve" onclick="handleSSCEndorse(${req.id})" style="padding:9px 18px;" title="Endorse and forward to Administration for final disbursement">
+                  <i class="fa-solid fa-share-from-square"></i> Endorse to Admin
+                </button>
+              </div>
+            </div>
+          ` : `
+            <!-- Historical Notes for View Mode -->
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 16px;">
+              <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.04em;">
+                Audit &amp; Workflow History
+              </div>
+              <div style="font-size:0.85rem; color:#475569;">
+                ${escapeHtml(req.notes || 'No review notes logged.')}
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; margin-top:8px; border-top:1px solid #e2e8f0; padding-top:14px;">
+              <button type="button" class="act-btn act-btn-view" onclick="closeModal('sscReviewModal')">Close</button>
+            </div>
+          `}
+        </div>
+      `;
+
+      modal.style.display = 'flex';
+    }
+
+    // SSC Endorse Action
+    async function handleSSCEndorse(id) {
+      const amtInput = document.getElementById('modalSSCAmount');
+      const notesInput = document.getElementById('modalSSCNotes');
+      const recAmt = amtInput ? parseFloat(amtInput.value) : 0;
+      if (!recAmt || recAmt <= 0) {
+        window.alert('Please enter a valid recommended amount.', 'warning');
+        return;
+      }
+      const confirmed = await window.showConfirmModal(
+        'Endorse Budget Requisition?',
+        'Do you want to endorse this budget requisition and forward to Administration for final disbursement?',
+        { type: 'decision', confirmText: 'Yes, Endorse Requisition' }
+      );
+      if (!confirmed) return;
+
+      const fd = new FormData();
+      fd.append('action', 'approve');
+      fd.append('id', id);
+      fd.append('recommended_amount', recAmt);
+      fd.append('notes', notesInput ? notesInput.value.trim() : '');
+      if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+      try {
+        const res = await fetch('../shared/budget_actions.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        closeModal('sscReviewModal');
+        if (data.success) {
+          await window.showSystemModal({ title: 'Requisition Endorsed', message: data.message, type: 'success' });
+          location.reload();
+        } else {
+          window.alert(data.message, 'error');
+        }
+      } catch {
+        window.alert('Network error.', 'error');
+      }
+    }
+
+    // SSC Revise Recommendation Action
+    async function handleSSCRevise(id) {
+      const amtInput = document.getElementById('modalSSCAmount');
+      const notesInput = document.getElementById('modalSSCNotes');
+      const recAmt = amtInput ? parseFloat(amtInput.value) : 0;
+      if (!recAmt || recAmt <= 0) {
+        window.alert('Please enter a valid recommended amount.', 'warning');
+        return;
+      }
+
+      const confirmed = await window.showConfirmModal(
+        'Update SSC Recommendation?',
+        'Do you want to update the recommended budget allocation and audit notes for this requisition?',
+        { type: 'info', confirmText: 'Yes, Save Changes' }
+      );
+      if (!confirmed) return;
+
+      const fd = new FormData();
+      fd.append('action', 'ssc_edit');
+      fd.append('id', id);
+      fd.append('recommended_amount', recAmt);
+      fd.append('notes', notesInput ? notesInput.value.trim() : '');
+      if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+      try {
+        const res = await fetch('../shared/budget_actions.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.success) {
+          await window.showSystemModal({ title: 'Recommendation Saved', message: data.message, type: 'success' });
+          location.reload();
+        } else {
+          window.alert(data.message, 'error');
+        }
+      } catch {
+        window.alert('Network error.', 'error');
+      }
+    }
+
+    // SSC Reject from Review Modal
+    function handleSSCReject(id, title) {
+      closeModal('sscReviewModal');
+      promptReject(id, title);
+    }
+
     // Modal Action Confirmation Dialogs
     let pendingAction = null;
 
-    function promptApprove(id, title, status) {
+    function promptApprove(id, title, status, amount = 0, recAmount = 0) {
       let label = 'Endorse Requisition';
       let msg = `Are you sure you want to endorse and forward "${title}" to Stage 2 (SSC Review)?`;
+
+      const amtCont = document.getElementById('actionPromptAmountContainer');
+      const amtLabel = document.getElementById('actionPromptAmountLabel');
+      const amtInput = document.getElementById('actionPromptAmountInput');
+      const refCont = document.getElementById('actionPromptRefContainer');
+      const refInput = document.getElementById('actionPromptRefInput');
+
+      amtCont.style.display = 'none';
+      refCont.style.display = 'none';
+      amtInput.value = '';
+      refInput.value = '';
 
       if (status === 'Pending SSC') {
         label = 'Forward to Admin';
         msg = `Audit complete. Forward "${title}" to Stage 3 (Admin Final Approval)?`;
+        amtCont.style.display = 'block';
+        amtLabel.textContent = 'Recommended Amount for Admin (₱)';
+        amtInput.value = (recAmount > 0 ? recAmount : amount).toFixed(2);
       } else if (status === 'Pending Admin') {
         label = 'Disburse & Release Funds';
         msg = `Final authorization: Approve and disburse funding for "${title}"?`;
+        amtCont.style.display = 'block';
+        amtLabel.textContent = 'Final Disbursed Amount (₱)';
+        amtInput.value = (recAmount > 0 ? recAmount : amount).toFixed(2);
+        refCont.style.display = 'block';
       }
 
       document.getElementById('actionPromptTitle').innerHTML = `<i class="fa-solid fa-check-circle" style="color:#22c55e;"></i> ${label}`;
@@ -1300,11 +2723,26 @@ foreach ($budget_requests as $req) {
       document.getElementById('actionPromptConfirmBtn').innerHTML = `<i class="fa-solid fa-check"></i> Confirm ${label}`;
 
       pendingAction = async () => {
+        const confirmed = await window.showConfirmModal(
+          label + '?',
+          `Do you want to ${label.toLowerCase()} for "${title}"?`,
+          { type: 'info', confirmText: `Yes, ${label}` }
+        );
+        if (!confirmed) return;
+
         const notes = document.getElementById('actionPromptInput').value.trim();
         const fd = new FormData();
         fd.append('action', 'approve');
         fd.append('id', id);
         fd.append('notes', notes);
+        if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+        if (status === 'Pending SSC' && amtInput.value) {
+          fd.append('recommended_amount', amtInput.value);
+        } else if (status === 'Pending Admin') {
+          if (amtInput.value) fd.append('final_approved_amount', amtInput.value);
+          if (refInput.value.trim()) fd.append('disbursement_reference', refInput.value.trim());
+        }
 
         const btn = document.getElementById('actionPromptConfirmBtn');
         btn.disabled = true;
@@ -1341,14 +2779,22 @@ foreach ($budget_requests as $req) {
       pendingAction = async () => {
         const reason = document.getElementById('actionPromptInput').value.trim();
         if (!reason) {
-          alert('Please enter a reason for rejection.');
+          window.alert('Please enter a reason for rejection.', 'warning');
           return;
         }
+
+        const confirmed = await window.showConfirmModal(
+          'Reject Budget Requisition?',
+          'Do you want to reject this budget requisition with the stated reason?',
+          { type: 'error', danger: true, confirmText: 'Yes, Reject Requisition' }
+        );
+        if (!confirmed) return;
 
         const fd = new FormData();
         fd.append('action', 'reject');
         fd.append('id', id);
         fd.append('reason', reason);
+        if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
         const btn = document.getElementById('actionPromptConfirmBtn');
         btn.disabled = true;
@@ -1359,13 +2805,13 @@ foreach ($budget_requests as $req) {
           const data = await res.json();
           closeModal('actionPromptModal');
           if (data.success) {
-            alert('✓ ' + data.message);
+            await window.showSystemModal({ title: 'Requisition Rejected', message: data.message, type: 'warning' });
             location.reload();
           } else {
-            alert('✗ ' + data.message);
+            window.alert(data.message, 'error');
           }
         } catch {
-          alert('Network error.');
+          window.alert('Network error.', 'error');
         }
         btn.disabled = false;
       };
@@ -1377,6 +2823,133 @@ foreach ($budget_requests as $req) {
       if (typeof pendingAction === 'function') pendingAction();
     });
 
+    // Handle Admin Return Requisition
+    function openAdminReturnModal(id, title) {
+      document.getElementById('adminReturnId').value = id;
+      document.getElementById('adminReturnTitleDisplay').textContent = 'Return for Revision: "' + title + '"';
+      document.getElementById('adminReturnReason').value = '';
+      document.getElementById('adminReturnModal').style.display = 'flex';
+    }
+
+    async function handleAdminReturn(e) {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('adminReturnConfirmBtn');
+      const reason = document.getElementById('adminReturnReason').value.trim();
+
+      if (!reason) {
+        window.alert('Please enter revision instructions or the reason for returning this requisition.', 'warning');
+        return;
+      }
+
+      const confirmed = await window.showConfirmModal(
+        'Return Requisition for Revision?',
+        'Do you want to return this budget requisition for revision with the stated instructions?',
+        { type: 'warning', warning: true, confirmText: 'Yes, Return for Revision' }
+      );
+      if (!confirmed) return;
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
+
+      const fd = new FormData(form);
+      fd.append('action', 'return');
+      if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+      try {
+        const res = await fetch('../shared/budget_actions.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.success) {
+          await window.showSystemModal({ title: 'Requisition Returned', message: data.message, type: 'warning' });
+          closeModal('adminReturnModal');
+          location.reload();
+        } else {
+          alert('✗ ' + data.message);
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Return Requisition';
+        }
+      } catch (err) {
+        alert('An unexpected network error occurred.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Return Requisition';
+      }
+    }
+
+    // Handle Admin Override Modal
+    function openAdminBudgetOverrideModal(req) {
+      const refNo = 'REQ-' + new Date(req.created_at).getFullYear() + '-' + String(req.id).padStart(4, '0');
+      document.getElementById('overrideReqId').value = req.id;
+      document.getElementById('overrideRefCode').textContent = refNo;
+      document.getElementById('overrideOrgChip').textContent = req.club_code || 'CLUB';
+      document.getElementById('overrideReqTitle').textContent = req.title || '';
+      document.getElementById('overrideCurrentStatus').innerHTML = 'Current Status: <strong>' + escapeHtml(req.status) + '</strong>';
+
+      const defaultAmt = req.final_approved_amount || req.recommended_amount || req.amount;
+      document.getElementById('overrideAmountInput').value = parseFloat(defaultAmt || 0).toFixed(2);
+      document.getElementById('overrideRefInput').value = req.disbursement_reference || ('OVR-DISB-' + new Date().getFullYear() + '-' + String(req.id).padStart(4, '0'));
+      document.getElementById('overrideReasonInput').value = '';
+      document.getElementById('overrideAdminPassword').value = '';
+      document.getElementById('overrideTypeSelect').value = 'disburse';
+      toggleOverrideTypeFields();
+
+      document.getElementById('adminBudgetOverrideModal').style.display = 'flex';
+    }
+
+    function toggleOverrideTypeFields() {
+      const val = document.getElementById('overrideTypeSelect').value;
+      const disburseFields = document.getElementById('overrideDisburseFields');
+      const amountInput = document.getElementById('overrideAmountInput');
+      if (val === 'disburse') {
+        disburseFields.style.display = 'block';
+        amountInput.required = true;
+      } else {
+        disburseFields.style.display = 'none';
+        amountInput.required = false;
+      }
+    }
+
+    async function handleAdminBudgetOverride(e) {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('overrideSubmitBtn');
+      const reason = document.getElementById('overrideReasonInput').value.trim();
+      const pass = document.getElementById('overrideAdminPassword').value;
+
+      if (!reason) {
+        alert('Please provide a mandatory justification/reason for this administrative override.');
+        return;
+      }
+      if (!pass) {
+        alert('Administrator password is required for security re-authentication.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Authenticating &amp; Executing...';
+
+      const fd = new FormData(form);
+      fd.append('action', 'override');
+      if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
+
+      try {
+        const res = await fetch('../shared/budget_actions.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.success) {
+          alert('✓ ' + data.message);
+          closeModal('adminBudgetOverrideModal');
+          location.reload();
+        } else {
+          alert('✗ ' + data.message);
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Authorize &amp; Execute Override';
+        }
+      } catch (err) {
+        alert('An unexpected network error occurred.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-bolt"></i> Authorize &amp; Execute Override';
+      }
+    }
+
     // Handle Create Request
     async function handleCreateRequest(e) {
       e.preventDefault();
@@ -1386,6 +2959,7 @@ foreach ($budget_requests as $req) {
 
       const fd = new FormData(e.target);
       fd.append('action', 'create');
+      if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
       try {
         const res = await fetch('../shared/budget_actions.php', { method: 'POST', body: fd });
@@ -1408,6 +2982,7 @@ foreach ($budget_requests as $req) {
       e.preventDefault();
       const fd = new FormData(e.target);
       fd.append('action', 'ssc_edit');
+      if (CSRF_TOKEN) fd.append('csrf_token', CSRF_TOKEN);
 
       try {
         const res = await fetch('../shared/budget_actions.php', { method: 'POST', body: fd });
@@ -1422,10 +2997,24 @@ foreach ($budget_requests as $req) {
         alert('Network error.');
       }
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const initPagination = () => {
+        if (window.initTablePagination) {
+          window.initTablePagination('#budgetLedgerTable', {
+            pageSize: 5,
+            showInfo: false,
+            showPageSizeSelector: false
+          });
+        }
+      };
+      initPagination();
+      window.addEventListener('load', initPagination);
+    });
   </script>
 
   <script src="https://unpkg.com/@zxing/library@0.21.1/umd/index.min.js"></script>
-  <script src="../js/dashboard.js"></script>
+  <script src="../js/dashboard.js?v=<?= filemtime(__DIR__ . '/../js/dashboard.js') ?>"></script>
   <script src="../js/table-pagination.js"></script>
 </body>
 </html>

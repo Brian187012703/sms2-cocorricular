@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS `events` (
   `description` TEXT DEFAULT NULL,
   `event_date` DATETIME NOT NULL,
   `venue` VARCHAR(150) NOT NULL,
-  `status` ENUM('Upcoming', 'Approved', 'Completed', 'Pending SSC', 'Pending Admin', 'Rejected') NOT NULL DEFAULT 'Pending SSC',
+  `expected_attendees` INT(10) UNSIGNED DEFAULT 0,
+  `attachment` VARCHAR(255) DEFAULT NULL,
+  `status` ENUM('Upcoming', 'Approved', 'Completed', 'Pending SSC', 'Pending Admin', 'Returned', 'Rejected') NOT NULL DEFAULT 'Pending SSC',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `created_by` INT(10) UNSIGNED DEFAULT NULL,
   `endorsement_notes` TEXT DEFAULT NULL,
@@ -39,10 +41,3 @@ CREATE TABLE IF NOT EXISTS `event_registrations` (
   CONSTRAINT `fk_er_event` FOREIGN KEY (`event_id`) REFERENCES `events` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_er_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Sample Seed Events
-INSERT INTO `events` (`id`, `club_id`, `event_type`, `title`, `description`, `event_date`, `venue`, `status`, `created_by`) VALUES
-(1, 1, 'Club', 'Annual Tech Symposium 2026', 'A nationwide technology symposium featuring AI, Cloud Computing, and Cybersecurity workshops.', '2026-08-15 09:00:00', 'Main Auditorium', 'Approved', 59),
-(2, 1, 'Club', 'BCP Hackathon & Code Fest', '24-hour inter-college coding competition with cash prizes and industry mentors.', '2026-08-22 08:00:00', 'IT Laboratory 3', 'Approved', 59),
-(3, 12, 'Club', 'Community Outreach Drive', 'Barangay computer literacy workshop and donation drive.', '2026-09-05 08:30:00', 'Barangay Hall', 'Pending SSC', 58)
-ON DUPLICATE KEY UPDATE `title`=VALUES(`title`);
