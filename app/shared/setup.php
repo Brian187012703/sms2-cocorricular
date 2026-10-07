@@ -1116,9 +1116,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $new_name = trim($_POST['db_name'] ?? 'sms_db');
 
         // Test connection
-        $testConn = @new mysqli($new_host, $new_user, $new_pass, '', $new_port);
-        if ($testConn->connect_error) {
-            $errors[] = "Connection failed to {$new_host}:{$new_port} with user '{$new_user}': " . $testConn->connect_error;
+        mysqli_report(MYSQLI_REPORT_OFF);
+        $testConn = null;
+        try {
+            $testConn = @new mysqli($new_host, $new_user, $new_pass, '', $new_port);
+        } catch (Throwable $e) {
+            $errors[] = "Connection failed to {$new_host}:{$new_port} with user '{$new_user}': " . $e->getMessage();
+        }
+        if (!$testConn || $testConn->connect_error) {
+            if ($testConn && $testConn->connect_error) {
+                $errors[] = "Connection failed to {$new_host}:{$new_port} with user '{$new_user}': " . $testConn->connect_error;
+            }
         } else {
             // Auto-create database if not exists
             $testConn->query("CREATE DATABASE IF NOT EXISTS `{$new_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
@@ -1154,6 +1162,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 . "// ============================================================\n"
                 . "//  DB.PHP — Database Connection & Environment Loader\n"
                 . "// ============================================================\n\n"
+                . "// Bestlink College of the Philippines timezone synchronization\n"
+                . "if (date_default_timezone_get() !== 'Asia/Manila') {\n"
+                . "    date_default_timezone_set('Asia/Manila');\n"
+                . "}\n\n"
                 . "// 1. Load environment variables from .env if available\n"
                 . "\$envFile = dirname(__DIR__, 2) . '/.env';\n"
                 . "if (file_exists(\$envFile)) {\n"
@@ -1175,24 +1187,77 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 . "        }\n"
                 . "    }\n"
                 . "}\n\n"
-                . "// 2. Normalize database environment variables / aliases\n"
+                . "// 2. Parse DATABASE_URL if provided (HostForge, Railway, Heroku standard)\n"
+                . "\$dbUrl = getenv('DATABASE_URL') ?: (\$_ENV['DATABASE_URL'] ?? (\$_SERVER['DATABASE_URL'] ?? ''));\n"
+                . "if (!empty(\$dbUrl)) {\n"
+                . "    \$parsedUrl = parse_url(\$dbUrl);\n"
+                . "    if (!empty(\$parsedUrl['host'])) {\n"
+                . "        putenv('DB_HOST=' . \$parsedUrl['host']);\n"
+                . "        \$_ENV['DB_HOST'] = \$parsedUrl['host'];\n"
+                . "    }\n"
+                . "    if (!empty(\$parsedUrl['user'])) {\n"
+                . "        \$dbUser = rawurldecode(\$parsedUrl['user']);\n"
+                . "        putenv('DB_USER=' . \$dbUser);\n"
+                . "        \$_ENV['DB_USER'] = \$dbUser;\n"
+                . "        putenv('DB_USERNAME=' . \$dbUser);\n"
+                . "        \$_ENV['DB_USERNAME'] = \$dbUser;\n"
+                . "    }\n"
+                . "    if (isset(\$parsedUrl['pass'])) {\n"
+                . "        \$dbPass = rawurldecode(\$parsedUrl['pass']);\n"
+                . "        putenv('DB_PASS=' . \$dbPass);\n"
+                . "        \$_ENV['DB_PASS'] = \$dbPass;\n"
+                . "        putenv('DB_PASSWORD=' . \$dbPass);\n"
+                . "        \$_ENV['DB_PASSWORD'] = \$dbPass;\n"
+                . "    }\n"
+                . "    if (!empty(\$parsedUrl['path'])) {\n"
+                . "        \$dbFromUrl = rawurldecode(ltrim(\$parsedUrl['path'], '/'));\n"
+                . "        putenv('DB_NAME=' . \$dbFromUrl);\n"
+                . "        \$_ENV['DB_NAME'] = \$dbFromUrl;\n"
+                . "        putenv('DB_DATABASE=' . \$dbFromUrl);\n"
+                . "        \$_ENV['DB_DATABASE'] = \$dbFromUrl;\n"
+                . "    }\n"
+                . "    if (!empty(\$parsedUrl['port'])) {\n"
+                . "        putenv('DB_PORT=' . \$parsedUrl['port']);\n"
+                . "        \$_ENV['DB_PORT'] = (int)\$parsedUrl['port'];\n"
+                . "    }\n"
+                . "}\n\n"
+                . "// 3. Normalize database environment variables / aliases & clean placeholders\n"
+                . "if (preg_match('/^<.*>$/', (string)getenv('DB_PASSWORD'))) {\n"
+                . "    putenv('DB_PASSWORD=' . (getenv('DB_PASS') ?: ''));\n"
+                . "    \$_ENV['DB_PASSWORD'] = getenv('DB_PASSWORD');\n"
+                . "}\n"
                 . "if (!getenv('DB_USER') && getenv('DB_USERNAME')) {\n"
                 . "    putenv('DB_USER=' . getenv('DB_USERNAME'));\n"
                 . "    \$_ENV['DB_USER'] = getenv('DB_USERNAME');\n"
                 . "}\n"
-                . "if (getenv('DB_PASS') === false && getenv('DB_PASSWORD') !== false) {\n"
+                . "if (getenv('DB_USER') && (!getenv('DB_USERNAME') || getenv('DB_USERNAME') !== getenv('DB_USER'))) {\n"
+                . "    putenv('DB_USERNAME=' . getenv('DB_USER'));\n"
+                . "    \$_ENV['DB_USERNAME'] = getenv('DB_USER');\n"
+                . "}\n"
+                . "if ((getenv('DB_PASS') === false || getenv('DB_PASS') === '') && getenv('DB_PASSWORD') !== false && getenv('DB_PASSWORD') !== '') {\n"
                 . "    putenv('DB_PASS=' . getenv('DB_PASSWORD'));\n"
                 . "    \$_ENV['DB_PASS'] = getenv('DB_PASSWORD');\n"
+                . "}\n"
+                . "if ((getenv('DB_PASSWORD') === false || getenv('DB_PASSWORD') === '' || preg_match('/^<.*>$/', (string)getenv('DB_PASSWORD'))) && getenv('DB_PASS') !== false && getenv('DB_PASS') !== '') {\n"
+                . "    putenv('DB_PASSWORD=' . getenv('DB_PASS'));\n"
+                . "    \$_ENV['DB_PASSWORD'] = getenv('DB_PASS');\n"
                 . "}\n"
                 . "if (!getenv('DB_NAME') && getenv('DB_DATABASE')) {\n"
                 . "    putenv('DB_NAME=' . getenv('DB_DATABASE'));\n"
                 . "    \$_ENV['DB_NAME'] = getenv('DB_DATABASE');\n"
+                . "}\n"
+                . "if (getenv('DB_NAME') && (!getenv('DB_DATABASE') || getenv('DB_DATABASE') !== getenv('DB_NAME'))) {\n"
+                . "    putenv('DB_DATABASE=' . getenv('DB_NAME'));\n"
+                . "    \$_ENV['DB_DATABASE'] = getenv('DB_NAME');\n"
                 . "}\n\n"
                 . "\$host = getenv('DB_HOST') ?: '{$new_host}';\n"
                 . "\$user = getenv('DB_USER') ?: '{$new_user}';\n"
-                . "\$pass = getenv('DB_PASS') ?: '{$escaped_pass}';\n"
+                . "\$pass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : '{$escaped_pass}';\n"
                 . "\$db   = getenv('DB_NAME') ?: '{$new_name}';\n"
                 . "\$port = (int)(getenv('DB_PORT') ?: {$new_port});\n\n"
+                . "if (preg_match('/^<.*>$/', \$pass)) {\n"
+                . "    \$pass = '';\n"
+                . "}\n\n"
                 . "// Define DB constants for backward compatibility across modules\n"
                 . "if (!defined('DB_HOST')) define('DB_HOST', \$host);\n"
                 . "if (!defined('DB_USER')) define('DB_USER', \$user);\n"
@@ -1200,28 +1265,44 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                 . "if (!defined('DB_NAME')) define('DB_NAME', \$db);\n"
                 . "if (!defined('DB_PORT')) define('DB_PORT', \$port);\n\n"
                 . "\$is_setup_script = (basename(\$_SERVER['PHP_SELF'] ?? '') === 'setup.php');\n\n"
-                . "// 3. Connect to MySQL server\n"
-                . "\$conn = @new mysqli(\$host, \$user, \$pass, \$is_setup_script ? '' : \$db, \$port);\n\n"
-                . "// If database does not exist (MySQL error 1049: Unknown database), auto-connect and create it\n"
-                . "if (!\$is_setup_script && \$conn->connect_errno === 1049) {\n"
-                . "    \$conn = @new mysqli(\$host, \$user, \$pass, '', \$port);\n"
-                . "    if (!\$conn->connect_error) {\n"
-                . "        \$conn->query(\"CREATE DATABASE IF NOT EXISTS `\" . \$db . \"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci\");\n"
-                . "        \$conn->select_db(\$db);\n"
-                . "    }\n"
-                . "}\n\n"
-                . "\$db_connected = true;\n"
+                . "// Disable throwing fatal exceptions on mysqli errors so we can handle them gracefully\n"
+                . "mysqli_report(MYSQLI_REPORT_OFF);\n\n"
+                . "\$db_connected = false;\n"
                 . "\$db_error = null;\n\n"
-                . "if (\$conn->connect_error) {\n"
+                . "try {\n"
+                . "    \$conn = mysqli_init();\n"
+                . "    if (\$conn) {\n"
+                . "        \$conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);\n"
+                . "        @\$conn->real_connect(\$host, \$user, \$pass, \$is_setup_script ? '' : \$db, \$port);\n"
+                . "    }\n"
+                . "    if (!\$is_setup_script && \$conn && \$conn->connect_errno === 1049) {\n"
+                . "        \$conn = mysqli_init();\n"
+                . "        \$conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);\n"
+                . "        @\$conn->real_connect(\$host, \$user, \$pass, '', \$port);\n"
+                . "        if (!\$conn->connect_error) {\n"
+                . "            \$conn->query(\"CREATE DATABASE IF NOT EXISTS `\" . \$db . \"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci\");\n"
+                . "            \$conn->select_db(\$db);\n"
+                . "        }\n"
+                . "    }\n"
+                . "    if (\$conn && !\$conn->connect_error) {\n"
+                . "        \$db_connected = true;\n"
+                . "        @\$conn->query(\"SET time_zone = '+08:00'\");\n"
+                . "    } else {\n"
+                . "        \$db_connected = false;\n"
+                . "        \$db_error = \$conn ? \$conn->connect_error : 'Failed to initialize mysqli';\n"
+                . "    }\n"
+                . "} catch (Throwable \$e) {\n"
                 . "    \$db_connected = false;\n"
-                . "    \$db_error = \$conn->connect_error;\n\n"
+                . "    \$db_error = \$e->getMessage();\n"
+                . "}\n\n"
+                . "if (!\$db_connected) {\n"
                 . "    if (!\$is_setup_script) {\n"
                 . "        if (!empty(\$_SERVER['HTTP_ACCEPT']) && strpos(\$_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {\n"
                 . "            header('Content-Type: application/json');\n"
                 . "            http_response_code(500);\n"
                 . "            die(json_encode([\n"
                 . "                'success' => false,\n"
-                . "                'message' => 'Database connection failed: ' . \$conn->connect_error . '. Please start MySQL or verify credentials in .env.'\n"
+                . "                'message' => 'Database connection failed: ' . (\$db_error ?: (\$conn->connect_error ?? 'Check database credentials.'))\n"
                 . "            ]));\n"
                 . "        }\n"
                 . "        \$http_host = \$_SERVER['HTTP_HOST'] ?? 'localhost';\n"
@@ -1255,11 +1336,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
             if (file_put_contents($configFile, $newConfigCode)) {
                 $messages[] = "✅ Database connection successfully verified and updated!";
-                $conn = @new mysqli($new_host, $new_user, $new_pass, $new_name, $new_port);
-                if (!$conn->connect_error) {
-                    $db_connected = true;
-                    $db_error = null;
-                    $conn->set_charset('utf8mb4');
+                try {
+                    $conn = @new mysqli($new_host, $new_user, $new_pass, $new_name, $new_port);
+                    if ($conn && !$conn->connect_error) {
+                        $db_connected = true;
+                        $db_error = null;
+                        $conn->set_charset('utf8mb4');
+                    }
+                } catch (Throwable $e) {
+                    $db_connected = false;
+                    $db_error = $e->getMessage();
                 }
             } else {
                 $errors[] = "Failed to write updated settings to db.php. Check folder permissions.";
@@ -1269,8 +1355,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     // Action 2: One-Click Automated Full Setup (Recommended for new devices)
     if ($action === 'full_setup') {
-        if (!$db_connected && $conn->connect_error) {
-            $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, '', (int)DB_PORT);
+        if (!$db_connected) {
+            try {
+                $conn = @new mysqli(DB_HOST, DB_USER, DB_PASS, '', (int)DB_PORT);
+            } catch (Throwable $e) {
+                $db_connected = false;
+                $db_error = $e->getMessage();
+            }
         }
         if ($conn->connect_error) {
             $errors[] = "Cannot perform full setup: MySQL connection failed (" . $conn->connect_error . "). Check database parameters.";

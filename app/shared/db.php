@@ -39,19 +39,21 @@ if (!empty($dbUrl)) {
         $_ENV['DB_HOST'] = $parsedUrl['host'];
     }
     if (!empty($parsedUrl['user'])) {
-        putenv('DB_USER=' . $parsedUrl['user']);
-        $_ENV['DB_USER'] = $parsedUrl['user'];
-        putenv('DB_USERNAME=' . $parsedUrl['user']);
-        $_ENV['DB_USERNAME'] = $parsedUrl['user'];
+        $dbUser = rawurldecode($parsedUrl['user']);
+        putenv('DB_USER=' . $dbUser);
+        $_ENV['DB_USER'] = $dbUser;
+        putenv('DB_USERNAME=' . $dbUser);
+        $_ENV['DB_USERNAME'] = $dbUser;
     }
     if (isset($parsedUrl['pass'])) {
-        putenv('DB_PASS=' . $parsedUrl['pass']);
-        $_ENV['DB_PASS'] = $parsedUrl['pass'];
-        putenv('DB_PASSWORD=' . $parsedUrl['pass']);
-        $_ENV['DB_PASSWORD'] = $parsedUrl['pass'];
+        $dbPass = rawurldecode($parsedUrl['pass']);
+        putenv('DB_PASS=' . $dbPass);
+        $_ENV['DB_PASS'] = $dbPass;
+        putenv('DB_PASSWORD=' . $dbPass);
+        $_ENV['DB_PASSWORD'] = $dbPass;
     }
     if (!empty($parsedUrl['path'])) {
-        $dbFromUrl = ltrim($parsedUrl['path'], '/');
+        $dbFromUrl = rawurldecode(ltrim($parsedUrl['path'], '/'));
         putenv('DB_NAME=' . $dbFromUrl);
         $_ENV['DB_NAME'] = $dbFromUrl;
         putenv('DB_DATABASE=' . $dbFromUrl);
@@ -78,11 +80,11 @@ if (getenv('DB_USER') && (!getenv('DB_USERNAME') || getenv('DB_USERNAME') !== ge
     $_ENV['DB_USERNAME'] = getenv('DB_USER');
 }
 
-if (getenv('DB_PASS') === false && getenv('DB_PASSWORD') !== false) {
+if ((getenv('DB_PASS') === false || getenv('DB_PASS') === '') && getenv('DB_PASSWORD') !== false && getenv('DB_PASSWORD') !== '') {
     putenv('DB_PASS=' . getenv('DB_PASSWORD'));
     $_ENV['DB_PASS'] = getenv('DB_PASSWORD');
 }
-if (getenv('DB_PASS') && (!getenv('DB_PASSWORD') || preg_match('/^<.*>$/', (string)getenv('DB_PASSWORD')))) {
+if ((getenv('DB_PASSWORD') === false || getenv('DB_PASSWORD') === '' || preg_match('/^<.*>$/', (string)getenv('DB_PASSWORD'))) && getenv('DB_PASS') !== false && getenv('DB_PASS') !== '') {
     putenv('DB_PASSWORD=' . getenv('DB_PASS'));
     $_ENV['DB_PASSWORD'] = getenv('DB_PASS');
 }
@@ -161,7 +163,7 @@ if (!$db_connected) {
             http_response_code(500);
             die(json_encode([
                 'success' => false,
-                'message' => 'Database connection failed: ' . $conn->connect_error . '. Please start MySQL or verify credentials in .env.'
+                'message' => 'Database connection failed: ' . ($db_error ?: ($conn->connect_error ?? 'Check database server and credentials.'))
             ]));
         }
         $http_host = $_SERVER['HTTP_HOST'] ?? 'localhost';

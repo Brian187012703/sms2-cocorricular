@@ -48,12 +48,23 @@ if ($mfa_pending && !in_array($_SESSION['mfa_role'] ?? '', ['ssc', 'admin', 'clu
   );
   $mfa_pending = false;
 }
+require_once __DIR__ . '/../shared/db.php';
+
+// If database is connected but tables are not yet created, auto-route to setup wizard
+if (!empty($db_connected) && !empty($conn)) {
+  try {
+    $tblChk = $conn->query("SHOW TABLES LIKE 'users'");
+    if (!$tblChk || $tblChk->num_rows === 0) {
+      header('Location: ../shared/setup.php');
+      exit;
+    }
+  } catch (Throwable $e) {}
+}
 
 $mfa_pending_email = '';
 $mfa_remaining_seconds = 60;
 
-if ($mfa_pending) {
-  require_once __DIR__ . '/../shared/db.php';
+if ($mfa_pending && !empty($conn)) {
   require_once __DIR__ . '/../shared/mail_helper.php';
   $mfa_pending_email = mask_email($_SESSION['mfa_email'] ?? '');
   $mfa_uid = (int)$_SESSION['mfa_user_id'];
