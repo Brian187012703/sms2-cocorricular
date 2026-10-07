@@ -44,4 +44,7 @@ RUN mkdir -p /var/www/html/storage/framework/sessions \
 
 EXPOSE 80
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://127.0.0.1:80/health.php || exit 1
+
 CMD ["apache2-foreground"]
