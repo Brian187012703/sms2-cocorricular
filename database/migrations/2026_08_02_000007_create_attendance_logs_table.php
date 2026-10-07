@@ -11,7 +11,8 @@ return new class extends Migration
         if (!Schema::hasTable('attendance_logs')) {
             Schema::create('attendance_logs', function (Blueprint $table) {
                 $table->id();
-                $table->foreignId('event_id')->constrained('events')->cascadeOnDelete();
+                $table->unsignedInteger('event_id');
+                $table->foreign('event_id')->references('id')->on('events')->cascadeOnDelete();
                 $table->foreignId('user_id')->constrained('users')->cascadeOnDelete();
                 $table->dateTime('check_in')->useCurrent();
                 $table->enum('method', ['QR', 'RFID', 'Manual', 'QR_SELF'])->default('QR');

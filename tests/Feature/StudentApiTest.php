@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\Student;
-use App\Models\User;
 use Tests\TestCase;
 
 class StudentApiTest extends TestCase
@@ -14,6 +13,7 @@ class StudentApiTest extends TestCase
             'username' => $username,
             'password' => $password,
         ]);
+
         return $loginRes->json('token') ?? '';
     }
 
@@ -27,8 +27,8 @@ class StudentApiTest extends TestCase
     {
         $token = $this->getBearerToken('scc.admin', 'Bcp@Admin2026!');
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-                         ->getJson('/api/students');
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/students');
 
         $response->assertStatus(200);
         $this->assertIsArray($response->json());
@@ -38,13 +38,13 @@ class StudentApiTest extends TestCase
     {
         $token = $this->getBearerToken('bsit.student', 'Bcp@Test2026!');
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/students', [
                 'student_number' => '2026-99999',
-                'first_name'     => 'Fake',
-                'last_name'      => 'Student',
-                'course'         => 'BSIT',
-                'year_level'     => '1st Year',
+                'first_name' => 'Fake',
+                'last_name' => 'Student',
+                'course' => 'BSIT',
+                'year_level' => '1st Year',
             ]);
 
         $response->assertStatus(403);
@@ -55,8 +55,8 @@ class StudentApiTest extends TestCase
         $student = Student::first();
         $token = $this->getBearerToken('bsit.student', 'Bcp@Test2026!');
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->deleteJson('/api/students/' . $student->id);
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->deleteJson('/api/students/'.$student->id);
 
         $response->assertStatus(403);
     }
@@ -66,8 +66,8 @@ class StudentApiTest extends TestCase
         $student = Student::first();
         $token = $this->getBearerToken('cssec.adviser', 'Bcp@Adviser2026!');
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->deleteJson('/api/students/' . $student->id);
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->deleteJson('/api/students/'.$student->id);
 
         $response->assertStatus(403);
     }
@@ -77,8 +77,8 @@ class StudentApiTest extends TestCase
         $student = Student::first();
         $token = $this->getBearerToken('ssc.officer', 'Bcp@SSC2026!');
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->deleteJson('/api/students/' . $student->id);
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->deleteJson('/api/students/'.$student->id);
 
         $response->assertStatus(403);
     }
@@ -86,16 +86,15 @@ class StudentApiTest extends TestCase
     public function test_student_cannot_view_another_student_profile(): void
     {
         $otherStudent = Student::where('student_number', '!=', '2024-10001')->first();
-        if ($otherStudent) {
-            $token = $this->getBearerToken('bsit.student', 'Bcp@Test2026!');
+        $this->assertNotNull($otherStudent);
 
-            $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-                ->getJson('/api/students/' . $otherStudent->id);
+        $token = $this->getBearerToken('bsit.student', 'Bcp@Test2026!');
 
-            $response->assertStatus(403);
-        } else {
-            $this->assertTrue(true);
-        }
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/students/'.$otherStudent->id);
+
+        $response->assertStatus(403);
+
     }
 
     public function test_admin_can_create_and_delete_student(): void
@@ -103,23 +102,23 @@ class StudentApiTest extends TestCase
         $token = $this->getBearerToken('scc.admin', 'Bcp@Admin2026!');
 
         // 1. Admin creates student
-        $createRes = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $createRes = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/students', [
                 'student_number' => '2026-TEST-RBAC',
-                'first_name'     => 'Test',
-                'last_name'      => 'RBAC',
-                'birthday'       => '2005-01-15',
-                'course'         => 'Bachelor of Science in Information Technology',
-                'year_level'     => '1st Year',
-                'status'         => 'Active',
+                'first_name' => 'Test',
+                'last_name' => 'RBAC',
+                'birthday' => '2005-01-15',
+                'course' => 'Bachelor of Science in Information Technology',
+                'year_level' => '1st Year',
+                'status' => 'Active',
             ]);
 
         $createRes->assertStatus(201);
         $newId = $createRes->json('id');
 
         // 2. Admin deletes student
-        $delRes = $this->withHeader('Authorization', 'Bearer ' . $token)
-            ->deleteJson('/api/students/' . $newId);
+        $delRes = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->deleteJson('/api/students/'.$newId);
 
         $delRes->assertStatus(204);
     }

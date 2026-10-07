@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Student;
 use App\Models\User;
+use App\Support\VisibleRecords;
 use Illuminate\Http\Request;
 
 class StudentController extends Controller
@@ -16,18 +17,19 @@ class StudentController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         // Student role: can only list or see own record
         if ($user->role === 'student') {
             $student = Student::with('user')->where('user_id', $user->id)->first();
+
             return response()->json($student ? [$student] : []);
         }
 
         // Admin, SSC, Club Adviser can view student directory
-        return response()->json(Student::with('user')->get());
+        return response()->json(VisibleRecords::students($user)->with('user')->orderBy('id', 'desc')->get());
     }
 
     /**
@@ -37,31 +39,28 @@ class StudentController extends Controller
     {
         $user = $request->user();
 
-        if (!$user || !in_array($user->role, ['admin', 'ssc'])) {
+        if (! $user || ! in_array($user->role, ['admin', 'ssc'])) {
             return response()->json([
-                'message' => 'Forbidden: Only administrators and SSC officers can create student records.'
+                'message' => 'Forbidden: Only administrators and SSC officers can create student records.',
             ], 403);
         }
 
         $validated = $request->validate([
-            'user_id'        => 'nullable|integer|exists:users,id',
+            'user_id' => 'nullable|integer|exists:users,id',
             'student_number' => 'required|string|max:50|unique:students,student_number',
-            'first_name'     => 'required|string|max:100',
-            'last_name'      => 'required|string|max:100',
-            'birthday'       => 'nullable|date',
-            'course'         => 'required|string|max:150',
-            'year_level'     => 'required|string|max:50',
-            'section'        => 'nullable|string|max:50',
-            'phone'          => 'nullable|string|max:20',
-            'status'         => 'nullable|string|in:Active,Inactive',
+            'first_name' => 'required|string|max:100',
+            'last_name' => 'required|string|max:100',
+            'birthday' => 'nullable|date',
+            'course' => 'required|string|max:150',
+            'year_level' => 'required|string|max:50',
+            'section' => 'nullable|string|max:50',
+            'phone' => 'nullable|string|max:20',
+            'status' => 'nullable|string|in:Active,Inactive',
         ]);
 
-        if (empty($validated['birthday'])) {
-            $validated['birthday'] = '2004-01-01';
-        }
         $validated['section'] = $validated['section'] ?? '';
-        $validated['phone']   = $validated['phone'] ?? '';
-        $validated['status']  = $validated['status'] ?? 'Active';
+        $validated['phone'] = $validated['phone'] ?? '';
+        $validated['status'] = $validated['status'] ?? 'Active';
 
         if (empty($validated['user_id'])) {
             $matchedUser = User::where('username', $validated['student_number'])->first();
@@ -71,6 +70,7 @@ class StudentController extends Controller
         }
 
         $student = Student::create($validated);
+
         return response()->json($student->load('user'), 201);
     }
 
@@ -81,16 +81,18 @@ class StudentController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         // Student can only access their own profile
         if ($user->role === 'student' && $student->user_id !== $user->id) {
             return response()->json([
-                'message' => 'Forbidden: You are not authorized to view another student profile.'
+                'message' => 'Forbidden: You are not authorized to view another student profile.',
             ], 403);
         }
+
+        abort_unless(VisibleRecords::students($user)->whereKey($student->id)->exists(), 403);
 
         return response()->json($student->load('user'));
     }
@@ -102,14 +104,14 @@ class StudentController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         // Club advisers cannot edit student profiles
         if ($user->role === 'club_adviser') {
             return response()->json([
-                'message' => 'Forbidden: Club advisers cannot modify student records.'
+                'message' => 'Forbidden: Club advisers cannot modify student records.',
             ], 403);
         }
 
@@ -117,7 +119,7 @@ class StudentController extends Controller
         if ($user->role === 'student') {
             if ($student->user_id !== $user->id) {
                 return response()->json([
-                    'message' => 'Forbidden: You cannot modify another student profile.'
+                    'message' => 'Forbidden: You cannot modify another student profile.',
                 ], 403);
             }
 
@@ -126,24 +128,26 @@ class StudentController extends Controller
             ]);
 
             $student->update(['phone' => $validated['phone']]);
+
             return response()->json($student->load('user'));
         }
 
         // Admin and SSC: Full management authorization
         if (in_array($user->role, ['admin', 'ssc'])) {
             $validated = $request->validate([
-                'student_number' => 'sometimes|required|string|max:50|unique:students,student_number,' . $student->id,
-                'first_name'     => 'sometimes|required|string|max:100',
-                'last_name'      => 'sometimes|required|string|max:100',
-                'birthday'       => 'nullable|date',
-                'course'         => 'sometimes|required|string|max:150',
-                'year_level'     => 'sometimes|required|string|max:50',
-                'section'        => 'nullable|string|max:50',
-                'phone'          => 'nullable|string|max:20',
-                'status'         => 'sometimes|required|string|in:Active,Inactive',
+                'student_number' => 'sometimes|required|string|max:50|unique:students,student_number,'.$student->id,
+                'first_name' => 'sometimes|required|string|max:100',
+                'last_name' => 'sometimes|required|string|max:100',
+                'birthday' => 'nullable|date',
+                'course' => 'sometimes|required|string|max:150',
+                'year_level' => 'sometimes|required|string|max:50',
+                'section' => 'nullable|string|max:50',
+                'phone' => 'nullable|string|max:20',
+                'status' => 'sometimes|required|string|in:Active,Inactive',
             ]);
 
             $student->update($validated);
+
             return response()->json($student->load('user'));
         }
 
@@ -157,13 +161,14 @@ class StudentController extends Controller
     {
         $user = $request->user();
 
-        if (!$user || $user->role !== 'admin') {
+        if (! $user || $user->role !== 'admin') {
             return response()->json([
-                'message' => 'Forbidden: Only system administrators are authorized to delete student records.'
+                'message' => 'Forbidden: Only system administrators are authorized to delete student records.',
             ], 403);
         }
 
         $student->delete();
+
         return response()->json(null, 204);
     }
 }

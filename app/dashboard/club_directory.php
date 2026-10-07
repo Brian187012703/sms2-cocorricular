@@ -98,22 +98,24 @@ if ($officers_res) {
     }
 }
 
-// 2. Fetch real verified achievements by club from achievements table
+// 2. Fetch real verified & approved achievements by club from achievements table
 $achievements_by_club = [];
 $ach_res = $conn->query("
     SELECT club_id, title, competition, award_date 
     FROM achievements 
-    WHERE status = 'Verified' 
+    WHERE status IN ('Approved', 'Verified') 
     ORDER BY award_date DESC
 ");
 if ($ach_res) {
     while ($ach = $ach_res->fetch_assoc()) {
         $cid = (int)$ach['club_id'];
-        $entry = $ach['title'];
-        if (!empty($ach['competition'])) {
-            $entry .= ' (' . $ach['competition'] . ')';
-        }
-        $achievements_by_club[$cid][] = $entry;
+        $formatted_date = !empty($ach['award_date']) ? date('M d, Y', strtotime($ach['award_date'])) : '';
+        $achievements_by_club[$cid][] = [
+            'title'       => $ach['title'],
+            'competition' => $ach['competition'] ?? '',
+            'award_date'  => $formatted_date,
+            'year'        => !empty($ach['award_date']) ? date('Y', strtotime($ach['award_date'])) : ''
+        ];
     }
 }
 
@@ -156,11 +158,8 @@ if ($clubs_query) {
             ];
         }
 
-        // Achievements: Use verified records from DB; fallback to default accreditation
-        $achievements = $achievements_by_club[$cid] ?? [
-            'BCP Accredited Organization AY 2025-2026',
-            'Supreme Student Council Charter Recognition'
-        ];
+        // Achievements: Real approved achievements from database (zero mock fallbacks)
+        $achievements = $achievements_by_club[$cid] ?? [];
 
         $org_item = [
             'club_id'   => $cid,
@@ -2105,11 +2104,25 @@ if ($is_gov_role) {
                 <?php foreach ($academic_orgs as $org): ?>
                   <div class="org-card"
                     data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
-                    data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>">
+                    data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>"
+                    onclick="if(!event.target.closest('button, a, input')) openOrgProfile('<?php echo htmlspecialchars(addslashes($org['acronym'])); ?>');"
+                    style="cursor:pointer;"
+                    title="Click to view <?php echo htmlspecialchars($org['name']); ?> profile &amp; recent achievements">
                     <span class="org-card-acronym"><?php echo htmlspecialchars($org['acronym']); ?></span>
                     <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                     <div class="org-card-type"><i class="fa-solid fa-circle-dot"
                         style="color:#2563eb;font-size:.6rem;"></i> Academic Organization</div>
+                    <?php if (!empty($org['profile']['achievements'])): ?>
+                      <div class="org-card-ach-preview" style="margin:8px 0 10px; background:#eff6ff; border:1px solid #dbeafe; border-radius:8px; padding:5px 8px; font-size:0.75rem; color:#1e40af; display:flex; align-items:center; gap:6px;">
+                        <i class="fa-solid fa-trophy" style="color:#f59e0b; font-size:0.8rem; flex-shrink:0;"></i>
+                        <span style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">
+                          <?= htmlspecialchars($org['profile']['achievements'][0]['title'] ?? $org['profile']['achievements'][0]) ?>
+                        </span>
+                        <?php if (count($org['profile']['achievements']) > 1): ?>
+                          <span style="background:#bfdbfe; color:#1e3a8a; border-radius:10px; padding:1px 5px; font-size:0.65rem; font-weight:700;">+<?= count($org['profile']['achievements']) - 1 ?></span>
+                        <?php endif; ?>
+                      </div>
+                    <?php endif; ?>
                     <?php echo renderOrgCardButton($org, $can_apply, $db_clubs, $student_applications); ?>
                   </div>
                 <?php endforeach; ?>
@@ -2141,13 +2154,27 @@ if ($is_gov_role) {
                     <?php foreach ($subcat_orgs as $org): ?>
                       <div class="org-card"
                         data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
-                        data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>">
+                        data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>"
+                        onclick="if(!event.target.closest('button, a, input')) openOrgProfile('<?php echo htmlspecialchars(addslashes($org['acronym'])); ?>');"
+                        style="cursor:pointer;"
+                        title="Click to view <?php echo htmlspecialchars($org['name']); ?> profile &amp; recent achievements">
                         <span class="org-card-acronym"
                           style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
                         <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                         <div class="org-card-type"><i class="fa-solid fa-circle-dot"
                             style="color:#2563eb;font-size:.6rem;"></i> <?php echo htmlspecialchars($subcat_label); ?>
                         </div>
+                        <?php if (!empty($org['profile']['achievements'])): ?>
+                          <div class="org-card-ach-preview" style="margin:8px 0 10px; background:#eff6ff; border:1px solid #dbeafe; border-radius:8px; padding:5px 8px; font-size:0.75rem; color:#1e40af; display:flex; align-items:center; gap:6px;">
+                            <i class="fa-solid fa-trophy" style="color:#f59e0b; font-size:0.8rem; flex-shrink:0;"></i>
+                            <span style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">
+                              <?= htmlspecialchars($org['profile']['achievements'][0]['title'] ?? $org['profile']['achievements'][0]) ?>
+                            </span>
+                            <?php if (count($org['profile']['achievements']) > 1): ?>
+                              <span style="background:#bfdbfe; color:#1e3a8a; border-radius:10px; padding:1px 5px; font-size:0.65rem; font-weight:700;">+<?= count($org['profile']['achievements']) - 1 ?></span>
+                            <?php endif; ?>
+                          </div>
+                        <?php endif; ?>
                         <?php echo renderOrgCardButton($org, $can_apply, $db_clubs, $student_applications); ?>
                       </div>
                     <?php endforeach; ?>
@@ -2173,12 +2200,26 @@ if ($is_gov_role) {
                 <?php foreach ($independent_orgs as $org): ?>
                   <div class="org-card"
                     data-name="<?php echo htmlspecialchars(strtolower($org['name'] . ' ' . $org['acronym'])); ?>"
-                    data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>">
+                    data-acronym="<?php echo htmlspecialchars($org['acronym']); ?>"
+                    onclick="if(!event.target.closest('button, a, input')) openOrgProfile('<?php echo htmlspecialchars(addslashes($org['acronym'])); ?>');"
+                    style="cursor:pointer;"
+                    title="Click to view <?php echo htmlspecialchars($org['name']); ?> profile &amp; recent achievements">
                     <span class="org-card-acronym"
                       style="background:#1a3a8c;"><?php echo htmlspecialchars($org['acronym']); ?></span>
                     <div class="org-card-name"><?php echo htmlspecialchars($org['name']); ?></div>
                     <div class="org-card-type"><i class="fa-solid fa-circle-dot"
                         style="color:#2563eb;font-size:.6rem;"></i> Independent Organization</div>
+                    <?php if (!empty($org['profile']['achievements'])): ?>
+                      <div class="org-card-ach-preview" style="margin:8px 0 10px; background:#eff6ff; border:1px solid #dbeafe; border-radius:8px; padding:5px 8px; font-size:0.75rem; color:#1e40af; display:flex; align-items:center; gap:6px;">
+                        <i class="fa-solid fa-trophy" style="color:#f59e0b; font-size:0.8rem; flex-shrink:0;"></i>
+                        <span style="font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;">
+                          <?= htmlspecialchars($org['profile']['achievements'][0]['title'] ?? $org['profile']['achievements'][0]) ?>
+                        </span>
+                        <?php if (count($org['profile']['achievements']) > 1): ?>
+                          <span style="background:#bfdbfe; color:#1e3a8a; border-radius:10px; padding:1px 5px; font-size:0.65rem; font-weight:700;">+<?= count($org['profile']['achievements']) - 1 ?></span>
+                        <?php endif; ?>
+                      </div>
+                    <?php endif; ?>
                     <?php echo renderOrgCardButton($org, $can_apply, $db_clubs, $student_applications); ?>
                   </div>
                 <?php endforeach; ?>
@@ -2296,7 +2337,7 @@ if ($is_gov_role) {
 
         <!-- REQUIRED DOCUMENTS SUBMISSION -->
         <div class="afm-section-title"><i class="fa-solid fa-file-arrow-up"></i> Required Documents Submission</div>
-        <div class="afm-grid">
+        <div class="afm-grid cols-1">
           <div class="afm-field">
             <label>Letter of Intent <span>*</span> <span style="font-weight:400;color:#94a3b8;">(PDF/DOCX/Image)</span></label>
             <div class="afm-file-upload-card" id="afmIntentCard">
@@ -2304,16 +2345,6 @@ if ($is_gov_role) {
               <div class="afm-file-icon" id="afmIntentIcon"><i class="fa-solid fa-file-arrow-up"></i></div>
               <span class="afm-file-btn"><i class="fa-solid fa-folder-open"></i> Choose File</span>
               <div class="afm-file-name" id="afmLetterIntentName">No file chosen</div>
-              <span class="afm-file-hint">PDF, DOCX, PNG, JPG (Max 10MB)</span>
-            </div>
-          </div>
-          <div class="afm-field">
-            <label>Letter of Endorsement <span>*</span> <span style="font-weight:400;color:#94a3b8;">(PDF/DOCX/Image)</span></label>
-            <div class="afm-file-upload-card" id="afmEndorsementCard">
-              <input type="file" id="afmLetterEndorsement" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" required onchange="handleFileSelect(this, 'afmEndorsementCard', 'afmLetterEndorsementName', 'afmEndorsementIcon')" />
-              <div class="afm-file-icon" id="afmEndorsementIcon"><i class="fa-solid fa-file-arrow-up"></i></div>
-              <span class="afm-file-btn"><i class="fa-solid fa-folder-open"></i> Choose File</span>
-              <div class="afm-file-name" id="afmLetterEndorsementName">No file chosen</div>
               <span class="afm-file-hint">PDF, DOCX, PNG, JPG (Max 10MB)</span>
             </div>
           </div>
@@ -2509,15 +2540,25 @@ if ($is_gov_role) {
       const advEl = document.getElementById('opmAdviser');
       if (advEl) advEl.textContent = (data.profile && data.profile.adviser) ? data.profile.adviser : 'Prof. BCP Faculty Adviser';
 
-      // Achievements
+      // Achievements (Authentic database records only — zero mock fallbacks)
       const achList = document.getElementById('opmAchievements');
       if (achList) {
         const achs = (data.profile && Array.isArray(data.profile.achievements) && data.profile.achievements.length) 
           ? data.profile.achievements 
-          : ['BCP Accredited Organization AY 2025-2026', 'Supreme Student Council Charter Recognition'];
-        achList.innerHTML = achs.map(a =>
-          `<li><i class="fa-solid fa-medal"></i> ${a}</li>`
-        ).join('');
+          : [];
+        if (achs.length === 0) {
+          achList.innerHTML = '<li style="color:#94a3b8; font-style:italic; list-style:none; padding:8px 0;"><i class="fa-solid fa-circle-info" style="color:#cbd5e1; margin-right:6px;"></i> No recent achievements posted for this organization yet.</li>';
+        } else {
+          achList.innerHTML = achs.map(a => {
+            if (typeof a === 'object' && a !== null) {
+              const compText = a.competition ? ` <span style="color:#64748b; font-size:0.82rem; font-weight:500;">(${escapeHtml(a.competition)})</span>` : '';
+              const dateText = a.award_date ? ` <span style="color:#94a3b8; font-size:0.75rem; margin-left:auto; display:inline-block; font-weight:500;"><i class="fa-regular fa-calendar"></i> ${escapeHtml(a.award_date)}</span>` : '';
+              return `<li style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #f1f5f9;"><i class="fa-solid fa-trophy" style="color:#f59e0b; flex-shrink:0;"></i> <div style="flex:1;"><strong style="color:#0f172a;">${escapeHtml(a.title)}</strong>${compText}</div>${dateText}</li>`;
+            } else {
+              return `<li style="display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid #f1f5f9;"><i class="fa-solid fa-trophy" style="color:#f59e0b; flex-shrink:0;"></i> <strong style="color:#0f172a;">${escapeHtml(String(a))}</strong></li>`;
+            }
+          }).join('');
+        }
       }
 
       // Officers
@@ -2704,7 +2745,7 @@ if ($is_gov_role) {
       });
 
       // Reset file upload cards
-      ['afmIntentCard', 'afmEndorsementCard'].forEach(id => {
+      ['afmIntentCard'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           el.classList.remove('has-file');
@@ -2715,11 +2756,6 @@ if ($is_gov_role) {
       if (intentName) intentName.textContent = 'No file chosen';
       const intentIcon = document.getElementById('afmIntentIcon');
       if (intentIcon) intentIcon.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i>';
-
-      const endName = document.getElementById('afmLetterEndorsementName');
-      if (endName) endName.textContent = 'No file chosen';
-      const endIcon = document.getElementById('afmEndorsementIcon');
-      if (endIcon) endIcon.innerHTML = '<i class="fa-solid fa-file-arrow-up"></i>';
     }
 
     document.getElementById('afmClose')?.addEventListener('click', closeAppForm);
@@ -2746,9 +2782,7 @@ if ($is_gov_role) {
       }
 
       const intentInput = document.getElementById('afmLetterIntent');
-      const endorsementInput = document.getElementById('afmLetterEndorsement');
       const intentCard = document.getElementById('afmIntentCard');
-      const endorsementCard = document.getElementById('afmEndorsementCard');
 
       if (!intentInput || !intentInput.files.length) {
         if (intentCard) intentCard.classList.add('error');
@@ -2757,16 +2791,9 @@ if ($is_gov_role) {
         intentCard.classList.remove('error');
       }
 
-      if (!endorsementInput || !endorsementInput.files.length) {
-        if (endorsementCard) endorsementCard.classList.add('error');
-        valid = false;
-      } else if (endorsementCard) {
-        endorsementCard.classList.remove('error');
-      }
-
       if (!valid && document.querySelector('.error')) {
         document.querySelector('.error').scrollIntoView({ behavior: 'smooth', block: 'center' });
-        showToast('Please complete your motivation and attach the required documents.', 'error');
+        showToast('Please complete your motivation and attach your Letter of Intent.', 'error');
       }
       return valid;
     }
@@ -2798,9 +2825,7 @@ if ($is_gov_role) {
       fd.set('motivation', document.getElementById('afmMotivation')?.value.trim() || '');
 
       const intentFile = document.getElementById('afmLetterIntent')?.files[0];
-      const endorsementFile = document.getElementById('afmLetterEndorsement')?.files[0];
       if (intentFile) fd.append('letter_intent', intentFile);
-      if (endorsementFile) fd.append('letter_endorsement', endorsementFile);
 
       fetch('../shared/roster_actions.php', { method: 'POST', body: fd })
         .then(r => r.json())

@@ -26,3 +26,5 @@ Thumbs.db
 implementation_plan123
 app/shared/install.lock
 database/backup_*.sql
+storage/backups/*.sql
+!storage/backups/.gitkeep

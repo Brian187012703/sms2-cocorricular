@@ -11,24 +11,26 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('mfa_codes', function (Blueprint $table) {
-            $table->id();
-            $table->unsignedInteger('user_id');
-            $table->string('email', 150);
-            $table->string('code', 10);
-            $table->enum('purpose', ['login', 'password_reset', 'account_update'])->default('login');
-            $table->dateTime('expires_at');
-            $table->tinyInteger('is_used')->default(0);
-            $table->integer('attempts')->default(0);
-            $table->integer('max_attempts')->default(5);
-            $table->string('ip_address', 45)->nullable();
-            $table->string('user_agent', 255)->nullable();
-            $table->timestamp('created_at')->useCurrent();
+        if (!Schema::hasTable('mfa_codes')) {
+            Schema::create('mfa_codes', function (Blueprint $table) {
+                $table->id();
+                $table->unsignedBigInteger('user_id');
+                $table->string('email', 150);
+                $table->string('code', 10);
+                $table->enum('purpose', ['login', 'password_reset', 'account_update'])->default('login');
+                $table->dateTime('expires_at');
+                $table->tinyInteger('is_used')->default(0);
+                $table->integer('attempts')->default(0);
+                $table->integer('max_attempts')->default(5);
+                $table->string('ip_address', 45)->nullable();
+                $table->string('user_agent', 255)->nullable();
+                $table->timestamp('created_at')->useCurrent();
 
-            $table->index(['user_id', 'purpose', 'is_used', 'expires_at']);
-            $table->index('code');
-            $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
-        });
+                $table->index(['user_id', 'purpose', 'is_used', 'expires_at']);
+                $table->index('code');
+                $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
+            });
+        }
 
         if (Schema::hasTable('users') && !Schema::hasColumn('users', 'last_mfa_verified_at')) {
             Schema::table('users', function (Blueprint $table) {

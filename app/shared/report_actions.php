@@ -242,7 +242,7 @@ switch ($action) {
             $ev_count = (int)$conn->query("SELECT COUNT(*) as c FROM events $where_ev")->fetch_assoc()['c'];
             $cm_count = (int)$conn->query("SELECT COUNT(*) as c FROM club_memberships $where_cm status='Active'")->fetch_assoc()['c'];
             $disb_sum = (float)$conn->query("SELECT COALESCE(SUM(amount), 0) as s FROM budget_requests $where_br status='Disbursed'")->fetch_assoc()['s'];
-            $ach_count= (int)$conn->query("SELECT COUNT(*) as c FROM achievements $where_ac status='Verified'")->fetch_assoc()['c'];
+            $ach_count= (int)$conn->query("SELECT COUNT(*) as c FROM achievements $where_ac status IN ('Approved', 'Verified')")->fetch_assoc()['c'];
 
             $summary_data = [
                 ['Category Metric', 'Status / Count', 'Operational Benchmark', 'Compliance Status'],

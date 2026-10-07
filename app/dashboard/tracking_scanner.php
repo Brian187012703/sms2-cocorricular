@@ -710,6 +710,17 @@ $target_event_id = (int)($_GET['event_id'] ?? 0);
         }
       }
 
+      if (!navigator.onLine) {
+        queueOfflineScan(qrData, targetEventId);
+        playBeep(true);
+        showResultModal({
+          success: true,
+          result: 'OFFLINE_QUEUED',
+          message: 'Saved offline! Transaction queued and will automatically sync once reconnected to the network.'
+        }, qrData);
+        return;
+      }
+
       fetch('../shared/attendance_actions.php', { method: 'POST', body: fd })
         .then(r => r.json())
         .then(data => {
@@ -722,14 +733,76 @@ $target_event_id = (int)($_GET['event_id'] ?? 0);
           }
         })
         .catch(err => {
-          playBeep(false);
+          queueOfflineScan(qrData, targetEventId);
+          playBeep(true);
           showResultModal({
-            success: false,
-            result: 'NETWORK_ERROR',
-            message: 'Network connection issue. Please check your connection and try again.'
+            success: true,
+            result: 'OFFLINE_QUEUED',
+            message: 'Network offline. Scan safely queued locally and will automatically synchronize when connection restores.'
           }, qrData);
         });
     }
+
+    function queueOfflineScan(qrData, targetEventId) {
+      let q = JSON.parse(localStorage.getItem('bcp_offline_scans_queue') || '[]');
+      q.push({
+        qr_data: qrData,
+        event_id: targetEventId,
+        offline_scanned_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        client_uuid: 'CLIENT_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6)
+      });
+      localStorage.setItem('bcp_offline_scans_queue', JSON.stringify(q));
+      updateOfflineQueueBanner();
+    }
+
+    async function syncOfflineScans() {
+      let q = JSON.parse(localStorage.getItem('bcp_offline_scans_queue') || '[]');
+      if (!q.length || !navigator.onLine) return;
+
+      const fd = new FormData();
+      fd.append('action', 'sync_offline_batch');
+      fd.append('batch', JSON.stringify(q));
+
+      try {
+        const res = await fetch('../shared/attendance_actions.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.success) {
+          localStorage.removeItem('bcp_offline_scans_queue');
+          updateOfflineQueueBanner();
+          alert(`Offline Synchronization Complete: ${data.synced_count} records synchronized successfully!`);
+        }
+      } catch (e) {
+        console.warn('Offline sync attempt deferred until connection improves');
+      }
+    }
+
+    function updateOfflineQueueBanner() {
+      let q = JSON.parse(localStorage.getItem('bcp_offline_scans_queue') || '[]');
+      let banner = document.getElementById('offlineSyncBanner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'offlineSyncBanner';
+        banner.style.cssText = 'position:fixed; bottom:20px; right:20px; background:#0f172a; color:#fff; padding:12px 20px; border-radius:12px; font-size:0.85rem; font-weight:700; z-index:99999; box-shadow:0 8px 24px rgba(0,0,0,0.3); display:none; align-items:center; gap:12px;';
+        document.body.appendChild(banner);
+      }
+      if (q.length > 0) {
+        banner.style.display = 'flex';
+        banner.innerHTML = `<i class="fa-solid fa-cloud-arrow-up" style="color:#38bdf8;"></i> <span>${q.length} Offline Scan(s) Queued</span> <button type="button" onclick="syncOfflineScans()" style="padding:4px 10px; background:#2563eb; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:700;">Sync Now</button>`;
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    window.addEventListener('online', () => {
+      syncOfflineScans();
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      updateOfflineQueueBanner();
+      if (navigator.onLine) {
+        syncOfflineScans();
+      }
+    });
 
     // Render Result Modal with all 6 states
     function showResultModal(data, rawCode) {

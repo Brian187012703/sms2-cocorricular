@@ -22,7 +22,7 @@ $att_res = $conn->query("
   JOIN events e ON e.id = al.event_id
   LEFT JOIN clubs c ON c.id = e.club_id
   WHERE al.user_id = $user_id
-  ORDER BY al.check_in DESC
+  ORDER BY al.id DESC
 ");
 if ($att_res) {
   $my_attendance = $att_res->fetch_all(MYSQLI_ASSOC);

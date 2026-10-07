@@ -17,16 +17,17 @@ class AchievementController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        // Student role: can only view verified achievements or their own submissions
+        // Student role: can only view verified/approved achievements or their own submissions
         if ($user->role === 'student') {
-            $achievements = Achievement::where('status', 'Verified')
+            $achievements = Achievement::whereIn('status', ['Approved', 'Verified'])
                 ->orWhere('submitted_by', $user->id)
-                ->orderBy('created_at', 'desc')
+                ->orderBy('id', 'desc')
                 ->get();
+
             return response()->json($achievements);
         }
 
@@ -34,14 +35,15 @@ class AchievementController extends Controller
         if ($user->role === 'club_adviser') {
             $advisedClubs = Club::where('adviser_user_id', $user->id)->pluck('id');
             $achievements = Achievement::whereIn('club_id', $advisedClubs)
-                ->orWhere('status', 'Verified')
-                ->orderBy('created_at', 'desc')
+                ->orWhereIn('status', ['Approved', 'Verified'])
+                ->orderBy('id', 'desc')
                 ->get();
+
             return response()->json($achievements);
         }
 
         // Admin & SSC: Institutional oversight
-        return response()->json(Achievement::orderBy('created_at', 'desc')->get());
+        return response()->json(Achievement::orderBy('id', 'desc')->get());
     }
 
     /**
@@ -51,16 +53,16 @@ class AchievementController extends Controller
     {
         $user = $request->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
         $validated = $request->validate([
-            'club_id'     => 'required|integer|exists:clubs,id',
-            'title'       => 'required|string|max:250',
+            'club_id' => 'required|integer|exists:clubs,id',
+            'title' => 'required|string|max:250',
             'competition' => 'nullable|string|max:250',
-            'award_date'  => 'required|date',
-            'notes'       => 'nullable|string',
+            'award_date' => 'required|date',
+            'notes' => 'nullable|string',
         ]);
 
         $club = Club::find($validated['club_id']);
@@ -69,7 +71,7 @@ class AchievementController extends Controller
         if ($user->role === 'club_adviser') {
             if ($club->adviser_user_id !== $user->id) {
                 return response()->json([
-                    'message' => 'Forbidden: You are only authorized to submit achievements for your assigned organization.'
+                    'message' => 'Forbidden: You are only authorized to submit achievements for your assigned organization.',
                 ], 403);
             }
         }
@@ -81,9 +83,9 @@ class AchievementController extends Controller
                 ->where('status', 'Active')
                 ->exists();
 
-            if (!$isMember) {
+            if (! $isMember) {
                 return response()->json([
-                    'message' => 'Forbidden: You must be an active registered member of this organization to submit an achievement.'
+                    'message' => 'Forbidden: You must be an active registered member of this organization to submit an achievement.',
                 ], 403);
             }
         }
@@ -94,6 +96,7 @@ class AchievementController extends Controller
         $validated['status'] = in_array($user->role, ['admin', 'ssc']) ? 'Verified' : 'Pending';
 
         $achievement = Achievement::create($validated);
+
         return response()->json($achievement, 201);
     }
 }

@@ -70,11 +70,14 @@ switch ($action) {
         if (!$username || !$password)
             respond(false, 'Username and password are required.');
 
-        // Normalize username aliases (e.g. scc.admin alias) for clean index hit
+        // Normalize username aliases (e.g. scc.admin, ssc.officer aliases) for clean index hit
         $lookupUser = ($username === 'admin' || $username === 'ssc.admin') ? 'scc.admin' : $username;
+        if (strcasecmp($username, 'ssc@bcp.edu.ph') === 0 || strcasecmp($username, 'ssc.officer') === 0) {
+            $lookupUser = 'ssc.officer';
+        }
 
         $stmt = $conn->prepare(
-            'SELECT id, username, email, first_name, last_name, password_hash, role, status, profile_pic
+            'SELECT id, username, email, first_name, last_name, password_hash, role, status, profile_pic, failed_login_attempts, locked_until
          FROM users 
          WHERE username = ? 
             OR email = ? 
@@ -85,20 +88,51 @@ switch ($action) {
         $user = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        if (!$user || !password_verify($password, $user['password_hash'])) {
+        // 1. Account Lockout Check
+        if ($user && !empty($user['locked_until']) && strtotime($user['locked_until']) > time()) {
+            $remainingMins = max(1, (int)ceil((strtotime($user['locked_until']) - time()) / 60));
+            require_once __DIR__ . '/notification_actions.php';
+            log_audit($conn, (int)$user['id'], 'AUTH_LOCKED_ATTEMPT', 'users', (int)$user['id'], "Login rejected: Account locked until {$user['locked_until']}.", 'warning', $username);
+            respond(false, "Account is temporarily locked due to multiple failed login attempts. Please try again in {$remainingMins} minute(s) or contact an administrator.");
+        }
+
+        $isValidPassword = $user && password_verify($password, $user['password_hash']);
+
+        if (!$user || !$isValidPassword) {
             require_once __DIR__ . '/notification_actions.php';
             log_audit($conn, $user ? (int)$user['id'] : null, 'AUTH_LOGIN_FAILED', 'users', $user ? (int)$user['id'] : 0, "Failed authentication attempt for username: " . htmlspecialchars($username), 'warning', $username);
+
+            if ($user) {
+                $failedCount = ((int)($user['failed_login_attempts'] ?? 0)) + 1;
+                if ($failedCount >= 5) {
+                    $lockUntil = date('Y-m-d H:i:s', time() + 900); // 15 mins lock
+                    $conn->query("UPDATE users SET failed_login_attempts = {$failedCount}, locked_until = '{$lockUntil}' WHERE id = " . (int)$user['id']);
+                    log_audit($conn, (int)$user['id'], 'AUTH_ACCOUNT_LOCKED', 'users', (int)$user['id'], "Account locked for 15 minutes after 5 consecutive failed login attempts.", 'critical', $username);
+                    respond(false, 'Account has been temporarily locked due to 5 consecutive failed login attempts. Please try again in 15 minutes.');
+                } else {
+                    $conn->query("UPDATE users SET failed_login_attempts = {$failedCount} WHERE id = " . (int)$user['id']);
+                    $rem = 5 - $failedCount;
+                    respond(false, "Invalid username or password. ({$rem} attempt(s) remaining before temporary lockout).");
+                }
+            }
+
             respond(false, 'Invalid username or password.');
         }
+
+        // Reset failed counter on successful authentication
+        if ($user) {
+            $conn->query("UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login = NOW() WHERE id = " . (int)$user['id']);
+        }
+
 
         if (isset($user['status']) && strcasecmp($user['status'], 'Active') !== 0) {
             respond(false, 'Your account has been deactivated. Please contact an institutional administrator.');
         }
 
         // Multi-Factor Authentication Check
-        // Enabled for administrative & student leadership roles: 'ssc' and 'admin'
+        // Enabled for all system roles: 'ssc', 'admin', 'club_adviser', and 'student'
         $mfa_enabled = false;
-        if (in_array($user['role'], ['ssc', 'admin'], true)) {
+        if (in_array($user['role'], ['ssc', 'admin', 'club_adviser', 'student'], true)) {
             try {
                 $mfa_setting_res = $conn->query("SELECT setting_value FROM system_settings WHERE setting_key = 'mfa_enabled' LIMIT 1");
                 if ($mfa_setting_res && $mfa_row = $mfa_setting_res->fetch_assoc()) {

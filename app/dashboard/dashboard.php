@@ -895,6 +895,10 @@ require_once __DIR__ . '/../shared/sidebar.php';
         <input type="text" placeholder="Search modules, events, clubs..." autocomplete="off" />
         <button type="button" class="search-clear-btn" aria-label="Clear search"><i class="fa-solid fa-xmark"></i></button>
       </div>
+      <button class="topbar-chat-btn" id="chatFabBtn" title="Inter-Club Chat" type="button" onclick="openInterClubChatModal()">
+        <i class="fa-solid fa-comment-dots"></i>
+        <span class="chat-badge-dot" id="chatBadgeDot" style="display:none;"></span>
+      </button>
       <button class="topbar-qr-btn" id="qrFabBtn" title="View Personal Attendance QR Code" type="button">
         <i class="fa-solid fa-qrcode"></i>
       </button>
@@ -1509,18 +1513,18 @@ require_once __DIR__ . '/../shared/sidebar.php';
         </div>
 
       <?php else: ?>
-        <!-- Student Attendance & Upcoming Event Showcase (Section 2) -->
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:20px; margin-bottom:24px;">
+        <!-- Student Upcoming Event Showcase (Section 2) -->
+        <div style="margin-bottom:24px;">
           <!-- 1. UPCOMING EVENT CARD -->
           <div class="card" style="background:#fff; border-radius:12px; border:1px solid #e2e8f0; padding:22px; box-shadow:0 2px 6px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between;">
             <div>
               <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
                 <span style="font-size:0.75rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">
-                  <i class="fa-solid fa-calendar-star" style="color:#2563eb; margin-right:6px;"></i> UPCOMING EVENT
+                  <i class="fa-solid fa-calendar-star" style="color:#2563eb; margin-right:6px;"></i> UPCOMING CAMPUS EVENT
                 </span>
                 <?php if ($student_upcoming_event): ?>
                   <span style="font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:20px; background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe;">
-                    <?= htmlspecialchars($student_upcoming_event['reg_status'] ?? 'Open') ?>
+                    <?= htmlspecialchars($student_upcoming_event['reg_status'] ?? 'Scheduled') ?>
                   </span>
                 <?php endif; ?>
               </div>
@@ -1553,44 +1557,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <?php endif; ?>
             </div>
             <div style="margin-top:14px;">
-              <a href="tracking_scanner.php" class="card-btn" style="background:#2563eb; color:#fff; padding:10px 18px; border-radius:8px; font-weight:600; text-decoration:none; text-align:center; display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%; box-sizing:border-box;">
-                <i class="fa-solid fa-qrcode"></i> Scan Attendance
-              </a>
-            </div>
-          </div>
-
-          <!-- 2. MY ATTENDANCE SUMMARY CARD -->
-          <div class="card" style="background:#fff; border-radius:12px; border:1px solid #e2e8f0; padding:22px; box-shadow:0 2px 6px rgba(0,0,0,0.04); display:flex; flex-direction:column; justify-content:space-between;">
-            <div>
-              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-                <span style="font-size:0.75rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.05em;">
-                  <i class="fa-solid fa-clipboard-check" style="color:#10b981; margin-right:6px;"></i> MY ATTENDANCE
-                </span>
-                <span style="font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:20px; background:#f0fdf4; color:#166534; border:1px solid #bbf7d0;">
-                  Verified History
-                </span>
-              </div>
-              <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom:18px;">
-                <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 10px; text-align:center;">
-                  <div style="font-size:1.5rem; font-weight:800; color:#1e293b; line-height:1.2;"><?= (int)$student_att_summary['events'] ?></div>
-                  <div style="font-size:0.75rem; font-weight:600; color:#64748b; text-transform:uppercase; margin-top:4px;">Events</div>
-                </div>
-                <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:14px 10px; text-align:center;">
-                  <div style="font-size:1.5rem; font-weight:800; color:#16a34a; line-height:1.2;"><?= (int)$student_att_summary['present'] ?></div>
-                  <div style="font-size:0.75rem; font-weight:600; color:#166534; text-transform:uppercase; margin-top:4px;">Present</div>
-                </div>
-                <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:14px 10px; text-align:center;">
-                  <div style="font-size:1.5rem; font-weight:800; color:#d97706; line-height:1.2;"><?= (int)$student_att_summary['late'] ?></div>
-                  <div style="font-size:0.75rem; font-weight:600; color:#b45309; text-transform:uppercase; margin-top:4px;">Late</div>
-                </div>
-              </div>
-              <p style="font-size:0.82rem; color:#64748b; margin:0 0 14px;">
-                Keep your co-curricular standing verified by scanning attendance at official events.
-              </p>
-            </div>
-            <div style="margin-top:14px;">
-              <a href="tracking_history.php" class="card-btn" style="background:#f1f5f9; color:#1e293b; border:1px solid #cbd5e1; padding:10px 18px; border-radius:8px; font-weight:600; text-decoration:none; text-align:center; display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%; box-sizing:border-box;">
-                <i class="fa-solid fa-clock-rotate-left"></i> View Records
+              <a href="events.php" class="card-btn" style="background:#2563eb; color:#fff; padding:10px 18px; border-radius:8px; font-weight:600; text-decoration:none; text-align:center; display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%; box-sizing:border-box;">
+                <i class="fa-solid fa-calendar-days"></i> Explore Events Calendar
               </a>
             </div>
           </div>

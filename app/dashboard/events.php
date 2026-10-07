@@ -32,7 +32,7 @@ $events = $conn->query(
      LEFT JOIN clubs c ON c.id = e.club_id
      LEFT JOIN users u ON u.id = e.created_by
      WHERE e.deleted_at IS NULL
-     ORDER BY e.event_date ASC"
+     ORDER BY e.id DESC"
 )->fetch_all(MYSQLI_ASSOC);
 
 $clubs = $conn->query("SELECT id, name, code FROM clubs WHERE status='Active' AND deleted_at IS NULL ORDER BY name")->fetch_all(MYSQLI_ASSOC);
@@ -188,7 +188,6 @@ $status_badges = [
   <!-- jsPDF & AutoTable for direct client-side PDF downloads -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-  <script src="../js/qrcode.min.js"></script>
   <style>
   /* ── Event Table Action Buttons ───────────────────────────── */
   .event-act-group {
@@ -235,16 +234,6 @@ $status_badges = [
     color: #ffffff;
     border-color: #1e293b;
     box-shadow: 0 2px 8px rgba(30, 41, 59, 0.2);
-  }
-  .event-act-btn-qr {
-    background: #059669;
-    color: #ffffff;
-    border-color: #059669;
-  }
-  .event-act-btn-qr:hover {
-    background: #047857;
-    border-color: #047857;
-    box-shadow: 0 2px 8px rgba(5, 150, 105, 0.25);
   }
   .event-act-btn-reg {
     background: #2563eb;
@@ -2024,9 +2013,6 @@ require_once __DIR__ . '/../shared/sidebar.php';
                   </button>
                   <button type="button" class="event-act-btn event-act-btn-details" onclick="viewEvent(<?= htmlspecialchars(json_encode($ev)) ?>)" title="View Event Details">
                     <i class="fa-solid fa-eye"></i> Details
-                  </button>
-                  <button type="button" class="event-act-btn event-act-btn-qr" onclick="if(window.openGlobalEventQr){ window.openGlobalEventQr(<?= (int)$ev['id'] ?>); } else { window.showSystemModal({ title: 'QR Unavailable', message: 'QR viewer is currently unavailable.', type: 'warning' }); }" title="View Event QR Code & Official Attendance Poster">
-                    <i class="fa-solid fa-qrcode"></i> QR
                   </button>
                   <?php if (can_any(['events.review.ssc', 'events.approve.admin', 'events.create.own'])): ?>
                     <button type="button" class="event-act-btn event-act-btn-reg" onclick="viewRegistrations(<?= $ev['id'] ?>, '<?= htmlspecialchars(addslashes($ev['title'])) ?>')" title="View Event Registrations">

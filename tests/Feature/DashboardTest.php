@@ -17,9 +17,7 @@ class DashboardTest extends TestCase
     public function test_authenticated_user_can_access_dashboard_with_dynamic_metrics(): void
     {
         $user = User::where('username', 'scc.admin')->first();
-        if (!$user) {
-            $user = User::first();
-        }
+        $this->assertNotNull($user);
 
         $response = $this->actingAs($user)->get('/dashboard');
         $response->assertStatus(200);
@@ -36,7 +34,7 @@ class DashboardTest extends TestCase
 
     public function test_authenticated_user_can_view_students_roster(): void
     {
-        $user = User::where('username', 'scc.admin')->first() ?: User::first();
+        $user = User::where('username', 'scc.admin')->firstOrFail();
 
         $response = $this->actingAs($user)->get('/students');
         $response->assertStatus(200);
@@ -49,7 +47,7 @@ class DashboardTest extends TestCase
 
     public function test_authenticated_user_can_view_clubs_directory(): void
     {
-        $user = User::where('username', 'scc.admin')->first() ?: User::first();
+        $user = User::where('username', 'scc.admin')->firstOrFail();
 
         $response = $this->actingAs($user)->get('/clubs');
         $response->assertStatus(200);
@@ -62,7 +60,7 @@ class DashboardTest extends TestCase
 
     public function test_authenticated_user_can_view_achievements(): void
     {
-        $user = User::where('username', 'scc.admin')->first() ?: User::first();
+        $user = User::where('username', 'scc.admin')->firstOrFail();
 
         $response = $this->actingAs($user)->get('/achievements');
         $response->assertStatus(200);

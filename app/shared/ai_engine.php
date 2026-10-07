@@ -13,9 +13,51 @@ require_once __DIR__ . '/ai_config.php';
 require_once __DIR__ . '/ph_holidays.php';
 
 /**
+ * AI Security & Governance: Detect and reject prompt injection, jailbreaks, and unauthorized instructions.
+ */
+function validate_ai_prompt_security(string $prompt): array {
+    $blockedPatterns = [
+        '/\bignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)/i',
+        '/\b(system\s+override|admin\s+override|developer\s+mode|dan\s+mode)\b/i',
+        '/\b(jailbreak|jailbroken|unfiltered\s+mode|unrestricted\s+mode)\b/i',
+        '/\b(reveal|leak|print|output|display)\s+(the\s+)?(system\s+prompt|api\s+key|secret\s+key|password)\b/i',
+        '/\b(disregard\s+safety|bypass\s+safety|disable\s+guardrails)\b/i',
+        '/\b(you\s+are\s+now|act\s+as\s+an\s+evil|pretend\s+you\s+have\s+no\s+rules)\b/i'
+    ];
+
+    foreach ($blockedPatterns as $pattern) {
+        if (preg_match($pattern, $prompt, $matches)) {
+            return [
+                'safe' => false,
+                'threat_type' => 'PROMPT_INJECTION_DETECTED',
+                'matched_pattern' => $matches[0],
+                'reason' => 'Prompt violates AI Security Governance: Injection pattern or unauthorized instruction detected.'
+            ];
+        }
+    }
+
+    return ['safe' => true];
+}
+
+/**
  * Attempt Google Gemini generation with randomized seed and anti-duplication
  */
 function gemini_generate(string $prompt, ?mysqli $conn = null): array {
+    // 0. AI Prompt Injection & Unauthorized Instruction Protection
+    $secCheck = validate_ai_prompt_security($prompt);
+    if (!$secCheck['safe']) {
+        if ($conn) {
+            require_once __DIR__ . '/notification_actions.php';
+            log_audit($conn, (int)($_SESSION['user_id'] ?? 0), 'AI_PROMPT_INJECTION_BLOCKED', 'ai_engine', 0, "Blocked prompt injection: {$secCheck['matched_pattern']}", 'critical');
+        }
+        return [
+            'success' => false,
+            'security_blocked' => true,
+            'google_error' => 'AI Prompt Protection: Unauthorized instruction or injection pattern detected.',
+            'threat' => $secCheck['threat_type']
+        ];
+    }
+
     $apiKey = get_gemini_api_key($conn);
 
     if (empty($apiKey)) {

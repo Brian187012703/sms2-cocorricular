@@ -1,295 +1,243 @@
 <template>
-  <div class="min-h-screen bg-slate-950 text-slate-100 flex font-sans selection:bg-blue-500 selection:text-white">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-slate-900/90 backdrop-blur-xl border-r border-slate-800 flex flex-col justify-between p-4 shrink-0">
-      <div>
-        <div class="flex items-center space-x-3 px-2 py-4 mb-6 border-b border-slate-800">
-          <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-xl shadow-lg shadow-blue-500/30 text-white">
-            S
+  <AppLayout>
+    <div class="space-y-8">
+      <!-- Welcome Hero Banner -->
+      <div class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-900/60 via-indigo-900/40 to-slate-900/80 border border-slate-800 p-6 sm:p-8 backdrop-blur-xl shadow-2xl">
+        <div class="relative z-10 max-w-2xl">
+          <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-semibold uppercase tracking-wider mb-3">
+            <span>{{ roleTitle }}</span>
           </div>
-          <div>
-            <h1 class="font-bold text-lg leading-none tracking-tight text-white">BCP SMS</h1>
-            <span class="text-xs text-blue-400 font-medium">Laravel &amp; Vue 3 Stack</span>
+          <h1 class="text-2xl sm:text-3xl font-black text-white tracking-tight">
+            Welcome back, {{ userName }}!
+          </h1>
+          <p class="text-sm text-slate-300 mt-2 leading-relaxed">
+            Bestlink College of the Philippines Co-Curricular Management System. Monitor campus organizations, track participation credentials, and manage workflow approvals.
+          </p>
+
+          <div class="mt-5 flex flex-wrap items-center gap-3">
+            <Link
+              href="/events"
+              class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition shadow-lg shadow-blue-500/25 active:scale-95"
+            >
+              Browse Events
+            </Link>
+            <Link
+              v-if="userRole === 'student'"
+              href="/roster"
+              class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition"
+            >
+              My Club Applications
+            </Link>
+            <Link
+              v-if="userRole !== 'student'"
+              href="/attendance/scanner"
+              class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition"
+            >
+              Launch QR Scanner
+            </Link>
           </div>
         </div>
 
-        <nav class="space-y-1">
-          <a
-            href="/dashboard"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg bg-blue-600/20 text-blue-400 font-medium border border-blue-500/30 transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 00-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-            <span>Dashboard</span>
-          </a>
-          <a
-            href="/students"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-            <span>Student Roster</span>
-          </a>
-          <a
-            href="/clubs"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-            <span>Clubs &amp; Orgs</span>
-          </a>
-          <a
-            href="/achievements"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
-            <span>Achievements</span>
-          </a>
-        </nav>
+        <div class="absolute -right-10 -bottom-10 w-64 h-64 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
       </div>
 
-      <!-- User Profile Card in Sidebar -->
-      <div class="space-y-3">
-        <div class="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
-          <div class="flex items-center space-x-2.5 truncate">
-            <div class="h-8 w-8 rounded-lg bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center text-xs shrink-0 border border-blue-500/20">
-              {{ (currentUser?.first_name || 'U').charAt(0) }}
-            </div>
-            <div class="truncate text-xs">
-              <div class="font-bold text-white truncate">{{ currentUser?.first_name }} {{ currentUser?.last_name }}</div>
-              <div class="text-[10px] text-slate-400 capitalize font-mono">{{ currentUser?.role || 'Guest' }}</div>
-            </div>
+      <!-- Live Metric Counter Cards (Dynamically Scoped Per User Role) -->
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+          <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider truncate">
+            {{ metrics?.primary_label || 'Enrolled Students' }}
           </div>
-          <button
-            type="button"
-            @click="logout"
-            title="Sign Out"
-            class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-          </button>
-        </div>
-
-        <div class="p-3 bg-slate-950/60 rounded-xl border border-emerald-500/20 text-xs">
-          <div class="flex items-center space-x-2 text-emerald-400 font-semibold mb-1">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-            <span>Laravel Database Mode</span>
-          </div>
-          <p class="text-slate-400 text-[11px] leading-tight">Live MySQL Connection (sms_db)</p>
-        </div>
-      </div>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="flex-1 overflow-y-auto p-8 space-y-8">
-      <!-- Top Header -->
-      <header class="flex justify-between items-center pb-6 border-b border-slate-800">
-        <div>
-          <h2 class="text-2xl font-extrabold text-white tracking-tight">Co-Curricular Management Overview</h2>
-          <p class="text-slate-400 text-sm mt-1">Student Governance &amp; Campus Organizations Portal</p>
-        </div>
-        <div class="flex items-center space-x-3">
-          <span class="px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20 flex items-center space-x-1.5">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>Live MySQL Database</span>
-          </span>
-          <span class="px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs font-semibold border border-blue-500/20">
-            Role: {{ currentUser?.role }}
-          </span>
-        </div>
-      </header>
-
-      <!-- Stat Cards: 100% Dynamically Fetched from Database -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 backdrop-blur-xl hover:border-blue-500/40 transition shadow-lg">
-          <div class="text-slate-400 text-xs font-medium uppercase tracking-wider">Total Enrolled Students</div>
-          <div class="text-3xl font-extrabold text-white mt-2">{{ metrics.total_students.toLocaleString() }}</div>
-          <div class="text-blue-400 text-xs mt-2 font-medium flex items-center space-x-1">
-            <span>Verified in database</span>
+          <div class="mt-2 text-2xl font-black text-white font-mono">
+            {{ metrics?.primary_metric || 0 }}
           </div>
         </div>
-
-        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 backdrop-blur-xl hover:border-blue-500/40 transition shadow-lg">
-          <div class="text-slate-400 text-xs font-medium uppercase tracking-wider">Active Recognized Clubs</div>
-          <div class="text-3xl font-extrabold text-white mt-2">{{ metrics.active_clubs.toLocaleString() }}</div>
-          <div class="text-indigo-400 text-xs mt-2 font-medium flex items-center space-x-1">
-            <span>Accredited organizations</span>
+        <div class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+          <div class="text-xs font-semibold text-blue-400 uppercase tracking-wider truncate">
+            {{ metrics?.secondary_label || 'Active Clubs' }}
+          </div>
+          <div class="mt-2 text-2xl font-black text-blue-400 font-mono">
+            {{ metrics?.secondary_metric || 0 }}
           </div>
         </div>
-
-        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 backdrop-blur-xl hover:border-blue-500/40 transition shadow-lg">
-          <div class="text-slate-400 text-xs font-medium uppercase tracking-wider">Verified Achievements</div>
-          <div class="text-3xl font-extrabold text-emerald-400 mt-2">{{ metrics.verified_achievements.toLocaleString() }}</div>
-          <div class="text-emerald-400 text-xs mt-2 font-medium flex items-center space-x-1">
-            <span>Council audited &amp; verified</span>
+        <div class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+          <div class="text-xs font-semibold text-emerald-400 uppercase tracking-wider truncate">
+            Upcoming Events
+          </div>
+          <div class="mt-2 text-2xl font-black text-emerald-400 font-mono">
+            {{ metrics?.upcoming_events || 0 }}
           </div>
         </div>
-
-        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 backdrop-blur-xl hover:border-blue-500/40 transition shadow-lg">
-          <div class="text-slate-400 text-xs font-medium uppercase tracking-wider">Pending Budget Requests</div>
-          <div class="text-3xl font-extrabold text-amber-400 mt-2">{{ metrics.pending_budgets.toLocaleString() }}</div>
-          <div class="text-amber-400 text-xs mt-2 font-medium flex items-center space-x-1">
-            <span>Multi-tier review workflow</span>
+        <div class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+          <div class="text-xs font-semibold text-amber-400 uppercase tracking-wider truncate">
+            {{ metrics?.pending_action_label || 'Pending Actions' }}
+          </div>
+          <div class="mt-2 text-2xl font-black text-amber-400 font-mono">
+            {{ metrics?.pending_action || 0 }}
+          </div>
+        </div>
+        <div v-if="userRole !== 'student'" class="p-5 rounded-2xl bg-slate-900/70 border border-slate-800">
+          <div class="text-xs font-semibold text-purple-400 uppercase tracking-wider truncate">
+            Verified Awards
+          </div>
+          <div class="mt-2 text-2xl font-black text-purple-400 font-mono">
+            {{ metrics?.verified_achievements || 0 }}
           </div>
         </div>
       </div>
 
-      <!-- Two-Column Layout for Events & Announcements -->
+      <!-- Two-Column Grid: Recent Events & Announcements -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Recent Events Card -->
-        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-xl">
-          <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-            <h3 class="text-base font-bold text-white flex items-center space-x-2">
+        <!-- Recent Events Section -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h2 class="text-base font-bold text-white tracking-tight flex items-center space-x-2">
               <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-              <span>Recent &amp; Upcoming Events</span>
-            </h3>
-            <span class="text-xs text-slate-500">{{ recentEvents.length }} records</span>
+              <span>Upcoming Scheduled Activities</span>
+            </h2>
+            <Link href="/events" class="text-xs text-blue-400 hover:text-blue-300 font-semibold">View All &rarr;</Link>
           </div>
 
-          <div v-if="recentEvents.length === 0" class="py-8 text-center text-slate-500 text-sm">
-            No events scheduled currently.
-          </div>
-          <div v-else class="space-y-3">
+          <div v-if="recentEvents && recentEvents.length > 0" class="space-y-3">
             <div
-              v-for="evt in recentEvents"
-              :key="evt.id"
-              class="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition"
+              v-for="ev in recentEvents"
+              :key="ev.id"
+              class="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between"
             >
-              <div class="flex items-start justify-between">
-                <div>
-                  <h4 class="font-semibold text-sm text-white">{{ evt.title }}</h4>
-                  <p class="text-xs text-slate-400 mt-0.5 line-clamp-1">{{ evt.description }}</p>
-                  <div class="flex items-center space-x-3 text-[11px] text-slate-400 mt-2">
-                    <span v-if="evt.venue">📍 {{ evt.venue }}</span>
-                    <span>📅 {{ evt.event_date ? new Date(evt.event_date).toLocaleDateString() : 'TBD' }}</span>
-                  </div>
+              <div class="truncate mr-3">
+                <div class="font-bold text-white text-xs truncate flex items-center space-x-2">
+                  <span>{{ ev.title }}</span>
+                  <span
+                    v-if="ev.audience_type"
+                    :class="[
+                      'text-[9px] font-bold px-1.5 py-0.2 rounded border',
+                      ev.audience_type === 'Exclusive' ? 'text-purple-400 border-purple-500/30 bg-purple-500/10' : 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10'
+                    ]"
+                  >
+                    {{ ev.audience_type }}
+                  </span>
                 </div>
-                <span
-                  class="px-2 py-0.5 rounded text-[10px] font-semibold uppercase"
-                  :class="{
-                    'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20': evt.status === 'Approved',
-                    'bg-amber-500/10 text-amber-400 border border-amber-500/20': evt.status?.includes('Pending'),
-                    'bg-slate-700/50 text-slate-300': !evt.status || evt.status === 'Draft'
-                  }"
-                >
-                  {{ evt.status }}
-                </span>
+                <div class="text-[11px] text-slate-400 mt-0.5">{{ ev.venue }} • {{ formatSchedule(ev.event_date, ev.end_time) }}</div>
               </div>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                {{ ev.status }}
+              </span>
             </div>
+          </div>
+          <div v-else class="text-xs text-slate-500 py-6 text-center">
+            No upcoming events posted on calendar.
           </div>
         </div>
 
-        <!-- Campus Announcements Card -->
-        <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-xl">
-          <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-            <h3 class="text-base font-bold text-white flex items-center space-x-2">
+        <!-- Latest Announcements Section -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h2 class="text-base font-bold text-white tracking-tight flex items-center space-x-2">
               <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
-              <span>Announcements &amp; Bulletins</span>
-            </h3>
-            <span class="text-xs text-slate-500">{{ announcements.length }} records</span>
+              <span>Campus Bulletins</span>
+            </h2>
+            <Link href="/announcements" class="text-xs text-blue-400 hover:text-blue-300 font-semibold">View All &rarr;</Link>
           </div>
 
-          <div v-if="announcements.length === 0" class="py-8 text-center text-slate-500 text-sm">
-            No campus announcements found.
-          </div>
-          <div v-else class="space-y-3">
+          <div v-if="announcements && announcements.length > 0" class="space-y-3">
             <div
-              v-for="anc in announcements"
-              :key="anc.id"
-              class="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition"
+              v-for="an in announcements"
+              :key="an.id"
+              class="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-1"
             >
-              <div class="flex items-start justify-between">
-                <div>
-                  <h4 class="font-semibold text-sm text-white">{{ anc.title }}</h4>
-                  <p class="text-xs text-slate-400 mt-0.5 line-clamp-2">{{ anc.content }}</p>
-                  <div class="flex items-center space-x-3 text-[11px] text-slate-500 mt-2">
-                    <span>Category: {{ anc.category }}</span>
-                    <span>Priority: {{ anc.priority }}</span>
-                  </div>
-                </div>
-                <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                  {{ anc.scope }}
-                </span>
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-white text-xs">{{ an.title }}</span>
+                <span class="text-[10px] text-slate-500 font-mono">{{ formatDate(an.created_at) }}</span>
               </div>
+              <p class="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">{{ an.content }}</p>
             </div>
+          </div>
+          <div v-else class="text-xs text-slate-500 py-6 text-center">
+            No bulletins currently posted.
           </div>
         </div>
       </div>
 
-      <!-- Featured Accredited Clubs -->
-      <div class="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 backdrop-blur-xl">
-        <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
-          <div>
-            <h3 class="text-base font-bold text-white">Recognized Campus Student Organizations</h3>
-            <p class="text-xs text-slate-400">Live roster of chartered student councils and academic societies</p>
-          </div>
-          <a href="/clubs" class="text-xs text-blue-400 hover:text-blue-300 font-medium">View all clubs &rarr;</a>
+      <!-- Featured Campus Organizations -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h2 class="text-base font-bold text-white tracking-tight">Active Student Organizations</h2>
+          <Link href="/clubs" class="text-xs text-blue-400 hover:text-blue-300 font-semibold">Browse Directory &rarr;</Link>
         </div>
 
-        <div v-if="featuredClubs.length === 0" class="py-8 text-center text-slate-500 text-sm">
-          No clubs currently recorded in database.
-        </div>
-        <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div
-            v-for="club in featuredClubs"
-            :key="club.id"
-            class="p-4 rounded-xl bg-slate-950/60 border border-slate-800 hover:border-blue-500/30 transition flex flex-col justify-between"
+            v-for="c in featuredClubs"
+            :key="c.id"
+            class="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2"
           >
-            <div>
-              <div class="flex items-center justify-between mb-2">
-                <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                  {{ club.code }}
-                </span>
-                <span class="text-[11px] text-slate-400 font-medium">{{ club.category }}</span>
-              </div>
-              <h4 class="font-bold text-sm text-white line-clamp-1">{{ club.name }}</h4>
-              <p class="text-xs text-slate-400 mt-1 line-clamp-2">{{ club.description }}</p>
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                {{ c.code }}
+              </span>
+              <span class="text-[10px] text-slate-400">{{ c.category }}</span>
             </div>
-            <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-              <span class="text-slate-400">Adviser: <strong class="text-slate-200">{{ club.adviser_name || 'Assigned' }}</strong></span>
-              <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Active</span>
-            </div>
+            <h3 class="font-bold text-white text-sm leading-snug">{{ c.name }}</h3>
+            <div class="text-[11px] text-slate-400 truncate">Adviser: {{ c.adviser_name || 'Not assigned' }}</div>
           </div>
         </div>
       </div>
-    </main>
-  </div>
+    </div>
+  </AppLayout>
 </template>
 
 <script setup>
 import { computed } from 'vue';
-import { usePage, router } from '@inertiajs/vue3';
+import { Link, usePage } from '@inertiajs/vue3';
+import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({
-  metrics: {
-    type: Object,
-    default: () => ({
-      total_students: 0,
-      active_clubs: 0,
-      verified_achievements: 0,
-      upcoming_events: 0,
-      pending_budgets: 0,
-    }),
-  },
-  recentEvents: {
-    type: Array,
-    default: () => [],
-  },
-  recentAchievements: {
-    type: Array,
-    default: () => [],
-  },
-  featuredClubs: {
-    type: Array,
-    default: () => [],
-  },
-  announcements: {
-    type: Array,
-    default: () => [],
-  },
+  metrics: Object,
+  recentEvents: Array,
+  recentAchievements: Array,
+  featuredClubs: Array,
+  announcements: Array,
 });
 
 const page = usePage();
-const currentUser = computed(() => page.props.auth?.user || null);
+const currentUser = computed(() => page.props.auth?.user || {});
+const userRole = computed(() => currentUser.value.role || 'student');
+const userName = computed(() => {
+  if (!currentUser.value.first_name) return 'User';
+  return `${currentUser.value.first_name} ${currentUser.value.last_name || ''}`;
+});
 
-const logout = () => {
-  router.post('/logout');
+const roleTitle = computed(() => {
+  switch (userRole.value) {
+    case 'admin': return 'System Administrator Portal';
+    case 'ssc': return 'Supreme Student Council Executive Console';
+    case 'club_adviser': return 'Faculty Organization Adviser Portal';
+    default: return 'Student Co-Curricular Dashboard';
+  }
+});
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+};
+
+const formatSchedule = (startStr, endStr) => {
+  if (!startStr) return '';
+  const dStart = new Date(startStr);
+  const dateFormatted = dStart.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
+  const startTime = dStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  if (endStr) {
+    const dEnd = new Date(endStr);
+    const endTime = dEnd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    return `${dateFormatted} • ${startTime} – ${endTime}`;
+  }
+  return `${dateFormatted} • ${startTime}`;
 };
 </script>

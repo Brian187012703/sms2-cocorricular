@@ -3,17 +3,24 @@
 //  ATTENDANCE_ACTIONS.PHP — Attendance AJAX handler
 //  Actions: list_mine, list_event, log_qr, log_manual, analytics
 // ============================================================
-header('Content-Type: application/json');
+if (php_sapi_name() !== 'cli' && !headers_sent()) {
+    header('Content-Type: application/json');
+}
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/notification_actions.php';
 require_once __DIR__ . '/security.php';
 
-if (empty($_SESSION['user_id'])) { echo json_encode(['success'=>false,'message'=>'Not authenticated.']); exit; }
+if (empty($_SESSION['user_id'])) {
+    if (php_sapi_name() === 'cli' && basename($_SERVER['SCRIPT_FILENAME'] ?? '') !== basename(__FILE__)) {
+        return;
+    }
+    echo json_encode(['success'=>false,'message'=>'Not authenticated.']); exit;
+}
 
 // CSRF check on mutating requests
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     verify_csrf();
 }
 
@@ -922,6 +929,85 @@ if (!empty($action)) {
             'avg_per_event' => $avg_per_event,
             'breakdown'     => $breakdown,
         ]);
+    }
+
+    // ── OFFLINE SYNCHRONIZATION BATCH HANDLER ─────────────────
+    case 'sync_offline_batch': {
+        $batchRaw = $_POST['batch'] ?? $_POST['scans'] ?? '[]';
+        $batch = is_string($batchRaw) ? json_decode($batchRaw, true) : $batchRaw;
+
+        if (!is_array($batch) || empty($batch)) {
+            aRespond(false, 'No offline transactions provided in batch.');
+        }
+
+        $synced = 0;
+        $skipped = 0;
+        $results = [];
+
+        $conn->begin_transaction();
+        try {
+            foreach ($batch as $item) {
+                $qrData = trim($item['qr_data'] ?? '');
+                $targetEventId = (int)($item['event_id'] ?? 0);
+                $offlineTime = trim($item['offline_scanned_at'] ?? $item['timestamp'] ?? date('Y-m-d H:i:s'));
+
+                if (!$qrData) {
+                    $skipped++;
+                    continue;
+                }
+
+                // Check Event QR vs Student QR
+                $scannedEvent = resolveEventFromQr($conn, $qrData);
+                if ($scannedEvent) {
+                    $evId = (int)$scannedEvent['id'];
+                    $chk = $conn->query("SELECT id FROM attendance_logs WHERE event_id = {$evId} AND user_id = {$user_id} LIMIT 1");
+                    if ($chk && $chk->num_rows > 0) {
+                        $skipped++;
+                        $results[] = ['qr' => $qrData, 'status' => 'duplicate'];
+                    } else {
+                        $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, check_in, method, logged_by, status) VALUES (?, ?, ?, 'Offline_Sync', ?, 'Present')");
+                        $stmt->bind_param('iisi', $evId, $user_id, $offlineTime, $user_id);
+                        $stmt->execute();
+                        $stmt->close();
+                        $synced++;
+                        $results[] = ['qr' => $qrData, 'status' => 'synced'];
+                    }
+                } else {
+                    $u = resolveUserFromQr($conn, $qrData);
+                    if ($u && $targetEventId > 0) {
+                        $targetUid = (int)$u['id'];
+                        $chk = $conn->query("SELECT id FROM attendance_logs WHERE event_id = {$targetEventId} AND user_id = {$targetUid} LIMIT 1");
+                        if ($chk && $chk->num_rows > 0) {
+                            $skipped++;
+                            $results[] = ['qr' => $qrData, 'status' => 'duplicate'];
+                        } else {
+                            $stmt = $conn->prepare("INSERT INTO attendance_logs (event_id, user_id, check_in, method, logged_by, status) VALUES (?, ?, ?, 'Offline_Sync', ?, 'Present')");
+                            $stmt->bind_param('iisi', $targetEventId, $targetUid, $offlineTime, $user_id);
+                            $stmt->execute();
+                            $stmt->close();
+                            $synced++;
+                            $results[] = ['qr' => $qrData, 'status' => 'synced'];
+                        }
+                    } else {
+                        $skipped++;
+                        $results[] = ['qr' => $qrData, 'status' => 'unresolved'];
+                    }
+                }
+            }
+
+            $conn->commit();
+            log_audit($conn, $user_id, 'ATTENDANCE_OFFLINE_SYNC', 'attendance_logs', 0, "Synchronized {$synced} offline attendance transactions ({$skipped} skipped/duplicate).");
+
+            aRespond(true, "Offline synchronization complete. Successfully recorded {$synced} transactions ({$skipped} skipped).", [
+                'synced_count'  => $synced,
+                'skipped_count' => $skipped,
+                'total_batch'   => count($batch),
+                'details'       => $results
+            ]);
+        } catch (Throwable $e) {
+            $conn->rollback();
+            aRespond(false, 'Offline synchronization transaction failed: ' . $e->getMessage());
+        }
     }
 
     default:

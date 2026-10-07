@@ -1,0 +1,20 @@
+Options -Indexes
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Prevent direct access to internal backend framework directories & sensitive files
+    RewriteRule ^(?:app/(?:Http|Models|Providers|Support)|bootstrap|config|database|resources|routes|storage|tests|vendor|node_modules|\.) - [F,L,NC]
+    RewriteRule ^(?:artisan|composer\..*|package.*\.json|.*\.(?:sql|log))$ - [F,L,NC]
+
+    # Allow direct access to public and app web directories
+    RewriteRule ^(?:public|app)(?:/|$) - [L]
+
+    # If the requested file or directory exists, serve it directly
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Route any other requests to public front controller
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+

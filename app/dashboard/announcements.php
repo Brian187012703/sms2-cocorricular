@@ -74,7 +74,7 @@ if ($sess_role === 'admin') {
         FROM org_announcements a
         LEFT JOIN clubs c ON c.id = a.club_id
         JOIN users u ON u.id = a.author_id
-        ORDER BY a.is_pinned DESC, a.created_at DESC
+        ORDER BY a.is_pinned DESC, a.id DESC
     ");
 } elseif ($sess_role === 'ssc') {
     $r_ann = $conn->query("
@@ -84,7 +84,7 @@ if ($sess_role === 'admin') {
         LEFT JOIN clubs c ON c.id = a.club_id
         JOIN users u ON u.id = a.author_id
         WHERE a.scope = 'Council' OR a.scope = 'System' OR a.author_id = {$user_id}
-        ORDER BY a.is_pinned DESC, a.created_at DESC
+        ORDER BY a.is_pinned DESC, a.id DESC
     ");
 } elseif ($sess_role === 'club_adviser') {
     $cid = $adviser_club ? (int)$adviser_club['id'] : 0;
@@ -95,7 +95,7 @@ if ($sess_role === 'admin') {
         LEFT JOIN clubs c ON c.id = a.club_id
         JOIN users u ON u.id = a.author_id
         WHERE a.scope IN ('System', 'Council') OR a.club_id = {$cid} OR a.author_id = {$user_id}
-        ORDER BY a.is_pinned DESC, a.created_at DESC
+        ORDER BY a.is_pinned DESC, a.id DESC
     ");
 } else {
     $r_ann = $conn->query("
@@ -105,7 +105,7 @@ if ($sess_role === 'admin') {
         LEFT JOIN clubs c ON c.id = a.club_id
         JOIN users u ON u.id = a.author_id
         WHERE a.status = 'Published'
-        ORDER BY a.is_pinned DESC, a.created_at DESC
+        ORDER BY a.is_pinned DESC, a.id DESC
     ");
 }
 

@@ -16,7 +16,7 @@ class WebAuthTest extends TestCase
     public function test_login_page_renders_successfully(): void
     {
         $response = $this->get('/login');
-        $response->assertStatus(200);
+        $response->assertOk()->assertInertia(fn ($page) => $page->component('Login'));
     }
 
     public function test_user_can_login_with_valid_credentials(): void
@@ -24,17 +24,7 @@ class WebAuthTest extends TestCase
         $password = 'Bcp@Admin2026!';
         $user = User::where('username', 'scc.admin')->first();
 
-        if (!$user) {
-            $user = User::create([
-                'username'      => 'scc.admin',
-                'email'         => 'admin@bcp.edu.ph',
-                'first_name'    => 'System',
-                'last_name'     => 'Admin',
-                'role'          => 'admin',
-                'status'        => 'Active',
-                'password_hash' => password_hash($password, PASSWORD_DEFAULT),
-            ]);
-        }
+        $this->assertNotNull($user);
 
         $response = $this->post('/login', [
             'username' => 'scc.admin',
@@ -59,12 +49,11 @@ class WebAuthTest extends TestCase
     public function test_authenticated_user_can_logout(): void
     {
         $user = User::where('username', 'scc.admin')->first();
-        if ($user) {
-            $response = $this->actingAs($user)->post('/logout');
-            $response->assertRedirect('/login');
-            $this->assertGuest();
-        } else {
-            $this->assertTrue(true);
-        }
+        $this->assertNotNull($user);
+
+        $response = $this->actingAs($user)->post('/logout');
+        $response->assertRedirect('/login');
+        $this->assertGuest();
+
     }
 }

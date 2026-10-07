@@ -26,7 +26,7 @@ if ($sess_role === 'student') {
          FROM club_memberships cm
          JOIN clubs c ON c.id = cm.club_id
          WHERE cm.user_id = ?
-         ORDER BY cm.joined_at DESC"
+         ORDER BY cm.id DESC"
     );
     $stmt->bind_param('i', $user_id);
     $stmt->execute();
@@ -34,47 +34,28 @@ if ($sess_role === 'student') {
     $stmt->close();
 }
 
-// Fetch all active club members for organization roster view
-$all_org_members = [];
-$res_members = $conn->query(
-    "SELECT cm.id, cm.club_id, cm.role AS member_role, cm.status, cm.joined_at,
-            c.name AS club_name, c.code AS club_code,
-            u.id AS user_id, u.username, u.first_name, u.last_name, u.email,
-            s.student_number, s.course, s.year_level, s.section
-     FROM club_memberships cm
-     JOIN clubs c ON c.id = cm.club_id
-     JOIN users u ON u.id = cm.user_id
-     LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
-     WHERE cm.status = 'Active'
-     ORDER BY c.name, cm.joined_at DESC"
-);
-if ($res_members) {
-    $all_org_members = $res_members->fetch_all(MYSQLI_ASSOC);
-}
-
-// Fetch all active accredited clubs for organization choice selection with member counts
-$all_clubs = $conn->query("
-    SELECT c.id, c.name, c.code, c.category, c.description, c.adviser_name,
-           (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Active' AND LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%') AS active_member_count,
-           (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Pending' AND LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%') AS pending_member_count
-    FROM clubs c 
-    WHERE c.deleted_at IS NULL AND c.status = 'Active'
-    ORDER BY c.name ASC
-")->fetch_all(MYSQLI_ASSOC);
-
-// Pending / Review Queue applicants (Adviser, SSC, Admin)
-$pending_applicants = [];
+// Resolve handled club for club_adviser
 $my_club_id = null;
 $my_club_name = '';
 $my_club_code = '';
 
-if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
-  $club_filter = '';
-  $bind_params = [];
-  $bind_types = '';
+if ($sess_role === 'club_adviser') {
+  // 1. Direct link in clubs table
+  $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE adviser_user_id = ? AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+  if ($c_stmt) {
+    $c_stmt->bind_param('i', $user_id);
+    $c_stmt->execute();
+    $c_stmt->bind_result($cid, $cname, $ccode);
+    if ($c_stmt->fetch()) {
+      $my_club_id = $cid;
+      $my_club_name = $cname;
+      $my_club_code = $ccode;
+    }
+    $c_stmt->close();
+  }
 
-  if ($sess_role === 'club_adviser') {
-    // 1. Try club_memberships
+  // 2. Try club_memberships
+  if (empty($my_club_id)) {
     $cm = $conn->prepare("SELECT cm.club_id, c.name, c.code FROM club_memberships cm JOIN clubs c ON c.id = cm.club_id WHERE cm.user_id=? AND cm.status='Active' AND c.deleted_at IS NULL LIMIT 1");
     if ($cm) {
       $cm->bind_param('i', $user_id);
@@ -87,51 +68,120 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
       }
       $cm->close();
     }
+  }
 
-    // 2. Fallback: match by username prefix (e.g. cssec.adviser -> CSSEC)
-    if (empty($my_club_id)) {
-      $sess_uname = $_SESSION['username'] ?? '';
-      $prefix = strtoupper(explode('.', $sess_uname)[0] ?? '');
-      if (!empty($prefix)) {
-        $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE (code = ? OR REPLACE(code, '-', '') = ?) AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
-        if ($c_stmt) {
-          $c_stmt->bind_param('ss', $prefix, $prefix);
-          $c_stmt->execute();
-          $c_stmt->bind_result($cid, $cname, $ccode);
-          if ($c_stmt->fetch()) {
-            $my_club_id = $cid;
-            $my_club_name = $cname;
-            $my_club_code = $ccode;
-          }
-          $c_stmt->close();
+  // 3. Fallback: match by username prefix (e.g. cssec.adviser -> CSSEC)
+  if (empty($my_club_id)) {
+    $sess_uname = $_SESSION['username'] ?? '';
+    $prefix = strtoupper(explode('.', $sess_uname)[0] ?? '');
+    if (!empty($prefix)) {
+      $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE (code = ? OR REPLACE(code, '-', '') = ?) AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+      if ($c_stmt) {
+        $c_stmt->bind_param('ss', $prefix, $prefix);
+        $c_stmt->execute();
+        $c_stmt->bind_result($cid, $cname, $ccode);
+        if ($c_stmt->fetch()) {
+          $my_club_id = $cid;
+          $my_club_name = $cname;
+          $my_club_code = $ccode;
         }
+        $c_stmt->close();
       }
     }
+  }
 
-    // 3. Fallback: match by adviser name
-    if (empty($my_club_id)) {
-      $sess_last_raw = $_SESSION['last_name'] ?? '';
-      if (!empty($sess_last_raw)) {
-        $adv_like = '%' . $sess_last_raw . '%';
-        $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE adviser_name LIKE ? AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
-        if ($c_stmt) {
-          $c_stmt->bind_param('s', $adv_like);
-          $c_stmt->execute();
-          $c_stmt->bind_result($cid, $cname, $ccode);
-          if ($c_stmt->fetch()) {
-            $my_club_id = $cid;
-            $my_club_name = $cname;
-            $my_club_code = $ccode;
-          }
-          $c_stmt->close();
+  // 4. Fallback: match by adviser name
+  if (empty($my_club_id)) {
+    $sess_last_raw = $_SESSION['last_name'] ?? '';
+    if (!empty($sess_last_raw)) {
+      $adv_like = '%' . $sess_last_raw . '%';
+      $c_stmt = $conn->prepare("SELECT id, name, code FROM clubs WHERE adviser_name LIKE ? AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+      if ($c_stmt) {
+        $c_stmt->bind_param('s', $adv_like);
+        $c_stmt->execute();
+        $c_stmt->bind_result($cid, $cname, $ccode);
+        if ($c_stmt->fetch()) {
+          $my_club_id = $cid;
+          $my_club_name = $cname;
+          $my_club_code = $ccode;
         }
+        $c_stmt->close();
       }
     }
+  }
+}
 
+// Fetch active club members for organization roster view (strictly scoped for club_adviser)
+$all_org_members = [];
+if ($sess_role === 'club_adviser') {
+  $adv_cid = (int)($my_club_id ?? 0);
+  $res_members = $conn->query(
+      "SELECT cm.id, cm.club_id, cm.role AS member_role, cm.status, cm.joined_at,
+              c.name AS club_name, c.code AS club_code,
+              u.id AS user_id, u.username, u.first_name, u.last_name, u.email,
+              s.student_number, s.course, s.year_level, s.section
+       FROM club_memberships cm
+       JOIN clubs c ON c.id = cm.club_id
+       JOIN users u ON u.id = cm.user_id
+       LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
+       WHERE cm.status = 'Active' AND cm.club_id = {$adv_cid}
+       ORDER BY cm.id DESC"
+  );
+} else {
+  $res_members = $conn->query(
+      "SELECT cm.id, cm.club_id, cm.role AS member_role, cm.status, cm.joined_at,
+              c.name AS club_name, c.code AS club_code,
+              u.id AS user_id, u.username, u.first_name, u.last_name, u.email,
+              s.student_number, s.course, s.year_level, s.section
+       FROM club_memberships cm
+       JOIN clubs c ON c.id = cm.club_id
+       JOIN users u ON u.id = cm.user_id
+       LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
+       WHERE cm.status = 'Active'
+       ORDER BY cm.id DESC"
+  );
+}
+if ($res_members) {
+    $all_org_members = $res_members->fetch_all(MYSQLI_ASSOC);
+}
+
+// Fetch accredited clubs for selection (strictly scoped to handled organization for club_adviser)
+if ($sess_role === 'club_adviser') {
+  $adv_cid = (int)($my_club_id ?? 0);
+  $all_clubs = $conn->query("
+      SELECT c.id, c.name, c.code, c.category, c.description, c.adviser_name,
+             (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Active' AND LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%') AS active_member_count,
+             (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Pending' AND LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%') AS pending_member_count
+      FROM clubs c 
+      WHERE c.deleted_at IS NULL AND c.status = 'Active' AND c.id = {$adv_cid}
+      ORDER BY c.name ASC
+  ")->fetch_all(MYSQLI_ASSOC);
+} else {
+  $all_clubs = $conn->query("
+      SELECT c.id, c.name, c.code, c.category, c.description, c.adviser_name,
+             (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Active' AND LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%') AS active_member_count,
+             (SELECT COUNT(*) FROM club_memberships cm WHERE cm.club_id = c.id AND cm.status = 'Pending' AND LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%') AS pending_member_count
+      FROM clubs c 
+      WHERE c.deleted_at IS NULL AND c.status = 'Active'
+      ORDER BY c.name ASC
+  ")->fetch_all(MYSQLI_ASSOC);
+}
+
+// Pending / Review Queue applicants (Adviser, SSC, Admin)
+$pending_applicants = [];
+
+if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
+  $club_filter = '';
+  $bind_params = [];
+  $bind_types = '';
+
+  if ($sess_role === 'club_adviser') {
     if (!empty($my_club_id)) {
       $club_filter = 'AND cm.club_id = ?';
       $bind_params[] = (int) $my_club_id;
       $bind_types .= 'i';
+    } else {
+      $club_filter = 'AND 1=0';
     }
   }
 
@@ -158,7 +208,7 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
           LEFT JOIN club_applications ca ON (ca.id = (SELECT MAX(id) FROM club_applications WHERE club_id = cm.club_id AND user_id = cm.user_id))
           LEFT JOIN students s ON (s.user_id = u.id OR (s.first_name = u.first_name AND s.last_name = u.last_name))
           WHERE LOWER(cm.role) != 'adviser' AND cm.role NOT LIKE '%adviser%' $club_filter
-          ORDER BY FIELD(cm.status, 'Pending', 'Returned', 'Rejected', 'Active'), cm.joined_at DESC";
+          ORDER BY FIELD(cm.status, 'Pending', 'Returned', 'Rejected', 'Active'), cm.id DESC";
   $stmt = $conn->prepare($sql);
   if ($bind_params)
     $stmt->bind_param($bind_types, ...$bind_params);
@@ -174,10 +224,14 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
   $bind_params = [];
   $bind_types = '';
 
-  if ($sess_role === 'club_adviser' && !empty($my_club_id)) {
-    $club_filter = 'AND cm.club_id = ?';
-    $bind_params[] = (int) $my_club_id;
-    $bind_types .= 'i';
+  if ($sess_role === 'club_adviser') {
+    if (!empty($my_club_id)) {
+      $club_filter = 'AND cm.club_id = ?';
+      $bind_params[] = (int) $my_club_id;
+      $bind_types .= 'i';
+    } else {
+      $club_filter = 'AND 1=0';
+    }
   }
 
   $sql = "SELECT cm.id, cm.role AS member_role, cm.status, cm.joined_at,
@@ -193,7 +247,7 @@ if (in_array($sess_role, ['club_adviser', 'ssc', 'admin'])) {
               AND LOWER(cm.role) != 'adviser'
               AND cm.role NOT LIKE '%adviser%'
               $club_filter
-            ORDER BY u.first_name ASC, u.last_name ASC";
+            ORDER BY cm.id DESC";
   $stmt = $conn->prepare($sql);
   if ($bind_params)
     $stmt->bind_param($bind_types, ...$bind_params);
@@ -248,31 +302,44 @@ $selected_club_code = trim($_GET['club_code'] ?? ($_GET['filter_org'] ?? ''));
 $selected_club_id = (int)($_GET['club_id'] ?? 0);
 $selected_club_info = null;
 
-if (!empty($selected_club_code)) {
-  foreach ($all_clubs as $cl) {
-    if (strcasecmp($cl['code'], $selected_club_code) === 0) {
-      $selected_club_info = $cl;
-      $selected_club_id = (int)$cl['id'];
-      $selected_club_code = $cl['code'];
-      break;
+if ($sess_role === 'club_adviser') {
+  // Lock adviser strictly to their own assigned organization
+  $selected_club_code = $my_club_code;
+  $selected_club_id = (int)$my_club_id;
+  if (!empty($all_clubs)) {
+    $selected_club_info = $all_clubs[0];
+  }
+} else {
+  if (!empty($selected_club_code)) {
+    foreach ($all_clubs as $cl) {
+      if (strcasecmp($cl['code'], $selected_club_code) === 0) {
+        $selected_club_info = $cl;
+        $selected_club_id = (int)$cl['id'];
+        $selected_club_code = $cl['code'];
+        break;
+      }
     }
   }
-}
-if (!$selected_club_info && !empty($selected_club_id)) {
-  foreach ($all_clubs as $cl) {
-    if ((int)$cl['id'] === $selected_club_id) {
-      $selected_club_info = $cl;
-      $selected_club_code = $cl['code'];
-      break;
+  if (!$selected_club_info && !empty($selected_club_id)) {
+    foreach ($all_clubs as $cl) {
+      if ((int)$cl['id'] === $selected_club_id) {
+        $selected_club_info = $cl;
+        $selected_club_code = $cl['code'];
+        break;
+      }
     }
   }
 }
 
-// If coming with a club selected or view=roster, default view to roster
-if (!empty($selected_club_code) || !empty($selected_club_id)) {
-  $active_view = $_GET['view'] ?? 'roster';
-} else {
+// Active view defaults: queue unless view=roster requested or non-adviser deep linked with club
+if ($sess_role === 'club_adviser') {
   $active_view = $_GET['view'] ?? 'queue';
+} else {
+  if (!empty($selected_club_code) || !empty($selected_club_id)) {
+    $active_view = $_GET['view'] ?? 'roster';
+  } else {
+    $active_view = $_GET['view'] ?? 'queue';
+  }
 }
 ?>
 <!DOCTYPE html>
@@ -288,6 +355,87 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
   <meta name="loader-logo" content="../images/BCP_LOGO.png" />
   <script src="../js/page-loader.js"></script>
 </head>
+<?php
+// Program abbreviation mapping for dense responsive tables
+$prog_abbr_map = [
+    'Information Technology'     => 'BSIT',
+    'Computer Engineering'       => 'BSCpE',
+    'Criminology'                => 'BSCrim',
+    'Business Administration'    => 'BSBA',
+    'Hospitality'                => 'BSHM',
+    'Tourism'                    => 'BSTM',
+    'Accounting Information'     => 'BSAIS',
+    'Physical Education'         => 'BPED',
+    'Psychology'                 => 'BSPsych',
+    'Secondary Education'        => 'BSEd',
+    'Elementary Education'       => 'BEEd',
+    'Office Administration'      => 'BSOA',
+    'Library'                    => 'BLIS',
+    'Entrepreneurship'           => 'BSENT',
+    'Information Science'        => 'BSIS',
+];
+?>
+<style>
+  /* Clean fit for Membership Review Queue & Roster Tables */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 8px;
+  }
+  #queueTable, #masterRosterTable {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 0.82rem;
+  }
+  #queueTable th, #queueTable td,
+  #masterRosterTable th, #masterRosterTable td {
+    padding: 9px 10px !important;
+    vertical-align: middle !important;
+    white-space: nowrap !important;
+  }
+  #queueTable thead th,
+  #masterRosterTable thead th {
+    background: #f8fafc;
+    color: #475569;
+    font-size: 0.77rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border-bottom: 2px solid #e2e8f0;
+    white-space: nowrap !important;
+  }
+  #queueTable tbody tr:hover,
+  #masterRosterTable tbody tr:hover {
+    background: #f8fafc;
+  }
+  .prog-badge {
+    display: inline-block;
+    font-weight: 700;
+    font-size: 0.76rem;
+    color: #1e293b;
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .queue-action-btns {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    justify-content: flex-end;
+    white-space: nowrap;
+  }
+  .queue-action-btns .card-btn {
+    padding: 5px 9px !important;
+    font-size: 0.78rem !important;
+    border-radius: 5px !important;
+    line-height: 1.2 !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
+</style>
 
 <body>
 
@@ -361,28 +509,14 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
               <div class="card-detail">Rejected requests within selected period.</div>
             </div>
             <div class="info-card">
-              <div class="card-label"><i class="fa-solid fa-sitemap" style="color:#2563eb;"></i> Organizations With Most Members</div>
+              <div class="card-label"><i class="fa-solid fa-sitemap" style="color:#2563eb;"></i> <?= ($sess_role === 'club_adviser') ? 'Handled Organization' : 'Organizations With Most Members' ?></div>
               <div class="card-amount"><?= htmlspecialchars($top_org_code) ?> <span style="font-size:0.9rem; font-weight:600; color:#64748b;">(<?= $top_org_count ?> <?= $top_org_count === 1 ? 'member' : 'members' ?>)</span></div>
-              <div class="card-detail">Organization membership distribution.</div>
+              <div class="card-detail"><?= ($sess_role === 'club_adviser') ? 'Assigned organization roster oversight.' : 'Organization membership distribution.' ?></div>
             </div>
         </div>
         <?php endif; ?>
 
-        <!-- View Mode Navigation Tabs (Preserved for non-SSC roles) -->
-        <?php if (in_array($sess_role, ['admin', 'club_adviser']) && $sess_role !== 'ssc'): ?>
-          <div class="roster-view-tabs" style="display:flex; gap:8px; margin-bottom:20px; border-bottom:2px solid #e2e8f0; padding-bottom:2px; flex-wrap:wrap;">
-            <a href="roster.php?view=queue<?= !empty($selected_club_code) ? '&filter_org=' . urlencode($selected_club_code) : '' ?>" class="roster-tab-btn <?= ($active_view === 'queue') ? 'active' : '' ?>" style="text-decoration:none; padding:10px 18px; font-weight:700; font-size:0.88rem; border-radius:8px 8px 0 0; display:inline-flex; align-items:center; gap:8px; <?= ($active_view === 'queue') ? 'background:#2563eb; color:#fff;' : 'background:#f8fafc; color:#64748b; border:1px solid #e2e8f0; border-bottom:none;' ?>">
-              <i class="fa-solid fa-list-check"></i> Application Review Queue
-              <?php if ($pending_count > 0): ?>
-                <span style="background:<?= ($active_view === 'queue') ? 'rgba(255,255,255,0.25)' : '#fef3c7' ?>; color:<?= ($active_view === 'queue') ? '#fff' : '#b45309' ?>; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:800;"><?= $pending_count ?></span>
-              <?php endif; ?>
-            </a>
-            <a href="roster.php?view=roster<?= !empty($selected_club_code) ? '&club_code=' . urlencode($selected_club_code) : '' ?>" class="roster-tab-btn <?= ($active_view === 'roster') ? 'active' : '' ?>" style="text-decoration:none; padding:10px 18px; font-weight:700; font-size:0.88rem; border-radius:8px 8px 0 0; display:inline-flex; align-items:center; gap:8px; <?= ($active_view === 'roster') ? 'background:#2563eb; color:#fff;' : 'background:#f8fafc; color:#64748b; border:1px solid #e2e8f0; border-bottom:none;' ?>">
-              <i class="fa-solid fa-users"></i> Member Roster Oversight
-              <span style="background:<?= ($active_view === 'roster') ? 'rgba(255,255,255,0.25)' : '#ecfdf5' ?>; color:<?= ($active_view === 'roster') ? '#fff' : '#047857' ?>; padding:2px 8px; border-radius:12px; font-size:0.75rem; font-weight:800;"><?= $active_count ?></span>
-            </a>
-          </div>
-        <?php endif; ?>
+
 
         <!-- Alert box -->
         <div id="rosterAlert"
@@ -490,16 +624,20 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; align-items:center; background:#f8fafc; padding:12px 14px; border-radius:8px; border:1px solid #e2e8f0;">
               <div style="flex:1; min-width:220px; position:relative;">
                 <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:0.85rem;"></i>
-                <input type="text" id="queueSearch" placeholder="Search applicant, ID, program, or organization..." onkeyup="filterReviewQueue()" style="width:100%; padding:8px 12px 8px 34px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; box-sizing:border-box;" />
+                <input type="text" id="queueSearch" placeholder="Search applicant no., student name, student number, program, year, or submitted date..." onkeyup="filterReviewQueue()" style="width:100%; padding:8px 12px 8px 34px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; box-sizing:border-box;" />
               </div>
-              <div style="min-width:160px;">
-                <select id="filterOrg" onchange="filterReviewQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
-                  <option value="">All Organizations</option>
-                  <?php foreach ($all_clubs as $cl): ?>
-                    <option value="<?= htmlspecialchars($cl['code']) ?>"><?= htmlspecialchars($cl['code'] . ' - ' . $cl['name']) ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
+              <?php if ($sess_role !== 'club_adviser'): ?>
+                <div style="min-width:160px;">
+                  <select id="filterOrg" onchange="filterReviewQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
+                    <option value="">All Organizations</option>
+                    <?php foreach ($all_clubs as $cl): ?>
+                      <option value="<?= htmlspecialchars($cl['code']) ?>"><?= htmlspecialchars($cl['code'] . ' - ' . $cl['name']) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+              <?php else: ?>
+                <input type="hidden" id="filterOrg" value="<?= htmlspecialchars($my_club_code) ?>" />
+              <?php endif; ?>
               <div style="min-width:150px;">
                 <select id="filterStatus" onchange="filterReviewQueue()" style="width:100%; padding:8px 12px; border-radius:6px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; cursor:pointer;">
                   <option value="">All Statuses</option>
@@ -525,18 +663,20 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                     <th>Student No.</th>
                     <th>Program</th>
                     <th>Year</th>
-                    <th>Organization</th>
+                    <?php if ($sess_role !== 'club_adviser'): ?>
+                      <th>Organization</th>
+                    <?php endif; ?>
                     <th>Submitted Date</th>
                     <th>Current Status</th>
                     <th>Adviser Review</th>
                     <th>SSC Review</th>
-                    <th style="min-width:180px;">Action</th>
+                    <th style="text-align:right;">Action</th>
                   </tr>
                 </thead>
                 <tbody id="queueTableBody">
                   <?php if (empty($pending_applicants)): ?>
                     <tr>
-                      <td colspan="11" class="empty-state-cell" style="text-align:center; padding:36px 16px; color:#94a3b8;">
+                      <td colspan="<?= ($sess_role === 'club_adviser') ? 10 : 11 ?>" class="empty-state-cell" style="text-align:center; padding:36px 16px; color:#94a3b8;">
                         <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; width:100%; margin:0 auto;">
                           <i class="fa-solid fa-folder-open" style="font-size:2.2rem; margin-bottom:10px; display:inline-block; color:#94a3b8;"></i>
                           <span style="font-weight:600; font-size:0.9rem; color:#475569; text-align:center;">No applications found in review queue.</span>
@@ -551,27 +691,55 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                       if ($curr_st === 'Active') $curr_st = 'Approved';
                       $adv_st = $ap['adviser_review'] ?: 'Pending Adviser';
                       $ssc_st = $ap['ssc_review'] ?: 'Pending SSC';
+
+                      // Course / Program display formatting
+                      $prog_display = $ap['course'] ?? '';
+                      foreach ($prog_abbr_map as $p_key => $p_code) {
+                        if (stripos($prog_display, $p_key) !== false) {
+                          $prog_display = $p_code;
+                          break;
+                        }
+                      }
+
+                      // Search text strictly limited to: applicant no., student name, student number, program, year, submitted date (NO organization)
+                      $sub_date_formatted = date('M d, Y', $sub_ts);
+                      $sub_date_full = date('F j, Y', $sub_ts);
+                      $sub_date_iso = date('Y-m-d', $sub_ts);
+                      $q_search = strtolower(implode(' ', [
+                          $app_no,
+                          $ap['first_name'] . ' ' . $ap['last_name'],
+                          $ap['student_id_no'],
+                          $ap['course'],
+                          $prog_display,
+                          $ap['year_level'],
+                          $sub_date_formatted,
+                          $sub_date_full,
+                          $sub_date_iso
+                      ]));
                     ?>
-                      <tr class="queue-row" id="applicant-row-<?= $ap['id'] ?>" data-org="<?= htmlspecialchars($ap['club_code']) ?>" data-status="<?= htmlspecialchars($curr_st) ?>">
+                      <tr class="queue-row" id="applicant-row-<?= $ap['id'] ?>" data-org="<?= htmlspecialchars($ap['club_code']) ?>" data-status="<?= htmlspecialchars($curr_st) ?>" data-search="<?= htmlspecialchars($q_search, ENT_QUOTES) ?>">
                         <!-- 1. Application No. -->
-                        <td><span style="font-family:monospace; font-weight:700; color:#2563eb; font-size:0.82rem;"><?= htmlspecialchars($app_no) ?></span></td>
+                        <td><span style="font-family:monospace; font-weight:700; color:#2563eb; font-size:0.82rem; white-space:nowrap;"><?= htmlspecialchars($app_no) ?></span></td>
                         <!-- 2. Student Name -->
-                        <td><strong><?= htmlspecialchars($ap['first_name'] . ' ' . $ap['last_name']) ?></strong></td>
+                        <td style="white-space:nowrap;"><strong><?= htmlspecialchars($ap['first_name'] . ' ' . $ap['last_name']) ?></strong></td>
                         <!-- 3. Student No. -->
-                        <td><span style="font-family:monospace; font-size:0.82rem; color:#475569;"><?= htmlspecialchars($ap['student_id_no']) ?></span></td>
+                        <td style="white-space:nowrap;"><span style="font-family:monospace; font-size:0.82rem; color:#475569;"><?= htmlspecialchars($ap['student_id_no']) ?></span></td>
                         <!-- 4. Program -->
-                        <td><span style="font-size:0.82rem;"><?= htmlspecialchars($ap['course']) ?></span></td>
-                        <!-- 5. Year -->
-                        <td><span style="font-size:0.82rem; color:#475569;"><?= htmlspecialchars($ap['year_level']) ?></span></td>
-                        <!-- 6. Organization -->
-                        <td>
-                          <span style="font-weight:700; color:#1e293b;"><?= htmlspecialchars($ap['club_code']) ?></span>
-                          <div style="font-size:0.75rem; color:#64748b;"><?= htmlspecialchars($ap['club_name']) ?></div>
+                        <td style="white-space:nowrap;">
+                          <span class="prog-badge" title="<?= htmlspecialchars($ap['course']) ?>"><?= htmlspecialchars($prog_display) ?></span>
                         </td>
+                        <!-- 5. Year -->
+                        <td style="white-space:nowrap;"><span style="font-size:0.82rem; color:#475569;"><?= htmlspecialchars($ap['year_level']) ?></span></td>
+                        <!-- 6. Organization (Hidden for club_adviser) -->
+                        <?php if ($sess_role !== 'club_adviser'): ?>
+                          <td style="white-space:nowrap;">
+                            <span class="badge-info" style="font-weight:700;" title="<?= htmlspecialchars($ap['club_name']) ?>"><?= htmlspecialchars($ap['club_code']) ?></span>
+                          </td>
+                        <?php endif; ?>
                         <!-- 7. Submitted Date -->
-                        <td><span style="font-size:0.8rem; color:#475569;"><?= date('M d, Y', $sub_ts) ?></span></td>
+                        <td style="white-space:nowrap;"><span style="font-size:0.8rem; color:#475569;"><?= date('M d, Y', $sub_ts) ?></span></td>
                         <!-- 8. Current Status -->
-                        <td>
+                        <td style="white-space:nowrap;">
                           <?php if ($curr_st === 'Pending'): ?>
                             <span class="badge-pending" style="font-size:0.75rem; font-weight:700;">Pending</span>
                           <?php elseif ($curr_st === 'Approved'): ?>
@@ -583,7 +751,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                           <?php endif; ?>
                         </td>
                         <!-- 9. Adviser Review -->
-                        <td>
+                        <td style="white-space:nowrap;">
                           <?php if ($adv_st === 'Endorsed'): ?>
                             <span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:12px; font-weight:700; font-size:0.75rem; display:inline-block;"><i class="fa-solid fa-check"></i> Endorsed</span>
                           <?php elseif ($adv_st === 'Returned'): ?>
@@ -597,7 +765,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                           <?php endif; ?>
                         </td>
                         <!-- 10. SSC Review -->
-                        <td>
+                        <td style="white-space:nowrap;">
                           <?php if ($ssc_st === 'Approved'): ?>
                             <span style="background:#dcfce7; color:#166534; padding:3px 8px; border-radius:12px; font-weight:700; font-size:0.75rem; display:inline-block;"><i class="fa-solid fa-check-double"></i> Approved</span>
                           <?php elseif ($ssc_st === 'Under Review'): ?>
@@ -611,8 +779,8 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                           <?php endif; ?>
                         </td>
                         <!-- 11. Action -->
-                        <td>
-                          <div style="display:flex; gap:4px; align-items:center; flex-wrap:nowrap; white-space:nowrap;">
+                        <td style="text-align:right; white-space:nowrap;">
+                          <div class="queue-action-btns">
                             <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="reviewApplicant(<?= htmlspecialchars(json_encode($ap), ENT_QUOTES) ?>)" title="Review Application Details">
                               <i class="fa-solid fa-clipboard-check"></i> Review
                             </button>
@@ -620,9 +788,25 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                               <i class="fa-solid fa-file-lines"></i> Docs
                             </button>
                             <?php if ($ap['current_status'] === 'Pending' || $ap['current_status'] === 'Returned'): ?>
-                              <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff;" onclick="handleApplication(<?= $ap['id'] ?>, 'approve')" title="Approve Application">
-                                <i class="fa-solid fa-check"></i>
-                              </button>
+                              <?php if ($sess_role === 'club_adviser'): ?>
+                                <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff;" onclick="openEndorseModal(<?= $ap['id'] ?>, '<?= htmlspecialchars(addslashes($ap['first_name'] . ' ' . $ap['last_name'])) ?>', '<?= htmlspecialchars(addslashes($ap['club_name'])) ?>')" title="Endorse to SSC (Issue Faculty Letter of Endorsement)">
+                                  <i class="fa-solid fa-stamp"></i>
+                                </button>
+                              <?php elseif ($sess_role === 'ssc'): ?>
+                                <?php if ($adv_st === 'Endorsed'): ?>
+                                  <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff;" onclick="handleApplication(<?= $ap['id'] ?>, 'approve')" title="Review Application &amp; Forward to Admin">
+                                    <i class="fa-solid fa-paper-plane"></i>
+                                  </button>
+                                <?php else: ?>
+                                  <button type="button" class="card-btn btn-sm btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; border:1px solid #cbd5e1; cursor:not-allowed;" title="Awaiting Faculty Adviser Endorsement first">
+                                    <i class="fa-solid fa-clock"></i>
+                                  </button>
+                                <?php endif; ?>
+                              <?php else: /* admin */ ?>
+                                <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff;" onclick="handleApplication(<?= $ap['id'] ?>, 'approve')" title="Grant Administrative Clearance &amp; Activate Member">
+                                  <i class="fa-solid fa-check-double"></i>
+                                </button>
+                              <?php endif; ?>
                               <button type="button" class="card-btn btn-sm" style="background:#d97706; color:#fff;" onclick="openReturnModal(<?= $ap['id'] ?>, '<?= htmlspecialchars(addslashes($ap['first_name'] . ' ' . $ap['last_name'])) ?>')" title="Return for Revision">
                                 <i class="fa-solid fa-rotate-left"></i>
                               </button>
@@ -655,7 +839,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
               <div>
                 <h3 style="margin:0; font-size:1.15rem; color:#1e293b; display:flex; align-items:center; gap:8px;">
-                  <i class="fa-solid fa-address-book" style="color:#2563eb;"></i> Active Organization Member Roster
+                  <i class="fa-solid fa-address-book" style="color:#2563eb;"></i> <?= ($sess_role === 'club_adviser') ? 'Handled Organization Member Roster' : 'Active Organization Member Roster' ?>
                   <span id="rosterCountBadge" style="background:#eff6ff; color:#2563eb; font-size:0.75rem; padding:3px 10px; border-radius:12px; font-weight:700;">
                     <?= count($active_members) ?> Active
                   </span>
@@ -671,26 +855,30 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <!-- Organization Selector & Search Toolbar -->
             <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:14px; margin-bottom:16px; display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
               <!-- Org Dropdown -->
-              <div style="flex:2; min-width:260px;">
-                <label for="rosterFilterOrg" style="display:block; font-size:0.75rem; font-weight:700; color:#475569; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">
-                  <i class="fa-solid fa-sitemap" style="color:#2563eb;"></i> Select Organization
-                </label>
-                <select id="rosterFilterOrg" onchange="filterMasterRoster()" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; font-weight:600; color:#1e293b; cursor:pointer;">
-                  <option value="all">All Campus Organizations (<?= count($all_clubs) ?> Recognized Clubs)</option>
-                  <?php foreach ($all_clubs as $cl): ?>
-                    <option value="<?= htmlspecialchars($cl['code']) ?>"
-                            data-name="<?= htmlspecialchars($cl['name']) ?>"
-                            data-category="<?= htmlspecialchars($cl['category']) ?>"
-                            data-adviser="<?= htmlspecialchars($cl['adviser_name'] ?? 'Unassigned') ?>"
-                            data-count="<?= (int)$cl['active_member_count'] ?>"
-                            data-pending="<?= (int)$cl['pending_member_count'] ?>"
-                            data-id="<?= $cl['id'] ?>"
-                            <?= ($selected_club_code === $cl['code']) ? 'selected' : '' ?>>
-                      <?= htmlspecialchars($cl['code']) ?> &mdash; <?= htmlspecialchars($cl['name']) ?> (<?= (int)$cl['active_member_count'] ?> <?= (int)$cl['active_member_count'] === 1 ? 'member' : 'members' ?>)
-                    </option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
+              <?php if ($sess_role !== 'club_adviser'): ?>
+                <div style="flex:2; min-width:260px;">
+                  <label for="rosterFilterOrg" style="display:block; font-size:0.75rem; font-weight:700; color:#475569; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">
+                    <i class="fa-solid fa-sitemap" style="color:#2563eb;"></i> Select Organization
+                  </label>
+                  <select id="rosterFilterOrg" onchange="filterMasterRoster()" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.85rem; background:#fff; font-weight:600; color:#1e293b; cursor:pointer;">
+                    <option value="all">All Campus Organizations (<?= count($all_clubs) ?> Recognized Clubs)</option>
+                    <?php foreach ($all_clubs as $cl): ?>
+                      <option value="<?= htmlspecialchars($cl['code']) ?>"
+                              data-name="<?= htmlspecialchars($cl['name']) ?>"
+                              data-category="<?= htmlspecialchars($cl['category']) ?>"
+                              data-adviser="<?= htmlspecialchars($cl['adviser_name'] ?? 'Unassigned') ?>"
+                              data-count="<?= (int)$cl['active_member_count'] ?>"
+                              data-pending="<?= (int)$cl['pending_member_count'] ?>"
+                              data-id="<?= $cl['id'] ?>"
+                              <?= ($selected_club_code === $cl['code']) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($cl['code']) ?> &mdash; <?= htmlspecialchars($cl['name']) ?> (<?= (int)$cl['active_member_count'] ?> <?= (int)$cl['active_member_count'] === 1 ? 'member' : 'members' ?>)
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+              <?php else: ?>
+                <input type="hidden" id="rosterFilterOrg" value="<?= htmlspecialchars($my_club_code) ?>" />
+              <?php endif; ?>
 
               <!-- Live Search -->
               <div style="flex:2; min-width:220px;">
@@ -734,7 +922,9 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                     <th>Member Student</th>
                     <th>Student ID</th>
                     <th>Course &amp; Year</th>
-                    <th>Organization</th>
+                    <?php if ($sess_role !== 'club_adviser'): ?>
+                      <th>Organization</th>
+                    <?php endif; ?>
                     <th>Assigned Role</th>
                     <th>Joined Date</th>
                     <th>Status</th>
@@ -744,8 +934,18 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                 <tbody id="masterRosterTbody">
                   <?php foreach ($active_members as $mem): ?>
                     <?php 
-                      $s_term = strtolower($mem['first_name'] . ' ' . $mem['last_name'] . ' ' . ($mem['student_number'] ?? '') . ' ' . ($mem['course'] ?? '') . ' ' . ($mem['year_level'] ?? '') . ' ' . $mem['club_code'] . ' ' . $mem['club_name'] . ' ' . $mem['member_role'] . ' ' . $mem['email']);
+                      $s_org_part = ($sess_role === 'club_adviser') ? '' : (' ' . $mem['club_code'] . ' ' . $mem['club_name']);
+                      $s_term = strtolower($mem['first_name'] . ' ' . $mem['last_name'] . ' ' . ($mem['student_number'] ?? '') . ' ' . ($mem['course'] ?? '') . ' ' . ($mem['year_level'] ?? '') . ' ' . $mem['member_role'] . ' ' . $mem['email'] . $s_org_part);
                       $initial = strtoupper(substr($mem['first_name'] ?? 'M', 0, 1) . substr($mem['last_name'] ?? '', 0, 1));
+                      
+                      // Program abbreviation
+                      $m_course = $mem['course'] ?? '';
+                      foreach ($prog_abbr_map as $p_key => $p_code) {
+                        if (stripos($m_course, $p_key) !== false) {
+                          $m_course = $p_code;
+                          break;
+                        }
+                      }
                     ?>
                     <tr class="master-roster-row" id="member-row-<?= $mem['id'] ?>"
                         data-search="<?= htmlspecialchars($s_term, ENT_QUOTES) ?>"
@@ -763,11 +963,15 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
                         </div>
                       </td>
                       <td><code><?= htmlspecialchars($mem['student_number'] ?: ('2024-' . (10000 + (int)$mem['user_id']))) ?></code></td>
-                      <td><?= htmlspecialchars(($mem['course'] ?: 'BSIT') . ' - ' . ($mem['year_level'] ?: '1st Year')) ?></td>
                       <td>
-                        <span class="badge-info" style="font-weight:700;"><?= htmlspecialchars($mem['club_code']) ?></span>
-                        <div style="font-size:0.72rem; color:#64748b; margin-top:2px;"><?= htmlspecialchars($mem['club_name']) ?></div>
+                        <span class="prog-badge" title="<?= htmlspecialchars($mem['course'] ?? '') ?>"><?= htmlspecialchars($m_course ?: 'BSIT') ?></span>
+                        <span style="font-size:0.8rem; color:#64748b; margin-left:4px;"><?= htmlspecialchars($mem['year_level'] ?: '1st Year') ?></span>
                       </td>
+                      <?php if ($sess_role !== 'club_adviser'): ?>
+                        <td>
+                          <span class="badge-info" style="font-weight:700;" title="<?= htmlspecialchars($mem['club_name']) ?>"><?= htmlspecialchars($mem['club_code']) ?></span>
+                        </td>
+                      <?php endif; ?>
                       <td>
                         <span class="badge-pill" style="font-weight:600; font-size:0.78rem; background:#f1f5f9; color:#334155; padding:3px 8px; border-radius:12px; border:1px solid #cbd5e1;">
                           <?= htmlspecialchars($mem['member_role']) ?>
@@ -835,7 +1039,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
           </div>
           <div style="display:flex; align-items:center; gap:8px;">
             <button type="button" class="card-btn btn-sm" style="background:#0284c7; color:#fff; display:inline-flex; align-items:center; gap:6px; font-weight:600; font-size:0.8rem; padding:6px 12px; border-radius:6px;" onclick="if(CURRENT_REVIEW_AP) viewApplicantDocs(CURRENT_REVIEW_AP)" title="Open Full Document Viewer in Center of Screen">
-              <i class="fa-solid fa-file-invoice"></i> View Actual Document
+              <i class="fa-solid fa-file-lines"></i> View Letter of Intent
             </button>
             <button type="button" onclick="closeModal('applicantReviewModal')" style="background:none; border:none; color:#64748b; font-size:1.2rem; cursor:pointer; padding:4px 8px; border-radius:6px;" title="Close">
               <i class="fa-solid fa-xmark"></i>
@@ -883,8 +1087,8 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
           <!-- Statement of Motivation / Letter of Intent -->
           <div>
             <div style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between;">
-              <span style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-pen-nib" style="color:#2563eb;"></i> Letter of Intent / Motivation Statement:</span>
-              <button type="button" class="card-btn btn-sm" style="background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; font-size:0.75rem; padding:3px 8px;" onclick="if(CURRENT_REVIEW_AP) viewApplicantDocs(CURRENT_REVIEW_AP, 'intent')">
+              <span style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-pen-nib" style="color:#2563eb;"></i> Student Letter of Intent:</span>
+              <button type="button" class="card-btn btn-sm" style="background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; font-size:0.75rem; padding:3px 8px;" onclick="if(CURRENT_REVIEW_AP) viewApplicantDocs(CURRENT_REVIEW_AP)">
                 <i class="fa-solid fa-expand"></i> View Center
               </button>
             </div>
@@ -894,18 +1098,18 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <div id="reviewIntentFileLink" style="margin-top:6px;"></div>
           </div>
 
-          <!-- Letter of Endorsement -->
+          <!-- Faculty Adviser Endorsement (Stage 1 Governance) -->
           <div>
             <div style="font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px; display:flex; align-items:center; justify-content:space-between;">
-              <span style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-stamp" style="color:#059669;"></i> Adviser Endorsement Letter:</span>
-              <button type="button" class="card-btn btn-sm" style="background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; font-size:0.75rem; padding:3px 8px;" onclick="if(CURRENT_REVIEW_AP) viewApplicantDocs(CURRENT_REVIEW_AP, 'endorsement')">
-                <i class="fa-solid fa-expand"></i> View Center
-              </button>
+              <span style="display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-stamp" style="color:#059669;"></i> Faculty Adviser Endorsement (Stage 1):</span>
+              <span id="reviewEndorsementBadge"></span>
             </div>
-            <div id="reviewEndorsementText" style="background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:12px 14px; font-size:0.85rem; line-height:1.5; color:#334155; white-space:pre-wrap; max-height:140px; overflow-y:auto;">
-              No endorsement notes recorded.
+            <div id="reviewEndorsementSection">
+              <div id="reviewEndorsementText" style="background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:12px 14px; font-size:0.85rem; line-height:1.5; color:#334155; white-space:pre-wrap; max-height:140px; overflow-y:auto;">
+                No endorsement notes recorded.
+              </div>
+              <div id="reviewEndorsementFileLink" style="margin-top:6px;"></div>
             </div>
-            <div id="reviewEndorsementFileLink" style="margin-top:6px;"></div>
           </div>
         </div>
 
@@ -932,17 +1136,20 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
               <i class="fa-solid fa-file-circle-check"></i>
             </div>
             <div style="display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden;">
-              <h3 style="margin:0; font-size:0.95rem; color:#0f172a; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="docsModalStudentName">Student Document Review</h3>
+              <h3 style="margin:0; font-size:0.95rem; color:#0f172a; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="docsModalStudentName">Student Document Review (Letter of Intent)</h3>
               <span style="font-family:monospace; font-size:0.72rem; background:#eff6ff; color:#1d4ed8; padding:2px 7px; border-radius:5px; font-weight:700; flex-shrink:0;" id="docsModalAppNo">APP-2026-0000</span>
               <span style="font-size:0.72rem; background:#f1f5f9; color:#475569; padding:2px 7px; border-radius:5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:220px;" id="docsModalOrg">-</span>
             </div>
           </div>
 
-          <!-- Right side: document tabs, external link, download & close -->
+          <!-- Right side: document indicator, external link, download & close -->
           <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-            <!-- Document Switcher Tabs -->
-            <div id="docsTabSwitcher" style="display:inline-flex; background:#f1f5f9; border:1px solid #e2e8f0; padding:3px; border-radius:8px; gap:3px;">
-              <!-- Tabs populated by JS -->
+            <!-- Document Indicator (Only Letter of Intent) -->
+            <div id="docsTabSwitcher" style="display:inline-flex; align-items:center;">
+              <span style="padding:4px 10px; border-radius:6px; font-size:0.78rem; font-weight:700; background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; display:inline-flex; align-items:center; gap:6px;">
+                <i class="fa-solid fa-file-lines"></i> Letter of Intent
+                <span id="docsModalIntentBadge" style="font-size:0.65rem; font-weight:700; padding:1px 5px; border-radius:4px; background:#dbeafe; color:#1d4ed8;">PDF</span>
+              </span>
             </div>
 
             <!-- Quick Document Actions -->
@@ -1005,6 +1212,47 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <i class="fa-solid fa-paper-plane"></i> Submit Return
           </button>
         </div>
+      </div>
+    </div>
+
+    <!-- ── MODAL 4: Faculty Adviser Endorsement ── -->
+    <div class="roster-modal-overlay" id="adviserEndorseModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.65); backdrop-filter:blur(4px); z-index:99999; align-items:center; justify-content:center; padding:16px;">
+      <div class="roster-modal-card" style="background:#fff; border-radius:14px; max-width:540px; width:100%; box-shadow:0 20px 25px -5px rgba(0,0,0,0.2); border:1px solid #e2e8f0; display:flex; flex-direction:column;">
+        <div style="padding:16px 20px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between; background:#ecfdf5; border-radius:14px 14px 0 0;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <i class="fa-solid fa-stamp" style="color:#059669; font-size:1.1rem;"></i>
+            <h3 style="margin:0; font-size:1rem; color:#065f46;">Faculty Adviser Endorsement</h3>
+          </div>
+          <button type="button" onclick="closeModal('adviserEndorseModal')" style="background:none; border:none; color:#64748b; font-size:1.1rem; cursor:pointer;" title="Close">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <form id="adviserEndorseForm" onsubmit="submitAdviserEndorsement(event)">
+          <div style="padding:20px; display:flex; flex-direction:column; gap:12px;">
+            <input type="hidden" id="endorseAppId" name="id" value="" />
+            <div style="font-size:0.83rem; color:#475569;">
+              Endorsing applicant <strong id="endorseStudentName" style="color:#0f172a;"></strong> for membership in <strong id="endorseClubName" style="color:#0f172a;"></strong>.
+            </div>
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; font-size:0.78rem; color:#166534; display:flex; align-items:flex-start; gap:8px;">
+              <i class="fa-solid fa-circle-info" style="margin-top:2px;"></i>
+              <span>The student applicant submitted their <strong>Letter of Intent</strong>. Your official <strong>Letter of Endorsement</strong> will accompany this application to the <strong>Supreme Student Council (SSC)</strong> for Stage 2 review, and finally to <strong>Administration</strong> for clearance.</span>
+            </div>
+            <div>
+              <label for="endorseLetterText" style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;">
+                Official Faculty Letter of Endorsement: <span style="color:#dc2626;">*</span>
+              </label>
+              <textarea id="endorseLetterText" name="letter_endorsement" rows="5" required style="width:100%; padding:10px 12px; border-radius:8px; border:1.5px solid #cbd5e1; font-size:0.85rem; font-family:inherit; box-sizing:border-box; outline:none; resize:vertical;"></textarea>
+            </div>
+          </div>
+          <div style="padding:14px 20px; border-top:1px solid #e2e8f0; background:#f8fafc; display:flex; justify-content:flex-end; gap:8px; border-radius:0 0 14px 14px;">
+            <button type="button" class="card-btn" onclick="closeModal('adviserEndorseModal')" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1;">
+              Cancel
+            </button>
+            <button type="submit" class="card-btn" id="submitEndorseBtn" style="background:#059669; color:#fff; font-weight:700;">
+              <i class="fa-solid fa-paper-plane"></i> Endorse to SSC
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
@@ -1114,10 +1362,30 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
         if (!confirmed) return;
       }
       if (action === 'approve') {
+        const sessRole = '<?= $sess_role ?>';
+        if (sessRole === 'club_adviser') {
+          openEndorseModal(id, '', '');
+          return;
+        }
+
+        let title = 'Approve Application?';
+        let msg = 'Do you want to approve this membership application?';
+        let confirmText = 'Yes, Approve';
+
+        if (sessRole === 'ssc') {
+          title = 'Review & Forward Application to Admin?';
+          msg = 'Do you want to review and endorse this member application to Administration for final clearance?';
+          confirmText = 'Yes, Forward to Admin';
+        } else if (sessRole === 'admin') {
+          title = 'Grant Final Clearance & Activate Member?';
+          msg = 'Do you want to grant final administrative clearance and activate this student membership?';
+          confirmText = 'Yes, Grant Clearance';
+        }
+
         const confirmed = await window.showConfirmModal(
-          'Approve Application?',
-          'Do you want to approve this membership application?',
-          { type: 'decision', confirmText: 'Yes, Approve Application' }
+          title,
+          msg,
+          { type: 'decision', confirmText }
         );
         if (!confirmed) return;
       }
@@ -1230,11 +1498,11 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
       const st = (document.getElementById('filterStatus')?.value || '').toLowerCase().trim();
 
       document.querySelectorAll('.queue-row').forEach(row => {
-        const text = row.textContent.toLowerCase();
+        const searchData = (row.getAttribute('data-search') || '').toLowerCase();
         const rowOrg = (row.getAttribute('data-org') || '').toLowerCase();
         const rowSt = (row.getAttribute('data-status') || '').toLowerCase();
 
-        const matchSearch = !q || text.includes(q);
+        const matchSearch = !q || searchData.includes(q);
         const matchOrg = !org || rowOrg === org;
         const matchSt = !st || rowSt === st || (st === 'approved' && rowSt === 'active');
 
@@ -1250,7 +1518,10 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
 
     function resetQueueFilter() {
       const s = document.getElementById('queueSearch'); if (s) s.value = '';
-      const o = document.getElementById('filterOrg'); if (o) o.value = '';
+      const o = document.getElementById('filterOrg'); 
+      if (o && o.tagName === 'SELECT') {
+        o.value = '';
+      }
       const st = document.getElementById('filterStatus'); if (st) st.value = '';
       filterReviewQueue();
     }
@@ -1295,7 +1566,8 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
         if (emptyState) emptyState.style.display = 'block';
 
         if (selectedOrg !== 'ALL') {
-          const orgName = opt?.getAttribute('data-name') || selectedOrg;
+          const orgOpt = (orgSelect && orgSelect.tagName === 'SELECT') ? orgSelect.options[orgSelect.selectedIndex] : null;
+          const orgName = orgOpt?.getAttribute('data-name') || selectedOrg;
           if (emptyTitle) emptyTitle.textContent = `No Active Members for ${selectedOrg}`;
           if (emptyDesc) emptyDesc.textContent = `There are currently 0 active approved student memberships in the registry for ${orgName}.`;
         } else {
@@ -1316,7 +1588,10 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
     }
 
     function clearRosterFilter() {
-      const orgSelect = document.getElementById('rosterFilterOrg'); if (orgSelect) orgSelect.value = 'all';
+      const orgSelect = document.getElementById('rosterFilterOrg'); 
+      if (orgSelect && orgSelect.tagName === 'SELECT') {
+        orgSelect.value = 'all';
+      }
       const s = document.getElementById('rosterSearch'); if (s) s.value = '';
       const r = document.getElementById('rosterFilterRole'); if (r) r.value = 'all';
       filterMasterRoster();
@@ -1444,32 +1719,43 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
         }
       }
 
-      const endText = document.getElementById('reviewEndorsementText');
-      if (endText) {
-        endText.textContent = ap.review_notes || (isRealDocFile(ap.letter_endorsement) ? '' : ap.letter_endorsement) || 'Student is in good standing and recommended for participation in the student organization.';
+      const endBadge = document.getElementById('reviewEndorsementBadge');
+      const endSec = document.getElementById('reviewEndorsementSection');
+      const isEndorsed = ap.adviser_review === 'Endorsed';
+
+      if (endBadge) {
+        endBadge.innerHTML = isEndorsed
+          ? '<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:10px; font-weight:700; font-size:0.75rem;"><i class="fa-solid fa-check"></i> Endorsed by Adviser</span>'
+          : '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:10px; font-weight:700; font-size:0.75rem;"><i class="fa-solid fa-clock"></i> Pending Adviser Action</span>';
       }
-      const endFileBox = document.getElementById('reviewEndorsementFileLink');
-      if (endFileBox) {
-        if (isRealDocFile(ap.letter_endorsement)) {
-          const ext = getDocExt(ap.letter_endorsement).toUpperCase();
-          const isPdf = ext === 'PDF';
-          endFileBox.innerHTML = `
-            <div style="display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;">
-              <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff; display:inline-flex; align-items:center; gap:6px; font-weight:700;" onclick="viewApplicantDocs(CURRENT_REVIEW_AP, 'endorsement')">
-                <i class="${isPdf ? 'fa-solid fa-file-pdf' : 'fa-solid fa-stamp'}"></i> View Actual Endorsement in Center Screen
-              </button>
-              <a href="../uploads/applications/${encodeURIComponent(ap.letter_endorsement)}" target="_blank" class="card-btn btn-sm" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
-                <i class="fa-solid fa-arrow-up-right-from-square"></i> Open Tab
-              </a>
-              <span style="font-family:monospace; font-size:0.75rem; color:#64748b; background:#f1f5f9; padding:2px 6px; border-radius:4px;">${escapeHtml(ap.letter_endorsement)}</span>
+
+      if (endSec) {
+        if (isEndorsed) {
+          const endorsementNote = ap.review_notes || (isRealDocFile(ap.letter_endorsement) ? '' : ap.letter_endorsement) || 'Official recommendation by club faculty adviser endorsing the student for membership.';
+          let fileHtml = '';
+          if (isRealDocFile(ap.letter_endorsement)) {
+            fileHtml = `
+              <div style="display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                <a href="../uploads/applications/${encodeURIComponent(ap.letter_endorsement)}" target="_blank" class="card-btn btn-sm" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">
+                  <i class="fa-solid fa-arrow-up-right-from-square"></i> Open Tab
+                </a>
+                <span style="font-family:monospace; font-size:0.75rem; color:#64748b; background:#f1f5f9; padding:2px 6px; border-radius:4px;">${escapeHtml(ap.letter_endorsement)}</span>
+              </div>
+            `;
+          }
+          endSec.innerHTML = `
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 14px; font-size:0.85rem; line-height:1.5; color:#166534; white-space:pre-wrap; max-height:140px; overflow-y:auto;">
+              ${escapeHtml(endorsementNote)}
             </div>
+            ${fileHtml}
           `;
         } else {
-          endFileBox.innerHTML = `
-            <div style="margin-top:8px;">
-              <button type="button" class="card-btn btn-sm" style="background:#f0fdf4; color:#16a34a; border:1px solid #bbf7d0; display:inline-flex; align-items:center; gap:6px; font-weight:600;" onclick="viewApplicantDocs(CURRENT_REVIEW_AP, 'endorsement')">
-                <i class="fa-solid fa-file-shield"></i> View Formatted Endorsement in Center Screen
-              </button>
+          endSec.innerHTML = `
+            <div style="background:#f8fafc; border:1.5px dashed #cbd5e1; border-radius:8px; padding:12px 14px; font-size:0.82rem; color:#64748b; display:flex; align-items:center; gap:10px;">
+              <i class="fa-solid fa-file-circle-question" style="color:#d97706; font-size:1.1rem; flex-shrink:0;"></i>
+              <div>
+                <strong style="color:#1e293b;">To be made by Faculty Adviser:</strong> The student is only required to submit their Letter of Intent. The official Letter of Endorsement is issued by the Club Faculty Adviser upon endorsing this candidate to the Supreme Student Council (SSC).
+              </div>
             </div>
           `;
         }
@@ -1477,8 +1763,38 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
 
       // Action buttons
       const btnBox = document.getElementById('reviewModalActionBtns');
+      const sessRole = '<?= $sess_role ?>';
       if (btnBox) {
         if (ap.current_status === 'Pending' || ap.current_status === 'Returned') {
+          let approveBtn = '';
+          if (sessRole === 'club_adviser') {
+            approveBtn = `
+              <button type="button" class="card-btn" style="background:#059669; color:#fff; font-weight:700;" onclick="openEndorseModal(${ap.id}, '${escapeHtml(ap.first_name + ' ' + ap.last_name)}', '${escapeHtml(ap.club_name)}')">
+                <i class="fa-solid fa-stamp"></i> Issue Endorsement to SSC
+              </button>
+            `;
+          } else if (sessRole === 'ssc') {
+            if (ap.adviser_review !== 'Endorsed') {
+              approveBtn = `
+                <button type="button" class="card-btn btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; border:1px solid #cbd5e1; cursor:not-allowed;" title="Awaiting Faculty Adviser Endorsement first">
+                  <i class="fa-solid fa-clock"></i> Awaiting Adviser Endorsement
+                </button>
+              `;
+            } else {
+              approveBtn = `
+                <button type="button" class="card-btn" style="background:#2563eb; color:#fff; font-weight:700;" onclick="handleApplication(${ap.id}, 'approve')">
+                  <i class="fa-solid fa-paper-plane"></i> Review &amp; Forward to Admin
+                </button>
+              `;
+            }
+          } else { // admin
+            approveBtn = `
+              <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;" onclick="handleApplication(${ap.id}, 'approve')">
+                <i class="fa-solid fa-check-double"></i> Grant Admin Clearance &amp; Activate
+              </button>
+            `;
+          }
+
           btnBox.innerHTML = `
             <button type="button" class="card-btn" style="background:#d97706; color:#fff;" onclick="openReturnModal(${ap.id}, '${escapeHtml(ap.first_name + ' ' + ap.last_name)}')">
               <i class="fa-solid fa-rotate-left"></i> Return for Revision
@@ -1486,9 +1802,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <button type="button" class="card-btn btn-danger" onclick="handleApplication(${ap.id}, 'reject')">
               <i class="fa-solid fa-xmark"></i> Reject
             </button>
-            <button type="button" class="card-btn" style="background:#16a34a; color:#fff; font-weight:700;" onclick="handleApplication(${ap.id}, 'approve')">
-              <i class="fa-solid fa-check"></i> Approve Application
-            </button>
+            ${approveBtn}
           `;
         } else {
           btnBox.innerHTML = `
@@ -1501,16 +1815,16 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
     }
 
     // -- Modal 2: View Docs in Center Screen ------------------------
-    function viewApplicantDocs(ap, initialTab = 'intent') {
+    function viewApplicantDocs(ap) {
       CURRENT_DOC_AP = ap;
-      CURRENT_DOC_TAB = initialTab;
+      CURRENT_DOC_TAB = 'intent';
 
       // Close review modal if open so docs viewer takes full center focus
       closeModal('applicantReviewModal');
 
       const appNo = 'APP-' + (ap.submitted_date ? ap.submitted_date.slice(0, 4) : '2026') + '-' + String(ap.id).padStart(4, '0');
       const nameEl = document.getElementById('docsModalStudentName');
-      if (nameEl) nameEl.textContent = `${ap.first_name} ${ap.last_name}`;
+      if (nameEl) nameEl.textContent = `${ap.first_name} ${ap.last_name} — Letter of Intent`;
       const appNoEl = document.getElementById('docsModalAppNo');
       if (appNoEl) appNoEl.textContent = appNo;
       const orgEl = document.getElementById('docsModalOrg');
@@ -1523,36 +1837,11 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
       openModal('applicationDocsModal');
     }
 
-    function switchDocTab(tab) {
-      CURRENT_DOC_TAB = tab;
-      renderDocTabs();
-      renderActiveDocViewer();
-    }
-
     function renderDocTabs() {
-      const container = document.getElementById('docsTabSwitcher');
-      if (!container || !CURRENT_DOC_AP) return;
-
+      const badge = document.getElementById('docsModalIntentBadge');
+      if (!badge || !CURRENT_DOC_AP) return;
       const hasIntentFile = isRealDocFile(CURRENT_DOC_AP.letter_intent);
-      const hasEndorseFile = isRealDocFile(CURRENT_DOC_AP.letter_endorsement);
-      const intentExt = hasIntentFile ? getDocExt(CURRENT_DOC_AP.letter_intent).toUpperCase() : 'NOTE';
-      const endorseExt = hasEndorseFile ? getDocExt(CURRENT_DOC_AP.letter_endorsement).toUpperCase() : 'NOTE';
-
-      const isIntentActive = CURRENT_DOC_TAB === 'intent';
-      const isEndorseActive = CURRENT_DOC_TAB === 'endorsement';
-
-      container.innerHTML = `
-        <button type="button" onclick="switchDocTab('intent')" style="padding:4px 12px; border:none; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition:all 0.15s; ${isIntentActive ? 'background:#fff; color:#2563eb; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,0.08);' : 'background:transparent; color:#64748b;'}">
-          <i class="fa-solid fa-file-lines" style="${isIntentActive ? 'color:#2563eb;' : 'color:#94a3b8;'}"></i>
-          <span>Letter of Intent</span>
-          <span style="font-size:0.65rem; font-weight:700; padding:1px 5px; border-radius:4px; ${isIntentActive ? 'background:#eff6ff; color:#2563eb;' : 'background:#e2e8f0; color:#64748b;'}">${intentExt}</span>
-        </button>
-        <button type="button" onclick="switchDocTab('endorsement')" style="padding:4px 12px; border:none; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition:all 0.15s; ${isEndorseActive ? 'background:#fff; color:#059669; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,0.08);' : 'background:transparent; color:#64748b;'}">
-          <i class="fa-solid fa-stamp" style="${isEndorseActive ? 'color:#059669;' : 'color:#94a3b8;'}"></i>
-          <span>Adviser Endorsement</span>
-          <span style="font-size:0.65rem; font-weight:700; padding:1px 5px; border-radius:4px; ${isEndorseActive ? 'background:#ecfdf5; color:#059669;' : 'background:#e2e8f0; color:#64748b;'}">${endorseExt}</span>
-        </button>
-      `;
+      badge.textContent = hasIntentFile ? getDocExt(CURRENT_DOC_AP.letter_intent).toUpperCase() : 'STATEMENT';
     }
 
     function renderActiveDocViewer() {
@@ -1561,13 +1850,9 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
       const btnDown = document.getElementById('docsModalDownload');
       if (!stage || !CURRENT_DOC_AP) return;
 
-      const isIntent = CURRENT_DOC_TAB === 'intent';
-      const rawFile = isIntent ? CURRENT_DOC_AP.letter_intent : CURRENT_DOC_AP.letter_endorsement;
-      const statementText = isIntent 
-        ? (CURRENT_DOC_AP.motivation || (isRealDocFile(CURRENT_DOC_AP.letter_intent) ? '' : CURRENT_DOC_AP.letter_intent) || 'I hereby express my genuine motivation and commitment to actively contribute to the organization.')
-        : (CURRENT_DOC_AP.review_notes || (isRealDocFile(CURRENT_DOC_AP.letter_endorsement) ? '' : CURRENT_DOC_AP.letter_endorsement) || 'Official recommendation by club faculty adviser endorsing the student for membership.');
-
-      const docCategory = isIntent ? 'Letter of Intent' : 'Adviser Endorsement Letter';
+      const rawFile = CURRENT_DOC_AP.letter_intent;
+      const statementText = CURRENT_DOC_AP.motivation || (isRealDocFile(CURRENT_DOC_AP.letter_intent) ? '' : CURRENT_DOC_AP.letter_intent) || 'I hereby express my genuine motivation and commitment to actively contribute to the organization.';
+      const docCategory = 'Letter of Intent';
 
       if (isRealDocFile(rawFile)) {
         const ext = getDocExt(rawFile);
@@ -1638,7 +1923,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
             <div style="text-align:center; border-bottom:2px solid #0f172a; padding-bottom:14px; margin-bottom:18px;">
               <div style="font-size:0.72rem; font-weight:800; letter-spacing:1.5px; color:#64748b; text-transform:uppercase;">Bestlink College of the Philippines</div>
               <div style="font-size:1.05rem; font-weight:800; color:#0f172a; margin-top:2px;">OFFICE OF STUDENT AFFAIRS &amp; CO-CURRICULAR SERVICES</div>
-              <div style="font-size:0.78rem; color:#475569; margin-top:2px; font-weight:600;">OFFICIAL APPLICATION ${escapeHtml(docCategory.toUpperCase())}</div>
+              <div style="font-size:0.78rem; color:#475569; margin-top:2px; font-weight:600;">OFFICIAL APPLICATION LETTER OF INTENT</div>
             </div>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; background:#f8fafc; padding:12px 16px; border-radius:8px; border:1px solid #e2e8f0; font-size:0.8rem; margin-bottom:18px;">
               <div><span style="color:#64748b; font-weight:600;">Applicant:</span> <strong style="color:#0f172a;">${escapeHtml(CURRENT_DOC_AP.first_name + ' ' + CURRENT_DOC_AP.last_name)}</strong></div>
@@ -1668,6 +1953,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
       if (!box || !CURRENT_DOC_AP) return;
 
       const ap = CURRENT_DOC_AP;
+      const sessRole = '<?= $sess_role ?>';
 
       // Left side: Student Profile shortcut
       if (fileInfoBox) {
@@ -1682,6 +1968,35 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
       let btns = '';
 
       if (ap.current_status === 'Pending' || ap.current_status === 'Returned') {
+        let approveBtn = '';
+        if (sessRole === 'club_adviser') {
+          approveBtn = `
+            <button type="button" class="card-btn btn-sm" style="background:#059669; color:#fff; border:none; font-size:0.78rem; font-weight:700; padding:6px 16px; border-radius:6px; box-shadow:0 1px 3px rgba(5,150,105,0.3); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="openEndorseFromDocs(${ap.id}, '${escapeHtml(ap.first_name + ' ' + ap.last_name)}', '${escapeHtml(ap.club_name)}')">
+              <i class="fa-solid fa-stamp"></i> Issue Endorsement to SSC
+            </button>
+          `;
+        } else if (sessRole === 'ssc') {
+          if (ap.adviser_review !== 'Endorsed') {
+            approveBtn = `
+              <button type="button" class="card-btn btn-sm btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; border:1px solid #cbd5e1; cursor:not-allowed;" title="Awaiting Faculty Adviser Endorsement first">
+                <i class="fa-solid fa-clock"></i> Awaiting Adviser Endorsement
+              </button>
+            `;
+          } else {
+            approveBtn = `
+              <button type="button" class="card-btn btn-sm" style="background:#2563eb; color:#fff; border:none; font-size:0.78rem; font-weight:700; padding:6px 16px; border-radius:6px; box-shadow:0 1px 3px rgba(37,99,235,0.3); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="handleApplicationFromDocs(${ap.id}, 'approve')">
+                <i class="fa-solid fa-paper-plane"></i> Review &amp; Forward to Admin
+              </button>
+            `;
+          }
+        } else { // admin
+          approveBtn = `
+            <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff; border:none; font-size:0.78rem; font-weight:700; padding:6px 16px; border-radius:6px; box-shadow:0 1px 3px rgba(22,163,74,0.3); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="handleApplicationFromDocs(${ap.id}, 'approve')">
+              <i class="fa-solid fa-check-double"></i> Grant Admin Clearance &amp; Activate
+            </button>
+          `;
+        }
+
         btns += `
           <button type="button" class="card-btn btn-sm" style="background:#fff; color:#dc2626; border:1px solid #fecaca; font-size:0.78rem; font-weight:600; padding:6px 12px; border-radius:6px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="handleApplicationFromDocs(${ap.id}, 'reject')">
             <i class="fa-solid fa-xmark"></i> Reject
@@ -1689,9 +2004,7 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
           <button type="button" class="card-btn btn-sm" style="background:#fff; color:#d97706; border:1px solid #fed7aa; font-size:0.78rem; font-weight:600; padding:6px 12px; border-radius:6px; display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="openReturnFromDocs(${ap.id}, '${escapeHtml(ap.first_name + ' ' + ap.last_name)}')">
             <i class="fa-solid fa-rotate-left"></i> Return
           </button>
-          <button type="button" class="card-btn btn-sm" style="background:#16a34a; color:#fff; border:none; font-size:0.78rem; font-weight:700; padding:6px 16px; border-radius:6px; box-shadow:0 1px 3px rgba(22,163,74,0.3); display:inline-flex; align-items:center; gap:6px; cursor:pointer;" onclick="handleApplicationFromDocs(${ap.id}, 'approve')">
-            <i class="fa-solid fa-check"></i> Approve
-          </button>
+          ${approveBtn}
         `;
       } else if (ap.current_status === 'Approved') {
         btns += `
@@ -1708,6 +2021,69 @@ if (!empty($selected_club_code) || !empty($selected_club_id)) {
       }
 
       box.innerHTML = btns;
+    }
+
+    function openEndorseModal(id, studentName, clubName) {
+      const idEl = document.getElementById('endorseAppId');
+      const nameEl = document.getElementById('endorseStudentName');
+      const clubEl = document.getElementById('endorseClubName');
+      const textEl = document.getElementById('endorseLetterText');
+      if (idEl) idEl.value = id;
+      if (nameEl) nameEl.textContent = studentName || 'Applicant';
+      if (clubEl) clubEl.textContent = clubName || 'Organization';
+      if (textEl) {
+        textEl.value = `MEMORANDUM OF FACULTY ENDORSEMENT\n\nTo the Supreme Student Council (SSC):\nThis is to officially endorse the membership application of ${studentName || 'the applicant'} for ${clubName || 'the student organization'}. The candidate has completed review requirements and demonstrated commitment through their submitted Letter of Intent. Recommended for Stage 2 SSC review.`;
+      }
+      openModal('adviserEndorseModal');
+    }
+
+    function openEndorseFromDocs(id, name, club) {
+      closeModal('applicationDocsModal');
+      openEndorseModal(id, name, club);
+    }
+
+    async function submitAdviserEndorsement(e) {
+      e.preventDefault();
+      const id = document.getElementById('endorseAppId').value;
+      const letter = document.getElementById('endorseLetterText').value.trim();
+      if (!letter) {
+        showAlert('Please provide the official Faculty Letter of Endorsement.', 'error');
+        return;
+      }
+      const submitBtn = document.getElementById('submitEndorseBtn');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting...';
+      }
+
+      const fd = new FormData();
+      fd.set('action', 'approve');
+      fd.set('id', id);
+      fd.set('letter_endorsement', letter);
+      if (window.CSRF_TOKEN) fd.set('csrf_token', window.CSRF_TOKEN);
+
+      try {
+        const res = await fetch('../shared/roster_actions.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.success) {
+          showAlert(data.message, 'success');
+          closeModal('adviserEndorseModal');
+          closeModal('applicantReviewModal');
+          setTimeout(() => { window.location.reload(); }, 600);
+        } else {
+          showAlert(data.message, 'error');
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Endorse to SSC';
+          }
+        }
+      } catch (err) {
+        showAlert('Network error. Please try again.', 'error');
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Endorse to SSC';
+        }
+      }
     }
 
     function handleApplicationFromDocs(id, action) {

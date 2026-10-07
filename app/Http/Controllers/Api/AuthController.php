@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -21,13 +20,15 @@ class AuthController extends Controller
             ->orWhere('email', $credentials['username'])
             ->first();
 
-        if (!$user || !password_verify($credentials['password'], $user->password_hash)) {
+        $isValidPassword = $user && password_verify($credentials['password'], $user->password_hash);
+
+        if (! $user || ! $isValidPassword) {
             throw ValidationException::withMessages([
                 'username' => ['The provided credentials do not match our records.'],
             ]);
         }
 
-        if (strcasecmp($user->status ?? 'Active', 'Active') !== 0) {
+        if ($user->status !== 'Active') {
             throw ValidationException::withMessages([
                 'username' => ['Your account has been deactivated. Please contact the administrator.'],
             ]);
@@ -38,8 +39,8 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Login successful',
-            'token'   => $token,
-            'user'    => $user,
+            'token' => $token,
+            'user' => $user,
         ]);
     }
 
@@ -56,6 +57,7 @@ class AuthController extends Controller
         if ($user) {
             $user->load('student');
         }
+
         return response()->json([
             'user' => $user,
         ]);

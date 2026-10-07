@@ -25,11 +25,12 @@ class WebAuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $user = User::where('username', $credentials['username'])
-            ->orWhere('email', $credentials['username'])
+        $inputName = trim($credentials['username']);
+        $user = User::where('username', $inputName)
+            ->orWhere('email', $inputName)
             ->first();
 
-        if (!$user) {
+        if (! $user) {
             return back()->withErrors([
                 'username' => 'The provided credentials do not match our records.',
             ]);
@@ -41,7 +42,8 @@ class WebAuthController extends Controller
             ]);
         }
 
-        if (!password_verify($credentials['password'], $user->password_hash)) {
+        $isValidPassword = password_verify($credentials['password'], $user->password_hash);
+        if (! $isValidPassword) {
             return back()->withErrors([
                 'password' => 'The provided password is incorrect.',
             ]);

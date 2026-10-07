@@ -369,6 +369,44 @@ assert_test("11.8 User last_mfa_verified_at timestamp recorded in database", !em
 
 
 // ─────────────────────────────────────────────────────────────
+// GROUP 12: ACHIEVEMENTS MULTI-TIER WORKFLOW (Phase 6 / Section 12)
+// ─────────────────────────────────────────────────────────────
+echo "\n12. Achievements Multi-Tier Workflow Tests:\n";
+
+// 12.1 Adviser submits achievement (initial state: Pending SSC)
+$test_ach_title = 'Acceptance Test Hackathon Champions ' . time();
+$adv_id = (int)($adv_row['id'] ?? 1);
+$ssc_id = (int)($ssc_row['id'] ?? 1);
+$adm_id = (int)($admin_row['id'] ?? 1);
+
+$ins_ach = $conn->prepare("INSERT INTO achievements (club_id, submitted_by, title, competition, award_date, status) VALUES (?, ?, ?, 'National IT Skills Expo', CURDATE(), 'Pending SSC')");
+$ins_ach->bind_param('iis', $test_club_id, $adv_id, $test_ach_title);
+$ins_ach->execute();
+$test_ach_id = $conn->insert_id;
+$ins_ach->close();
+
+$ach_s1 = $conn->query("SELECT status, club_id, submitted_by FROM achievements WHERE id = $test_ach_id")->fetch_assoc();
+assert_test("12.1 Adviser submits club achievement (initial state: Pending SSC)", ($ach_s1['status'] ?? '') === 'Pending SSC');
+
+// 12.2 SSC verification advances achievement to Pending Admin
+$conn->query("UPDATE achievements SET status = 'Pending Admin', verified_by = $ssc_id, notes = 'Verified by SSC' WHERE id = $test_ach_id");
+$ach_s2 = $conn->query("SELECT status, verified_by FROM achievements WHERE id = $test_ach_id")->fetch_assoc();
+assert_test("12.2 SSC verification advances achievement to Pending Admin", ($ach_s2['status'] ?? '') === 'Pending Admin' && (int)$ach_s2['verified_by'] === $ssc_id);
+
+// 12.3 Admin approval posts achievement as Approved
+$conn->query("UPDATE achievements SET status = 'Approved', approved_by = $adm_id, notes = 'Approved by Admin' WHERE id = $test_ach_id");
+$ach_s3 = $conn->query("SELECT status, approved_by FROM achievements WHERE id = $test_ach_id")->fetch_assoc();
+assert_test("12.3 Admin approval posts achievement as Approved", ($ach_s3['status'] ?? '') === 'Approved' && (int)$ach_s3['approved_by'] === $adm_id);
+
+// 12.4 Posted achievement is queryable for student organization directory
+$dir_ach = $conn->query("SELECT id, title FROM achievements WHERE club_id = $test_club_id AND status IN ('Approved', 'Verified') AND id = $test_ach_id")->fetch_assoc();
+assert_test("12.4 Approved achievement is visible on organization directory for students", !empty($dir_ach) && $dir_ach['title'] === $test_ach_title);
+
+// Clean test achievement
+$conn->query("DELETE FROM achievements WHERE id = $test_ach_id");
+
+
+// ─────────────────────────────────────────────────────────────
 // FINAL RESULTS SUMMARY
 // ─────────────────────────────────────────────────────────────
 echo "\n============================================================\n";

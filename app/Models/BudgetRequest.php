@@ -15,12 +15,23 @@ class BudgetRequest extends Model
         'club_id',
         'title',
         'description',
+        'line_items',
         'amount',
         'recommended_amount',
+        'final_approved_amount',
         'status',
         'requested_by',
+        'notes',
+        'disbursed_at',
         'disbursement_reference',
-        'rejection_note',
+        'disbursed_by',
+    ];
+
+    protected $casts = [
+        'amount' => 'decimal:2',
+        'recommended_amount' => 'decimal:2',
+        'final_approved_amount' => 'decimal:2',
+        'disbursed_at' => 'datetime',
     ];
 
     public function club()
@@ -31,5 +42,10 @@ class BudgetRequest extends Model
     public function requester()
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    public function disburser()
+    {
+        return $this->belongsTo(User::class, 'disbursed_by');
     }
 }

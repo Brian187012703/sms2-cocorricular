@@ -55,7 +55,7 @@ $budget_requests = $conn->query(
      JOIN clubs c ON c.id = br.club_id
      JOIN users u ON u.id = br.requested_by
      LEFT JOIN users du ON du.id = br.disbursed_by
-     $where ORDER BY br.created_at DESC"
+     $where ORDER BY br.id DESC"
 )->fetch_all(MYSQLI_ASSOC);
 
 // Metrics calculation
@@ -156,9 +156,6 @@ if ($sess_role === 'admin') {
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Budget &amp; Finance Management — BCP Co-Curricular Portal</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
@@ -166,11 +163,7 @@ if ($sess_role === 'admin') {
   <meta name="csrf-token" content="<?= csrf_token() ?>"/>
   <script src="../js/page-loader.js"></script>
   <style>
-    /* Clean, Modern Professional Budget UI */
-    body, input, button, select, textarea {
-      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
-
+    /* Consistent Compact Budget Portal UI */
     .budget-section-card {
       background: #ffffff;
       border: 1px solid #e2e8f0;
@@ -265,7 +258,7 @@ if ($sess_role === 'admin') {
       color: #16a34a;
     }
     .wf-name {
-      font-size: 0.88rem;
+      font-size: 0.82rem;
       font-weight: 700;
       color: #0f172a;
       line-height: 1.35;
@@ -307,7 +300,7 @@ if ($sess_role === 'admin') {
       background: #ffffff;
       border: 1px solid #e2e8f0;
       border-radius: 14px;
-      padding: 20px 24px;
+      padding: 16px 20px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -324,7 +317,7 @@ if ($sess_role === 'admin') {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     .kpi-label {
       font-size: 0.74rem;
@@ -334,13 +327,13 @@ if ($sess_role === 'admin') {
       letter-spacing: 0.05em;
     }
     .kpi-icon-wrap {
-      width: 38px;
-      height: 38px;
-      border-radius: 10px;
+      width: 36px;
+      height: 36px;
+      border-radius: 9px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.95rem;
+      font-size: 0.90rem;
       flex-shrink: 0;
     }
     .kpi-icon-blue    { background: #eff6ff; color: #2563eb; }
@@ -351,7 +344,7 @@ if ($sess_role === 'admin') {
     .kpi-icon-purple  { background: #f3e8ff; color: #7e22ce; }
     
     .kpi-num {
-      font-size: 1.75rem;
+      font-size: 1.55rem;
       font-weight: 700;
       color: #0f172a;
       line-height: 1.2;
@@ -364,16 +357,16 @@ if ($sess_role === 'admin') {
       margin: 4px 0 2px;
     }
     .kpi-currency {
-      font-size: 1.25rem;
+      font-size: 1.10rem;
       font-weight: 600;
       color: #475569;
       margin-right: 1px;
     }
     .kpi-subtext {
-      font-size: 0.78rem;
+      font-size: 0.74rem;
       color: #64748b;
       font-weight: 500;
-      margin-top: 8px;
+      margin-top: 6px;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -420,7 +413,7 @@ if ($sess_role === 'admin') {
     }
     .ledger-title h3 {
       margin: 0;
-      font-size: 1.1rem;
+      font-size: 0.98rem;
       font-weight: 700;
       color: #0f172a;
       letter-spacing: -0.01em;
@@ -428,34 +421,34 @@ if ($sess_role === 'admin') {
     }
     .ledger-title p {
       margin: 2px 0 0;
-      font-size: 0.82rem;
+      font-size: 0.76rem;
       color: #64748b;
       line-height: 1.4;
     }
     .ledger-actions-bar {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
     }
     .search-input-wrap {
       position: relative;
-      min-width: 250px;
+      min-width: 240px;
     }
     .search-input-wrap i {
       position: absolute;
-      left: 13px;
+      left: 12px;
       top: 50%;
       transform: translateY(-50%);
       color: #94a3b8;
-      font-size: 0.85rem;
+      font-size: 0.80rem;
       pointer-events: none;
     }
     .search-input-wrap input {
       width: 100%;
-      height: 38px;
-      padding: 0 14px 0 36px;
-      font-size: 0.84rem;
+      height: 34px;
+      padding: 0 12px 0 34px;
+      font-size: 0.80rem;
       font-weight: 500;
       color: #1e293b;
       border: 1px solid #cbd5e1;
@@ -478,9 +471,9 @@ if ($sess_role === 'admin') {
       display: inline-block;
     }
     .filter-select {
-      height: 38px;
-      padding: 0 34px 0 13px;
-      font-size: 0.84rem;
+      height: 34px;
+      padding: 0 30px 0 11px;
+      font-size: 0.80rem;
       font-weight: 600;
       border: 1px solid #cbd5e1;
       border-radius: 8px;
@@ -496,10 +489,10 @@ if ($sess_role === 'admin') {
       content: "\f078";
       font-family: "Font Awesome 6 Free";
       font-weight: 900;
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       color: #64748b;
       position: absolute;
-      right: 12px;
+      right: 10px;
       top: 50%;
       transform: translateY(-50%);
       pointer-events: none;
@@ -511,18 +504,18 @@ if ($sess_role === 'admin') {
     }
 
     .btn-create-req {
-      height: 38px;
+      height: 34px;
       background: #1a3a8c;
       color: #ffffff;
       font-weight: 600;
-      font-size: 0.84rem;
-      padding: 0 16px;
+      font-size: 0.80rem;
+      padding: 0 14px;
       border-radius: 8px;
       border: none;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 7px;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
       transition: all 0.18s ease;
       white-space: nowrap;
@@ -549,8 +542,8 @@ if ($sess_role === 'admin') {
         border-bottom: 1px solid #e2e8f0;
       }
       .table-wrap.budget-table th {
-        padding: 10px 10px;
-        font-size: 0.68rem;
+        padding: 8px 10px;
+        font-size: 0.76rem;
         font-weight: 700;
         color: #475569;
         text-transform: uppercase;
@@ -559,11 +552,11 @@ if ($sess_role === 'admin') {
       }
       .table-wrap.budget-table th:first-child,
       .table-wrap.budget-table td:first-child {
-        padding-left: 16px;
+        padding-left: 14px;
       }
       .table-wrap.budget-table th:last-child,
       .table-wrap.budget-table td:last-child {
-        padding-right: 16px;
+        padding-right: 14px;
       }
       .table-wrap.budget-table tbody tr {
         border-bottom: 1px solid #f1f5f9;
@@ -576,10 +569,10 @@ if ($sess_role === 'admin') {
         background: #f8fafc;
       }
       .table-wrap.budget-table td {
-        padding: 9px 10px;
+        padding: 8px 10px;
         vertical-align: middle;
         color: #334155;
-        font-size: 0.81rem;
+        font-size: 0.80rem;
       }
       .table-wrap.budget-table::-webkit-scrollbar {
         height: 6px;
@@ -600,7 +593,7 @@ if ($sess_role === 'admin') {
       justify-content: space-between;
       flex-wrap: wrap;
       gap: 12px;
-      padding: 14px 20px;
+      padding: 12px 18px;
       margin-top: 0;
       border-top: 1px solid #e2e8f0;
       background: #ffffff;
@@ -614,32 +607,29 @@ if ($sess_role === 'admin') {
       display: inline-flex;
       align-items: center;
       justify-content: flex-end;
-      gap: 14px;
+      gap: 12px;
       flex-wrap: wrap;
     }
 
-    /* ── Admin Budget Ledger Table: Compact & Fluid (No Side-Scrolling) ── */
+    /* ── Budget Ledger Table: Fluid, Legible & Structured ── */
     #budgetLedgerTable {
       width: 100% !important;
-      min-width: 0 !important;
-      max-width: 100% !important;
-      table-layout: fixed !important;
       border-collapse: separate;
       border-spacing: 0;
     }
     #budgetLedgerTable th,
     #budgetLedgerTable td {
       padding: 8px 10px !important;
-      font-size: 0.78rem !important;
+      font-size: 0.80rem !important;
       vertical-align: middle !important;
       word-break: break-word;
     }
     #budgetLedgerTable th {
-      padding: 9px 10px !important;
-      font-size: 0.70rem !important;
+      padding: 8px 10px !important;
+      font-size: 0.76rem !important;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.04em;
       color: #475569;
       white-space: nowrap;
       background: #f8fafc;
@@ -649,19 +639,19 @@ if ($sess_role === 'admin') {
       display: inline-flex !important;
       align-items: center !important;
       justify-content: flex-end !important;
-      gap: 3px !important;
+      gap: 4px !important;
       flex-wrap: nowrap !important;
       width: 100%;
     }
     #budgetLedgerTable .admin-tbl-act-btn {
-      width: 26px;
-      height: 26px;
+      width: 28px;
+      height: 28px;
       padding: 0;
-      border-radius: 5px;
+      border-radius: 6px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.72rem;
+      font-size: 0.80rem;
       border: none;
       cursor: pointer;
       transition: all 0.15s ease;
@@ -728,21 +718,21 @@ if ($sess_role === 'admin') {
       justify-content: center;
       background: #e0e7ff;
       color: #1e40af;
-      font-size: 0.68rem;
+      font-size: 0.70rem;
       font-weight: 700;
       padding: 2px 7px;
-      border-radius: 6px;
+      border-radius: 5px;
       letter-spacing: 0.02em;
       margin-bottom: 3px;
     }
     .org-name-text {
       font-weight: 600;
       color: #0f172a;
-      font-size: 0.88rem;
+      font-size: 0.80rem;
       line-height: 1.3;
     }
     .requester-meta {
-      font-size: 0.75rem;
+      font-size: 0.74rem;
       color: #64748b;
       margin-top: 2px;
       display: flex;
@@ -752,21 +742,21 @@ if ($sess_role === 'admin') {
     .req-title-text {
       font-weight: 600;
       color: #0f172a;
-      font-size: 0.9rem;
+      font-size: 0.82rem;
       line-height: 1.35;
       margin-bottom: 2px;
     }
     .req-desc-excerpt {
-      font-size: 0.78rem;
+      font-size: 0.74rem;
       color: #64748b;
       max-width: 260px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      line-height: 1.3;
+      line-height: 1.35;
     }
     .req-amount-val {
-      font-size: 0.98rem;
+      font-size: 0.88rem;
       font-weight: 700;
       color: #0f172a;
       white-space: nowrap;
@@ -779,9 +769,9 @@ if ($sess_role === 'admin') {
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      padding: 4px 10px;
+      padding: 3px 9px;
       border-radius: 20px;
-      font-size: 0.72rem;
+      font-size: 0.74rem;
       font-weight: 600;
       white-space: nowrap;
     }
@@ -799,9 +789,9 @@ if ($sess_role === 'admin') {
       gap: 6px;
     }
     .act-btn {
-      height: 32px;
-      padding: 0 11px;
-      font-size: 0.75rem;
+      height: 30px;
+      padding: 0 10px;
+      font-size: 0.76rem;
       font-weight: 600;
       border-radius: 7px;
       border: none;
@@ -880,9 +870,9 @@ if ($sess_role === 'admin') {
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      padding: 3px 9px;
+      padding: 4px 9px;
       border-radius: 6px;
-      font-size: 0.72rem;
+      font-size: 0.78rem;
       font-weight: 700;
       white-space: nowrap;
       letter-spacing: 0.02em;
@@ -900,9 +890,9 @@ if ($sess_role === 'admin') {
       color: #047857;
       border: 1px solid #a7f3d0;
       border-radius: 6px;
-      font-size: 0.72rem;
+      font-size: 0.78rem;
       font-weight: 700;
-      padding: 3px 8px;
+      padding: 4px 9px;
       white-space: nowrap;
     }
 
@@ -914,7 +904,7 @@ if ($sess_role === 'admin') {
       font-weight: 600;
       color: #475569;
       background: #f1f5f9;
-      padding: 3px 8px;
+      padding: 4px 8px;
       border-radius: 6px;
     }
     .days-pending-badge.days-urgent {
@@ -940,7 +930,7 @@ if ($sess_role === 'admin') {
       justify-content: space-between;
     }
     .itemization-title {
-      font-size: 0.82rem;
+      font-size: 0.85rem;
       font-weight: 700;
       color: #1e293b;
       text-transform: uppercase;
@@ -950,7 +940,7 @@ if ($sess_role === 'admin') {
       gap: 8px;
     }
     .itemization-count-chip {
-      font-size: 0.7rem;
+      font-size: 0.75rem;
       font-weight: 700;
       background: #e2e8f0;
       color: #475569;
@@ -960,12 +950,12 @@ if ($sess_role === 'admin') {
     .itemization-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.84rem;
+      font-size: 0.80rem;
     }
     .itemization-table th {
       background: #f1f5f9;
-      padding: 9px 14px;
-      font-size: 0.72rem;
+      padding: 8px 12px;
+      font-size: 0.74rem;
       font-weight: 700;
       color: #475569;
       text-transform: uppercase;
@@ -973,9 +963,10 @@ if ($sess_role === 'admin') {
       border-bottom: 1px solid #cbd5e1;
     }
     .itemization-table td {
-      padding: 10px 14px;
+      padding: 8px 12px;
       border-bottom: 1px solid #f1f5f9;
       color: #334155;
+      font-size: 0.80rem;
       vertical-align: middle;
     }
     .itemization-table tbody tr:hover {
@@ -985,7 +976,7 @@ if ($sess_role === 'admin') {
       background: #f8fafc;
       border-top: 2px solid #cbd5e1;
       border-bottom: none;
-      padding: 12px 14px;
+      padding: 10px 12px;
     }
 
     /* Modal Layouts */
@@ -1016,14 +1007,14 @@ if ($sess_role === 'admin') {
     .modal-header-solid {
       background: #1a3a8c;
       color: #ffffff;
-      padding: 18px 24px;
+      padding: 16px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
     .modal-header-solid h3 {
       margin: 0;
-      font-size: 1.05rem;
+      font-size: 0.96rem;
       font-weight: 700;
       color: #ffffff;
       display: flex;
@@ -1043,12 +1034,12 @@ if ($sess_role === 'admin') {
       opacity: 1;
     }
     .modal-body-pad {
-      padding: 24px;
+      padding: 20px;
       max-height: calc(85vh - 120px);
       overflow-y: auto;
     }
     .modal-footer-pad {
-      padding: 14px 24px;
+      padding: 12px 20px;
       background: #f8fafc;
       border-top: 1px solid #e2e8f0;
       display: flex;
@@ -1058,21 +1049,21 @@ if ($sess_role === 'admin') {
     }
 
     .form-group-custom {
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
     .form-group-custom label {
       display: block;
-      font-size: 0.78rem;
+      font-size: 0.74rem;
       font-weight: 600;
       color: #334155;
-      margin-bottom: 6px;
+      margin-bottom: 5px;
       text-transform: uppercase;
       letter-spacing: 0.03em;
     }
     .form-control-custom {
       width: 100%;
-      padding: 9px 13px;
-      font-size: 0.88rem;
+      padding: 8px 12px;
+      font-size: 0.82rem;
       font-weight: 500;
       border: 1px solid #cbd5e1;
       border-radius: 8px;
@@ -1148,7 +1139,7 @@ if ($sess_role === 'admin') {
         border: none;
         border-bottom: 1px solid #f1f5f9;
         text-align: right;
-        font-size: 0.84rem;
+        font-size: 0.875rem;
         min-height: 38px;
       }
       .table-wrap.budget-table tbody tr.budget-data-row td:last-child {
@@ -1160,7 +1151,7 @@ if ($sess_role === 'admin') {
         content: attr(data-label);
         font-weight: 700;
         color: #64748b;
-        font-size: 0.72rem;
+        font-size: 0.78rem;
         text-transform: uppercase;
         letter-spacing: 0.04em;
         text-align: left;
@@ -1562,9 +1553,9 @@ if ($sess_role === 'admin') {
                       <?php if ($sess_role === 'admin'): ?>
                         <!-- 1. Request -->
                         <td data-label="Request">
-                          <strong style="color:#1a3a8c; font-size:0.8rem; font-family:monospace;"><?= htmlspecialchars($ref_no) ?></strong>
-                          <div style="font-weight:700; font-size:0.83rem; color:#0f172a; margin-top:2px; line-height:1.25;"><?= htmlspecialchars($req['title']) ?></div>
-                          <div class="req-desc-excerpt" style="font-size:0.73rem; max-width:180px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
+                          <strong style="color:#1a3a8c; font-size:0.85rem; font-family:monospace;"><?= htmlspecialchars($ref_no) ?></strong>
+                          <div class="req-title-text"><?= htmlspecialchars($req['title']) ?></div>
+                          <div class="req-desc-excerpt" style="max-width:220px;" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
                             <?= htmlspecialchars($req['description'] ?: 'No description specified.') ?>
                           </div>
                         </td>
@@ -1572,18 +1563,18 @@ if ($sess_role === 'admin') {
                         <!-- 2. Organization -->
                         <td data-label="Organization">
                           <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
-                          <div class="org-name-text" style="font-size:0.8rem; line-height:1.2; font-weight:600;"><?= htmlspecialchars($req['club_name']) ?></div>
-                          <div style="font-size:0.73rem; color:#64748b; margin-top:2px;">
-                            <i class="fa-solid fa-user" style="font-size:0.65rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
+                          <div class="org-name-text"><?= htmlspecialchars($req['club_name']) ?></div>
+                          <div class="requester-meta">
+                            <i class="fa-solid fa-user" style="font-size:0.75rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
                           </div>
                         </td>
 
                         <!-- 3. Amount -->
                         <td data-label="Amount">
-                          <div class="req-amount-val" style="font-size:0.88rem; white-space:nowrap;">₱<?= number_format((float)$req['amount'], 2) ?></div>
+                          <div class="req-amount-val">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
                           <?php if (!empty($req['final_approved_amount'])): ?>
-                            <div style="font-size:0.72rem; color:#15803d; font-weight:700; margin-top:2px; white-space:nowrap;" title="Final Released Amount">
-                              Final: ₱<?= number_format((float)$req['final_approved_amount'], 2) ?>
+                            <div style="font-size:0.78rem; color:#15803d; font-weight:700; margin-top:2px; white-space:nowrap;" title="Final Released Amount">
+                              Final: &#8369;<?= number_format((float)$req['final_approved_amount'], 2) ?>
                             </div>
                           <?php endif; ?>
                         </td>
@@ -1591,27 +1582,27 @@ if ($sess_role === 'admin') {
                         <!-- 4. SSC Recommendation -->
                         <td data-label="SSC Recommendation">
                           <?php if (!empty($req['recommended_amount'])): ?>
-                            <div style="font-weight:700; color:#6d28d9; font-size:0.84rem; white-space:nowrap;">
-                              ₱<?= number_format((float)$req['recommended_amount'], 2) ?>
+                            <div style="font-weight:700; color:#6d28d9; font-size:0.90rem; white-space:nowrap;">
+                              &#8369;<?= number_format((float)$req['recommended_amount'], 2) ?>
                             </div>
-                            <span style="font-size:0.68rem; background:#ede9fe; color:#6d28d9; padding:2px 6px; border-radius:4px; font-weight:700; display:inline-block; margin-top:2px; white-space:nowrap;">
+                            <span style="font-size:0.78rem; background:#ede9fe; color:#6d28d9; padding:3px 8px; border-radius:4px; font-weight:700; display:inline-block; margin-top:2px; white-space:nowrap;">
                               <i class="fa-solid fa-check-double"></i> Vetted
                             </span>
                           <?php else: ?>
-                            <span style="font-size:0.75rem; color:#94a3b8; font-style:italic;">Awaiting SSC</span>
+                            <span style="font-size:0.80rem; color:#94a3b8; font-style:italic;">Awaiting SSC</span>
                           <?php endif; ?>
                         </td>
 
                         <!-- 5. Admin Status -->
                         <td data-label="Admin Status">
-                          <span class="status-pill <?= $pill_class ?>" style="font-size:0.7rem; padding:3px 8px; white-space:nowrap;">
+                          <span class="status-pill <?= $pill_class ?>" style="white-space:nowrap;">
                             <?= $pill_icon ?> <?= htmlspecialchars($status) ?>
                           </span>
                         </td>
 
                         <!-- 6. Submitted -->
                         <td data-label="Submitted">
-                          <span style="font-size:0.78rem; color:#475569; font-weight:500; white-space:nowrap;"><?= $date_str ?></span>
+                          <span style="font-size:0.82rem; color:#475569; font-weight:500; white-space:nowrap;"><?= $date_str ?></span>
                         </td>
 
                         <!-- 7. Action -->
@@ -1678,28 +1669,28 @@ if ($sess_role === 'admin') {
                       <?php elseif ($sess_role === 'ssc'): ?>
                         <!-- 1. Request No. -->
                         <td data-label="Request No.">
-                          <strong style="color:#1a3a8c; font-size:0.78rem; font-family:monospace; white-space:nowrap;"><?= htmlspecialchars($ref_no) ?></strong>
+                          <strong style="color:#1a3a8c; font-size:0.85rem; font-family:monospace; white-space:nowrap;"><?= htmlspecialchars($ref_no) ?></strong>
                         </td>
 
                         <!-- 2. Organization -->
                         <td data-label="Organization">
                           <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
-                          <div class="org-name-text" style="font-size:0.8rem; line-height:1.2; font-weight:600;"><?= htmlspecialchars($req['club_name']) ?></div>
+                          <div class="org-name-text"><?= htmlspecialchars($req['club_name']) ?></div>
                         </td>
 
                         <!-- 3. Request Title -->
                         <td data-label="Request Title">
-                          <div class="req-title-text" style="font-size:0.83rem; font-weight:700; line-height:1.25; margin-bottom:2px;"><?= htmlspecialchars($req['title']) ?></div>
-                          <div class="req-desc-excerpt" style="font-size:0.73rem; max-width:180px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
+                          <div class="req-title-text"><?= htmlspecialchars($req['title']) ?></div>
+                          <div class="req-desc-excerpt" style="max-width:200px;" title="<?= htmlspecialchars($req['description'] ?? '') ?>">
                             <?= htmlspecialchars($req['description'] ?: 'No description specified.') ?>
                           </div>
                         </td>
 
                         <!-- 4. Requested Amount -->
                         <td data-label="Requested Amount">
-                          <div class="req-amount-val" style="font-size:0.88rem; white-space:nowrap;">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
+                          <div class="req-amount-val" style="white-space:nowrap;">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
                           <?php if (!empty($req['recommended_amount']) && (float)$req['recommended_amount'] != (float)$req['amount']): ?>
-                            <div style="font-size:0.7rem; color:#6d28d9; font-weight:700; margin-top:2px; white-space:nowrap;" title="SSC Recommended Amount">
+                            <div style="font-size:0.78rem; color:#6d28d9; font-weight:700; margin-top:2px; white-space:nowrap;" title="SSC Recommended Amount">
                               Rec: &#8369;<?= number_format((float)$req['recommended_amount'], 2) ?>
                             </div>
                           <?php endif; ?>
@@ -1707,58 +1698,58 @@ if ($sess_role === 'admin') {
 
                         <!-- 5. Submitted By -->
                         <td data-label="Submitted By">
-                          <div style="font-weight:600; color:#0f172a; font-size:0.8rem; white-space:nowrap;" title="<?= htmlspecialchars($req['email'] ?? '') ?>"><?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?></div>
+                          <div style="font-weight:600; color:#0f172a; font-size:0.85rem; white-space:nowrap;" title="<?= htmlspecialchars($req['email'] ?? '') ?>"><?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?></div>
                         </td>
 
                         <!-- 6. Submitted Date -->
                         <td data-label="Submitted Date">
-                          <span style="font-size:0.78rem; color:#475569; font-weight:500; white-space:nowrap;"><?= $date_str ?></span>
+                          <span style="font-size:0.82rem; color:#475569; font-weight:500; white-space:nowrap;"><?= $date_str ?></span>
                         </td>
 
                         <!-- 7. Adviser Status -->
                         <td data-label="Adviser Status">
-                          <span class="adviser-badge" style="font-size:0.69rem; padding:2px 7px; white-space:nowrap;" title="Endorsed by Faculty Club Adviser">
+                          <span class="adviser-badge" style="white-space:nowrap;" title="Endorsed by Faculty Club Adviser">
                             <i class="fa-solid fa-circle-check"></i> Endorsed
                           </span>
                         </td>
 
                         <!-- 8. SSC Status -->
                         <td data-label="SSC Status">
-                          <span class="status-pill <?= $pill_class ?>" style="font-size:0.69rem; padding:2px 8px; white-space:nowrap;">
+                          <span class="status-pill <?= $pill_class ?>" style="white-space:nowrap;">
                             <?= $pill_icon ?> <?= htmlspecialchars($ssc_status_lbl) ?>
                           </span>
                         </td>
 
                         <!-- 9. Current Stage -->
                         <td data-label="Current Stage">
-                          <span class="stage-tag <?= $stage_tag_class ?>" style="font-size:0.69rem; padding:2px 7px; white-space:nowrap;">
+                          <span class="stage-tag <?= $stage_tag_class ?>" style="white-space:nowrap;">
                             <?= htmlspecialchars($current_stage_lbl) ?>
                           </span>
                         </td>
 
                         <!-- 10. Days Pending -->
                         <td data-label="Days Pending">
-                          <span class="days-pending-badge <?= $days_pending > 7 ? 'days-urgent' : '' ?>" style="font-size:0.7rem; padding:2px 6px; white-space:nowrap;">
+                          <span class="days-pending-badge <?= $days_pending > 7 ? 'days-urgent' : '' ?>" style="white-space:nowrap;">
                             <i class="fa-regular fa-clock"></i> <?= $days_pending_str ?>
                           </span>
                         </td>
 
                         <!-- 11. Action -->
                         <td data-label="Action" style="text-align:right;">
-                          <div class="action-btn-group" style="justify-content:flex-end; gap:4px;">
+                          <div class="action-btn-group" style="justify-content:flex-end; gap:6px;">
                             <?php if ($status === 'Pending SSC'): ?>
-                              <button type="button" class="act-btn act-btn-review" style="height:28px; padding:0 8px; font-size:0.72rem; white-space:nowrap;" 
+                              <button type="button" class="act-btn act-btn-review" 
                                       onclick="openSSCReviewModal(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
                                       title="Review line items, revise recommendation, or endorse/reject">
                                 <i class="fa-solid fa-file-signature"></i> Review
                               </button>
                             <?php else: ?>
-                              <button type="button" class="act-btn act-btn-review btn-disabled" disabled style="height:28px; padding:0 8px; font-size:0.72rem; white-space:nowrap;" 
+                              <button type="button" class="act-btn act-btn-review btn-disabled" disabled 
                                       title="Review phase completed (Status: <?= htmlspecialchars($status) ?>)">
                                 <i class="fa-solid fa-file-signature"></i> Review
                               </button>
                             <?php endif; ?>
-                            <button type="button" class="act-btn act-btn-view" style="height:28px; padding:0 8px; font-size:0.72rem; white-space:nowrap;" 
+                            <button type="button" class="act-btn act-btn-view" 
                                     onclick="openSSCReviewModal(<?= htmlspecialchars(json_encode($req), ENT_QUOTES) ?>)" 
                                     title="View itemization breakdown and audit trail">
                               <i class="fa-solid fa-eye"></i> View
@@ -1769,7 +1760,7 @@ if ($sess_role === 'admin') {
                       <?php else: ?>
                         <!-- ID -->
                         <td>
-                          <strong style="color:#64748b; font-size:0.8rem;">#<?= str_pad($req['id'], 4, '0', STR_PAD_LEFT) ?></strong>
+                          <strong style="color:#64748b; font-size:0.85rem;">#<?= str_pad($req['id'], 4, '0', STR_PAD_LEFT) ?></strong>
                         </td>
 
                         <!-- Org & Requester -->
@@ -1777,7 +1768,7 @@ if ($sess_role === 'admin') {
                           <div class="org-code-chip"><?= htmlspecialchars($req['club_code']) ?></div>
                           <div class="org-name-text"><?= htmlspecialchars($req['club_name']) ?></div>
                           <div class="requester-meta">
-                            <i class="fa-solid fa-user" style="font-size:0.65rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
+                            <i class="fa-solid fa-user" style="font-size:0.75rem;"></i> <?= htmlspecialchars($req['first_name'] . ' ' . $req['last_name']) ?>
                             &bull; <?= $date_str ?>
                           </div>
                         </td>
@@ -1794,17 +1785,17 @@ if ($sess_role === 'admin') {
                         <td>
                           <div class="req-amount-val">&#8369;<?= number_format((float)$req['amount'], 2) ?></div>
                           <?php if (!empty($req['recommended_amount']) && (float)$req['recommended_amount'] != (float)$req['amount']): ?>
-                            <div style="font-size:0.72rem; color:#6d28d9; font-weight:700; margin-top:2px;" title="SSC Recommended Amount">
+                            <div style="font-size:0.78rem; color:#6d28d9; font-weight:700; margin-top:2px;" title="SSC Recommended Amount">
                               SSC: &#8369;<?= number_format((float)$req['recommended_amount'], 2) ?>
                             </div>
                           <?php endif; ?>
                           <?php if (!empty($req['final_approved_amount'])): ?>
-                            <div style="font-size:0.72rem; color:#15803d; font-weight:700; margin-top:2px;" title="Final Disbursed Amount">
+                            <div style="font-size:0.78rem; color:#15803d; font-weight:700; margin-top:2px;" title="Final Disbursed Amount">
                               Released: &#8369;<?= number_format((float)$req['final_approved_amount'], 2) ?>
                             </div>
                           <?php endif; ?>
                           <?php if (!empty($req['disbursement_reference'])): ?>
-                            <div style="font-size:0.68rem; color:#64748b; font-family:monospace; margin-top:2px;" title="Disbursement Reference">
+                            <div style="font-size:0.75rem; color:#64748b; font-family:monospace; margin-top:2px;" title="Disbursement Reference">
                               Ref: <?= htmlspecialchars($req['disbursement_reference']) ?>
                             </div>
                           <?php endif; ?>
@@ -1847,7 +1838,7 @@ if ($sess_role === 'admin') {
 
                         <!-- Notes -->
                         <td>
-                          <div style="font-size:0.78rem; color:#475569; line-height:1.35; max-width:220px;">
+                          <div style="font-size:0.82rem; color:#475569; line-height:1.4; max-width:220px;">
                             <?= htmlspecialchars($req['notes'] ?: '—') ?>
                           </div>
                         </td>
@@ -2313,27 +2304,27 @@ if ($sess_role === 'admin') {
               <h4 style="margin:4px 0 0; font-size:1.1rem; color:#0f172a;">${escapeHtml(req.title)}</h4>
             </div>
             <div style="text-align:right;">
-              <div style="font-size:0.75rem; color:#64748b; font-weight:700; text-transform:uppercase;">Requested Amount</div>
+              <div style="font-size:0.78rem; color:#64748b; font-weight:700; text-transform:uppercase;">Requested Amount</div>
               <div style="font-size:1.3rem; font-weight:800; color:#1a3a8c;">${formattedAmount}</div>
             </div>
           </div>
 
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; background:#f8fafc; padding:14px; border-radius:10px; border:1px solid #e2e8f0;">
             <div>
-              <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Organization</span>
-              <div style="font-size:0.85rem; font-weight:700; color:#0f172a; margin-top:2px;">${escapeHtml(req.club_name)}</div>
+              <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase;">Organization</span>
+              <div style="font-size:0.88rem; font-weight:700; color:#0f172a; margin-top:2px;">${escapeHtml(req.club_name)}</div>
             </div>
             <div>
-              <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Requested By</span>
-              <div style="font-size:0.85rem; font-weight:600; color:#0f172a; margin-top:2px;">${escapeHtml(req.first_name + ' ' + req.last_name)}</div>
+              <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase;">Requested By</span>
+              <div style="font-size:0.88rem; font-weight:600; color:#0f172a; margin-top:2px;">${escapeHtml(req.first_name + ' ' + req.last_name)}</div>
             </div>
             <div>
-              <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Date Filed</span>
-              <div style="font-size:0.85rem; font-weight:600; color:#0f172a; margin-top:2px;">${formattedDate}</div>
+              <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase;">Date Filed</span>
+              <div style="font-size:0.88rem; font-weight:600; color:#0f172a; margin-top:2px;">${formattedDate}</div>
             </div>
             <div>
-              <span style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Current Stage</span>
-              <div style="font-size:0.85rem; font-weight:700; color:#1a3a8c; margin-top:2px;">${escapeHtml(req.status)}</div>
+              <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase;">Current Stage</span>
+              <div style="font-size:0.88rem; font-weight:700; color:#1a3a8c; margin-top:2px;">${escapeHtml(req.status)}</div>
             </div>
           </div>
 
@@ -2344,35 +2335,35 @@ if ($sess_role === 'admin') {
             </div>
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px 16px;">
               <div>
-                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Requested Amount</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Requested Amount</span>
                 <span style="font-size:1.05rem; font-weight:800; color:#0f172a;">${formattedAmount}</span>
               </div>
               <div>
-                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">SSC Recommended Amount</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">SSC Recommended Amount</span>
                 <span style="font-size:1.05rem; font-weight:800; color:${req.recommended_amount ? '#6d28d9' : '#64748b'};">
                   ${req.recommended_amount ? ('₱' + parseFloat(req.recommended_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})) : '—'}
                 </span>
               </div>
               <div>
-                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Final Approved Amount</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Final Approved Amount</span>
                 <span style="font-size:1.05rem; font-weight:800; color:${req.final_approved_amount ? '#15803d' : '#64748b'};">
                   ${req.final_approved_amount ? ('₱' + parseFloat(req.final_approved_amount).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})) : '—'}
                 </span>
               </div>
               <div>
-                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursement Date</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursement Date</span>
                 <span style="font-size:0.9rem; font-weight:600; color:#0f172a;">
                   ${req.disbursed_at ? new Date(req.disbursed_at).toLocaleDateString('en-PH', {dateStyle:'medium'}) : '—'}
                 </span>
               </div>
               <div>
-                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursement Reference</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursement Reference</span>
                 <span style="font-size:0.9rem; font-family:monospace; font-weight:700; color:#1a3a8c;">
                   ${escapeHtml(req.disbursement_reference || '—')}
                 </span>
               </div>
               <div>
-                <span style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursed By</span>
+                <span style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; display:block;">Disbursed By</span>
                 <span style="font-size:0.9rem; font-weight:600; color:#0f172a;">
                   ${req.disburser_first ? escapeHtml(req.disburser_first + ' ' + req.disburser_last) : (req.disbursed_by ? ('Admin #' + req.disbursed_by) : '—')}
                 </span>
@@ -2476,7 +2467,7 @@ if ($sess_role === 'admin') {
               </div>
             </div>
             <div style="text-align:right;">
-              <div style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.04em;">Original Requested</div>
+              <div style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.04em;">Original Requested</div>
               <div style="font-size:1.35rem; font-weight:800; color:#1a3a8c;">${formattedAmount}</div>
               <span class="adviser-badge" style="margin-top:4px;"><i class="fa-solid fa-circle-check"></i> Endorsed by Adviser</span>
             </div>
@@ -2506,7 +2497,7 @@ if ($sess_role === 'admin') {
                 </tbody>
                 <tfoot>
                   <tr class="itemization-foot-row">
-                    <td colspan="4" style="text-align:right; font-weight:700; text-transform:uppercase; font-size:0.76rem; letter-spacing:0.04em; color:#475569;">
+                    <td colspan="4" style="text-align:right; font-weight:700; text-transform:uppercase; font-size:0.80rem; letter-spacing:0.04em; color:#475569;">
                       Grand Total:
                     </td>
                     <td style="text-align:right; font-weight:800; font-size:1.05rem; color:#1a3a8c;">
@@ -2520,7 +2511,7 @@ if ($sess_role === 'admin') {
 
           <!-- Description / Narrative -->
           <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 16px;">
-            <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.04em;">
+            <div style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.04em;">
               Requisition Purpose &amp; Justification
             </div>
             <div style="font-size:0.85rem; color:#334155; line-height:1.45;">
@@ -2538,13 +2529,13 @@ if ($sess_role === 'admin') {
 
               <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:12px;">
                 <div>
-                  <label style="font-size:0.75rem; font-weight:700; color:#475569; text-transform:uppercase; margin-bottom:5px; display:block;">Original Requested</label>
+                  <label style="font-size:0.80rem; font-weight:700; color:#475569; text-transform:uppercase; margin-bottom:5px; display:block;">Original Requested</label>
                   <div style="font-size:1.05rem; font-weight:700; color:#475569; padding:8px 12px; background:#ffffff; border:1px solid #cbd5e1; border-radius:8px;">
                     ${formattedAmount}
                   </div>
                 </div>
                 <div>
-                  <label style="font-size:0.75rem; font-weight:700; color:#1a3a8c; text-transform:uppercase; margin-bottom:5px; display:block;">
+                  <label style="font-size:0.80rem; font-weight:700; color:#1a3a8c; text-transform:uppercase; margin-bottom:5px; display:block;">
                     SSC Recommended Amount (Php) <span style="color:#ef4444;">*</span>
                   </label>
                   <div class="currency-input-wrap">
@@ -2555,7 +2546,7 @@ if ($sess_role === 'admin') {
               </div>
 
               <div class="form-group-custom" style="margin-bottom:0;">
-                <label style="font-size:0.75rem; font-weight:700; color:#475569; text-transform:uppercase; margin-bottom:5px; display:block;">
+                <label style="font-size:0.80rem; font-weight:700; color:#475569; text-transform:uppercase; margin-bottom:5px; display:block;">
                   SSC Review &amp; Audit Notes
                 </label>
                 <textarea id="modalSSCNotes" rows="3" class="form-control-custom" placeholder="Specify line-item vetting observations, justification for recommended revision, or endorsement remarks...">${escapeHtml(req.notes || '')}</textarea>
@@ -2582,7 +2573,7 @@ if ($sess_role === 'admin') {
           ` : `
             <!-- Historical Notes for View Mode -->
             <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 16px;">
-              <div style="font-size:0.72rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.04em;">
+              <div style="font-size:0.78rem; font-weight:700; color:#64748b; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.04em;">
                 Audit &amp; Workflow History
               </div>
               <div style="font-size:0.85rem; color:#475569;">

@@ -121,7 +121,7 @@ if ($sess_role === 'admin') {
     LEFT JOIN users u ON u.id = al.user_id
     LEFT JOIN students s ON (s.user_id = u.id OR (u.first_name = s.first_name AND u.last_name = s.last_name))
     LEFT JOIN users logger ON logger.id = al.logged_by
-    ORDER BY al.check_in DESC, al.id DESC
+    ORDER BY al.id DESC
     LIMIT 200
   ");
   if ($admin_logs_res) {

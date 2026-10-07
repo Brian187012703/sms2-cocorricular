@@ -1,7 +1,10 @@
 <?php
 // ============================================================
 //  ACHIEVEMENT_ACTIONS.PHP — Achievements AJAX handler
-//  Actions: list, submit, verify, reject
+//  Workflow:
+//    Stage 1: Club Adviser submits -> Status: 'Pending SSC'
+//    Stage 2: SSC Officers verify   -> Status: 'Pending Admin'
+//    Stage 3: Admin clears/approves -> Status: 'Approved' (Published to Directory)
 // ============================================================
 header('Content-Type: application/json');
 session_start();
@@ -33,14 +36,12 @@ switch ($action) {
         $types  = '';
 
         if ($user_role === 'student') {
-            $where  = 'WHERE a.submitted_by = ? AND a.status = "Verified"';
-            $params = [$user_id];
-            $types  = 'i';
+            $where  = 'WHERE a.status IN ("Approved", "Verified")';
         } elseif ($user_role === 'club_adviser') {
-            // Adviser sees their club
+            // Adviser sees their club's achievements
             $sess_user = $_SESSION['username'] ?? '';
-            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1))) AND status='Active' LIMIT 1");
-            $cm->bind_param('is', $user_id, $sess_user);
+            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1)) OR adviser_user_id=?) AND status='Active' LIMIT 1");
+            $cm->bind_param('isi', $user_id, $sess_user, $user_id);
             $cm->execute();
             $cm->bind_result($club_id);
             $cm->fetch();
@@ -51,10 +52,14 @@ switch ($action) {
 
         $sql = "SELECT a.id, a.title, a.competition, a.award_date, a.status, a.notes, a.proof_file, a.created_at,
                        c.name AS club_name, c.code AS club_code,
-                       u.first_name, u.last_name
+                       u.first_name, u.last_name, u.role AS sub_role,
+                       v.first_name AS ver_first, v.last_name AS ver_last, v.role AS ver_role,
+                       ap.first_name AS app_first, ap.last_name AS app_last, ap.role AS app_role
                 FROM achievements a
                 JOIN clubs c ON c.id = a.club_id
                 JOIN users u ON u.id = a.submitted_by
+                LEFT JOIN users v ON v.id = a.verified_by
+                LEFT JOIN users ap ON ap.id = a.approved_by
                 $where
                 ORDER BY a.award_date DESC";
         $stmt = $conn->prepare($sql);
@@ -68,40 +73,64 @@ switch ($action) {
     // ── LIST pending for SSC/Admin ────────────────────────────
     case 'list_pending': {
         if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Not authorized.');
+        
+        $status_filter = ($user_role === 'ssc') 
+            ? "WHERE a.status IN ('Pending SSC', 'Pending')"
+            : "WHERE a.status IN ('Pending Admin', 'Pending SSC', 'Pending')";
+
         $rows = $conn->query(
-            "SELECT a.id, a.title, a.competition, a.award_date, a.proof_file, a.created_at,
-                    c.name AS club_name, u.first_name, u.last_name
+            "SELECT a.id, a.title, a.competition, a.award_date, a.proof_file, a.status, a.created_at,
+                    c.name AS club_name, c.code AS club_code, u.first_name, u.last_name
              FROM achievements a
              JOIN clubs c ON c.id = a.club_id
              JOIN users u ON u.id = a.submitted_by
-             WHERE a.status = 'Pending'
+             $status_filter
              ORDER BY a.created_at ASC"
         )->fetch_all(MYSQLI_ASSOC);
         achRespond(true, 'OK', ['pending' => $rows]);
     }
 
-    // ── SUBMIT achievement ───────────────────────────────────
+    // ── SUBMIT achievement (Club Adviser role) ────────────────
     case 'submit': {
-        if (!in_array($user_role, ['student','club_adviser','ssc','admin'])) achRespond(false, 'Not authorized to submit.');
+        if (!in_array($user_role, ['club_adviser', 'admin'])) {
+            achRespond(false, 'Only Club Advisers can submit organization achievements for verification.');
+        }
 
         $title       = trim($_POST['title']       ?? '');
         $competition = trim($_POST['competition'] ?? '');
         $award_date  = trim($_POST['award_date']  ?? '');
 
-        if (!$title || !$competition || !$award_date) achRespond(false, 'Title, competition, and award date are required.');
+        if (!$title || !$competition || !$award_date) {
+            achRespond(false, 'Title, competition, and award date are required.');
+        }
 
-        // Get club_id — prefer posted value, fall back to membership or adviser club
+        // Get club_id — prefer posted value, fall back to adviser club
         $club_id = (int)($_POST['club_id'] ?? 0);
         if (!$club_id) {
             $sess_user = $_SESSION['username'] ?? '';
-            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1))) AND status='Active' LIMIT 1");
-            $cm->bind_param('is', $user_id, $sess_user);
+            $cm = $conn->prepare("SELECT id FROM clubs WHERE (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1)) OR adviser_user_id=?) AND status='Active' LIMIT 1");
+            $cm->bind_param('isi', $user_id, $sess_user, $user_id);
             $cm->execute();
             $cm->bind_result($club_id);
             $cm->fetch();
             $cm->close();
         }
-        if (!$club_id) achRespond(false, 'You must belong to a club to submit an achievement. Please select one.');
+
+        if ($user_role === 'club_adviser') {
+            // Verify that this adviser handles the requested club
+            $sess_user = $_SESSION['username'] ?? '';
+            $chk = $conn->prepare("SELECT id FROM clubs WHERE id=? AND (id IN (SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active') OR code=UPPER(SUBSTRING_INDEX(?, '.', 1)) OR adviser_user_id=?) AND status='Active' LIMIT 1");
+            $chk->bind_param('iisi', $club_id, $user_id, $sess_user, $user_id);
+            $chk->execute();
+            $chk->bind_result($valid_cid);
+            $chk->fetch();
+            $chk->close();
+            if (!$valid_cid) {
+                achRespond(false, 'Forbidden: You can only submit achievements for your assigned student organization.');
+            }
+        }
+
+        if (!$club_id) achRespond(false, 'You must select a valid active organization.');
 
         // Handle file upload
         $proof_file = null;
@@ -132,44 +161,94 @@ switch ($action) {
             $proof_file = $fname;
         }
 
+        $notes = trim($_POST['notes'] ?? '');
+
+        // Stage 1 initial status: 'Pending SSC'
         $stmt = $conn->prepare(
-            "INSERT INTO achievements (club_id, submitted_by, title, competition, award_date, proof_file, status)
-             VALUES (?, ?, ?, ?, ?, ?, 'Pending')"
+            "INSERT INTO achievements (club_id, submitted_by, title, competition, award_date, proof_file, notes, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending SSC')"
         );
-        $stmt->bind_param('iissss', $club_id, $user_id, $title, $competition, $award_date, $proof_file);
+        $stmt->bind_param('iisssss', $club_id, $user_id, $title, $competition, $award_date, $proof_file, $notes);
         if (!$stmt->execute()) achRespond(false, 'Failed to submit: ' . $stmt->error);
         $new_id = $conn->insert_id;
         $stmt->close();
 
-        // Notify SSC officers
+        // Notify SSC officers for Stage 2 verification
+        $adv_name = trim(($_SESSION['first_name'] ?? '') . ' ' . ($_SESSION['last_name'] ?? ''));
         $sscs = $conn->query("SELECT id FROM users WHERE role = 'ssc'");
         while ($o = $sscs->fetch_assoc()) {
             push_notification($conn, (int)$o['id'], 'New Achievement Submission',
-                "A new achievement \"$title\" from " . ($_SESSION['first_name']??'') . " was submitted for verification.", 'achievement');
+                "Club Adviser $adv_name submitted \"$title\" for SSC verification.", 'achievement');
         }
-        log_audit($conn, $user_id, 'achievement_submit', 'achievements', $new_id, "Submitted: $title");
-        achRespond(true, 'Achievement submitted for SSC verification.', ['id' => $new_id]);
+        log_audit($conn, $user_id, 'achievement_submit', 'achievements', $new_id, "Submitted: $title (Pending SSC)");
+        achRespond(true, 'Achievement submitted and forwarded to SSC for verification.', ['id' => $new_id]);
     }
 
-    // ── VERIFY achievement (SSC / Admin) ─────────────────────
+    // ── STAGE 2: VERIFY achievement (SSC Officers) ─────────────
+    case 'verify_ssc':
     case 'verify': {
-        if (!in_array($user_role, ['ssc','admin'])) achRespond(false, 'Only SSC Officers can verify achievements.');
+        if (!in_array($user_role, ['ssc','admin'])) {
+            achRespond(false, 'Only SSC Officers can verify achievements.');
+        }
         $id = (int)($_POST['id'] ?? 0);
         if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
 
-        $stmt = $conn->prepare("UPDATE achievements SET status='Verified', verified_by=?, notes=? WHERE id=?");
         $note = trim($_POST['notes'] ?? 'Verified and endorsed by SSC.');
+
+        // SSC verification moves status to 'Pending Admin'
+        $stmt = $conn->prepare("UPDATE achievements SET status='Pending Admin', verified_by=?, notes=? WHERE id=?");
         $stmt->bind_param('isi', $user_id, $note, $id);
-        if (!$stmt->execute()) achRespond(false, 'Failed to verify.');
+        if (!$stmt->execute()) achRespond(false, 'Failed to verify achievement.');
         $stmt->close();
 
-        $ach = $conn->query("SELECT submitted_by, title FROM achievements WHERE id=$id")->fetch_assoc();
+        $ach = $conn->query("SELECT submitted_by, title, club_id FROM achievements WHERE id=$id")->fetch_assoc();
         if ($ach) {
-            push_notification($conn, (int)$ach['submitted_by'], 'Achievement Verified! 🏆',
-                "Your achievement \"{$ach['title']}\" has been verified and endorsed by the SSC!", 'success');
+            // Notify submitter (Club Adviser)
+            push_notification($conn, (int)$ach['submitted_by'], 'Achievement Verified by SSC 📋',
+                "Your achievement \"{$ach['title']}\" has been verified by the SSC and forwarded to the Admin for final approval.", 'info');
+
+            // Notify Admin for Stage 3 Approval
+            $admins = $conn->query("SELECT id FROM users WHERE role = 'admin'");
+            while ($adm = $admins->fetch_assoc()) {
+                push_notification($conn, (int)$adm['id'], 'Achievement Awaiting Admin Approval',
+                    "Achievement \"{$ach['title']}\" was verified by SSC and is now awaiting final Admin approval.", 'info');
+            }
         }
-        log_audit($conn, $user_id, 'achievement_verify', 'achievements', $id, "Verified #$id");
-        achRespond(true, 'Achievement verified and endorsed.');
+        log_audit($conn, $user_id, 'achievement_verify_ssc', 'achievements', $id, "Verified by SSC #$id -> Pending Admin");
+        achRespond(true, 'Achievement verified by SSC and forwarded to Admin for final approval.');
+    }
+
+    // ── STAGE 3: APPROVE achievement (Admin Final Clearance) ──
+    case 'approve_admin':
+    case 'approve': {
+        if ($user_role !== 'admin') {
+            achRespond(false, 'Only Administrators can approve and publish achievements to the directory.');
+        }
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id <= 0) achRespond(false, 'Invalid achievement ID.');
+
+        $note = trim($_POST['notes'] ?? 'Approved and cleared by Institutional Admin.');
+
+        // Admin clearance moves status to 'Approved'
+        $stmt = $conn->prepare("UPDATE achievements SET status='Approved', approved_by=?, notes=? WHERE id=?");
+        $stmt->bind_param('isi', $user_id, $note, $id);
+        if (!$stmt->execute()) achRespond(false, 'Failed to approve achievement.');
+        $stmt->close();
+
+        $ach = $conn->query("SELECT a.submitted_by, a.title, a.club_id, c.name AS club_name FROM achievements a JOIN clubs c ON c.id=a.club_id WHERE a.id=$id")->fetch_assoc();
+        if ($ach) {
+            // Notify submitter (Club Adviser)
+            push_notification($conn, (int)$ach['submitted_by'], 'Achievement Approved & Published! 🏆',
+                "Congratulations! \"{$ach['title']}\" has been officially approved by the Admin and posted to the Student Organizations Directory.", 'success');
+
+            // Sync to isolated organization database if applicable
+            require_once __DIR__ . '/org_db_manager.php';
+            if (function_exists('syncOrgAchievements')) {
+                syncOrgAchievements($conn, (int)$ach['club_id']);
+            }
+        }
+        log_audit($conn, $user_id, 'achievement_approve_admin', 'achievements', $id, "Approved by Admin #$id -> Published to Directory");
+        achRespond(true, 'Achievement officially approved and posted to the Student Organization Directory!');
     }
 
     // ── REJECT achievement (SSC / Admin) ─────────────────────
@@ -186,11 +265,11 @@ switch ($action) {
 
         $ach = $conn->query("SELECT submitted_by, title FROM achievements WHERE id=$id")->fetch_assoc();
         if ($ach) {
-            push_notification($conn, (int)$ach['submitted_by'], 'Achievement Info Requested',
-                "Your achievement \"{$ach['title']}\" needs more info. Notes: $note", 'warning');
+            push_notification($conn, (int)$ach['submitted_by'], 'Achievement Info Requested / Rejected',
+                "Your achievement submission \"{$ach['title']}\" was rejected or needs revision. Remarks: $note", 'warning');
         }
         log_audit($conn, $user_id, 'achievement_reject', 'achievements', $id, "Rejected #$id: $note");
-        achRespond(true, 'Achievement returned for additional info.');
+        achRespond(true, 'Achievement returned / rejected.');
     }
 
     // ── CLARIFY achievement (SSC / Admin) ────────────────────
@@ -209,10 +288,10 @@ switch ($action) {
         $ach = $conn->query("SELECT submitted_by, title FROM achievements WHERE id=$id")->fetch_assoc();
         if ($ach) {
             push_notification($conn, (int)$ach['submitted_by'], 'Achievement Clarification Requested',
-                "SSC requested clarification on \"{$ach['title']}\": $note", 'warning');
+                "Reviewers requested clarification on \"{$ach['title']}\": $note", 'warning');
         }
         log_audit($conn, $user_id, 'achievement_clarify', 'achievements', $id, "Clarify #$id: $note");
-        achRespond(true, 'Clarification request saved and sent to requester.');
+        achRespond(true, 'Clarification request saved and sent to adviser.');
     }
 
     // ── GET DETAILS (View Proof / Modal) ──────────────────────
@@ -224,11 +303,13 @@ switch ($action) {
             "SELECT a.id, a.title, a.competition, a.award_date, a.proof_file, a.status, a.notes, a.created_at,
                     c.name AS club_name, c.code AS club_code,
                     u.first_name AS sub_first, u.last_name AS sub_last, u.role AS sub_role,
-                    v.first_name AS ver_first, v.last_name AS ver_last, v.role AS ver_role
+                    v.first_name AS ver_first, v.last_name AS ver_last, v.role AS ver_role,
+                    ap.first_name AS app_first, ap.last_name AS app_last, ap.role AS app_role
              FROM achievements a
              JOIN clubs c ON c.id = a.club_id
              JOIN users u ON u.id = a.submitted_by
              LEFT JOIN users v ON v.id = a.verified_by
+             LEFT JOIN users ap ON ap.id = a.approved_by
              WHERE a.id = ?"
         );
         $stmt->bind_param('i', $id);

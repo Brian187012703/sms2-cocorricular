@@ -250,25 +250,10 @@ window.CSRF_TOKEN = "<?= csrf_token() ?>";
         </div>
       <?php endif; ?>
 
-      <!-- Attendance for Students -->
-      <?php if ($user_role === 'student'): ?>
-        <div class="nav-group">
-          <a href="<?= $APP_ROOT ?>dashboard/tracking_history.php" class="sidebar-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') !== 'scanner')?'active':'' ?>">
-            <i class="fa-solid fa-clipboard-user"></i>
-            <span>My Attendance</span>
-          </a>
-        </div>
-        <div class="nav-group">
-          <a href="<?= $APP_ROOT ?>dashboard/tracking_scanner.php" class="sidebar-item <?= ($ACTIVE_NAV==='attendance' && ($ACTIVE_SUB ?? '') === 'scanner')?'active':'' ?>">
-            <i class="fa-solid fa-qrcode"></i>
-            <span>Scan Attendance</span>
-          </a>
-        </div>
-      <?php endif; ?>
     <?php endif; ?>
 
-    <!-- SECTION 4: RECORDS & TRACKING -->
-    <?php if (can_any(['achievements.view', 'achievements.submit', 'achievements.verify.ssc', 'attendance.view.analytics', 'attendance.track.org', 'attendance.override'])): ?>
+    <!-- SECTION 4: RECORDS & TRACKING (Higher roles only) -->
+    <?php if ($user_role !== 'student' && can_any(['achievements.view', 'achievements.submit', 'achievements.verify.ssc', 'attendance.view.analytics', 'attendance.track.org', 'attendance.override'])): ?>
       <div class="sidebar-divider"></div>
       <div class="sidebar-brand sidebar-brand-2">
         <div class="brand-title">Records &amp; Media</div>
@@ -551,6 +536,7 @@ window.CSRF_TOKEN = "<?= csrf_token() ?>";
 </script>
 
 <?php require_once __DIR__ . '/qr_modal.php'; ?>
+<?php require_once __DIR__ . '/chat_modal.php'; ?>
 <?php require_once __DIR__ . '/session_timeout_modal.php'; ?>
 <script src="<?= $APP_ROOT ?>js/global-search.js?v=<?= filemtime(__DIR__ . '/../js/global-search.js') ?>" defer></script>
 

@@ -227,6 +227,44 @@ function seedSystemAccountsAndClubs(mysqli $conn, array &$messages, array &$erro
         WHERE c.adviser_user_id IS NULL
     ");
 
+    // Link official program students to their accredited clubs in club_memberships
+    $student_club_map = [
+        'bsit.student'    => 'CSSEC',
+        'bshm.student'    => 'TECHs',
+        'bsais.student'   => 'AISS',
+        'bstm.student'    => 'TTS',
+        'bsoa.student'    => 'EYO',
+        'bse.student'     => 'BRAVE',
+        'bsba.student'    => 'JFINEX',
+        'bsis.student'    => 'CSSEC',
+        'bscpe.student'   => 'ACADS',
+        'bspsych.student' => 'PsychSoc',
+        'bscrim.student'  => 'CJSU',
+        'bspe.student'    => 'G.A.L.A.W',
+        'tle.student'     => 'BRAVE',
+        'bseled.student'  => 'GEMs',
+        'bsseed.student'  => 'SIGMA',
+        'bslis.student'   => 'BLISS',
+    ];
+
+    $cm_stmt = $conn->prepare("
+        INSERT INTO club_memberships (club_id, user_id, role, status, adviser_review, ssc_review, admin_review, joined_at)
+        VALUES (?, ?, 'Member', 'Active', 'Endorsed', 'Approved', 'Approved', NOW())
+        ON DUPLICATE KEY UPDATE status = 'Active', adviser_review = 'Endorsed', ssc_review = 'Approved'
+    ");
+
+    if ($cm_stmt) {
+        foreach ($student_club_map as $s_user => $c_code) {
+            $uRow = $conn->query("SELECT id FROM users WHERE username = '{$s_user}' LIMIT 1")->fetch_assoc();
+            $cRow = $conn->query("SELECT id FROM clubs WHERE code = '{$c_code}' LIMIT 1")->fetch_assoc();
+            if ($uRow && $cRow) {
+                $cm_stmt->bind_param('ii', $cRow['id'], $uRow['id']);
+                $cm_stmt->execute();
+            }
+        }
+        $cm_stmt->close();
+    }
+
     $messages[] = "✨ Official system accounts (Admin, SSC, 16 Program Students, and 40 Faculty Advisers) successfully seeded from SYSTEM_ACCOUNTS.md!";
     return true;
 }
@@ -568,6 +606,50 @@ function patchSystemDatabaseSchemas(mysqli $conn, array &$messages, array &$erro
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    // 13. Inter-Club Communication Tables (Role-Governed Channels, Members, Messages)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `chat_channels` (
+          `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `name` VARCHAR(150) NOT NULL,
+          `type` ENUM('club_group', 'adviser_ssc', 'direct') NOT NULL DEFAULT 'club_group',
+          `club_id` INT(10) UNSIGNED NULL,
+          `description` VARCHAR(255) NULL,
+          `created_by` INT(10) UNSIGNED NULL,
+          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          INDEX `idx_channel_club` (`club_id`),
+          INDEX `idx_channel_type` (`type`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `chat_members` (
+          `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `channel_id` BIGINT UNSIGNED NOT NULL,
+          `user_id` INT(10) UNSIGNED NOT NULL,
+          `last_read_at` TIMESTAMP NULL DEFAULT NULL,
+          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          UNIQUE KEY `uq_channel_member` (`channel_id`, `user_id`),
+          INDEX `idx_member_user` (`user_id`),
+          INDEX `idx_member_channel` (`channel_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS `chat_messages` (
+          `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `channel_id` BIGINT UNSIGNED NOT NULL,
+          `sender_id` INT(10) UNSIGNED NOT NULL,
+          `message` TEXT NOT NULL,
+          `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (`id`),
+          INDEX `idx_msg_channel` (`channel_id`),
+          INDEX `idx_msg_sender` (`sender_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     $messages[] = "🛠️ Database schemas and multi-stage workflow columns successfully verified and synchronized!";
     return true;
 }
@@ -652,19 +734,30 @@ function seedLiveSystemData(mysqli $conn, array &$messages, array &$errors): boo
           `competition` VARCHAR(250) NOT NULL,
           `award_date` DATE NOT NULL,
           `proof_file` VARCHAR(300) DEFAULT NULL,
-          `status` ENUM('Pending', 'Verified', 'Rejected') NOT NULL DEFAULT 'Pending',
+          `status` VARCHAR(50) NOT NULL DEFAULT 'Pending SSC',
           `verified_by` INT(10) UNSIGNED DEFAULT NULL,
+          `approved_by` INT(10) UNSIGNED DEFAULT NULL,
           `notes` TEXT DEFAULT NULL,
           `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
           PRIMARY KEY (`id`),
           KEY `idx_ach_club` (`club_id`),
           KEY `idx_ach_submitter` (`submitted_by`),
           KEY `idx_ach_status` (`status`),
+          KEY `fk_ach_approver` (`approved_by`),
           CONSTRAINT `fk_ach_club` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
           CONSTRAINT `fk_ach_user` FOREIGN KEY (`submitted_by`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-          CONSTRAINT `fk_ach_verifier` FOREIGN KEY (`verified_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+          CONSTRAINT `fk_ach_verifier` FOREIGN KEY (`verified_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+          CONSTRAINT `fk_ach_approver` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+    // Ensure column approved_by exists if created from older schema
+    $has_appr = $conn->query("SHOW COLUMNS FROM `achievements` LIKE 'approved_by'");
+    if ($has_appr && $has_appr->num_rows === 0) {
+        $conn->query("ALTER TABLE `achievements` ADD COLUMN `approved_by` INT(10) UNSIGNED DEFAULT NULL AFTER `verified_by`");
+        $conn->query("ALTER TABLE `achievements` ADD CONSTRAINT `fk_ach_approver` FOREIGN KEY (`approved_by`) REFERENCES `users`(`id`) ON DELETE SET NULL");
+    }
+    $conn->query("ALTER TABLE `achievements` MODIFY COLUMN `status` VARCHAR(50) NOT NULL DEFAULT 'Pending SSC'");
+
 
     // 5. Ensure elections, candidates, and votes tables exist
     $conn->query("CREATE TABLE IF NOT EXISTS `elections` (
@@ -865,6 +958,102 @@ function seedLiveSystemData(mysqli $conn, array &$messages, array &$errors): boo
         }
 
         $conn->query("INSERT IGNORE INTO `event_registrations` (`event_id`, `user_id`, `status`) SELECT id, 1, 'Registered' FROM `events` WHERE `status` = 'Approved' LIMIT 3");
+    }
+
+    // 11. Seed Inter-Club Communication Channels & Role-Governed Member Subscriptions
+    $chk_channels = $conn->query("SELECT COUNT(*) FROM `chat_channels`");
+    if ($chk_channels && (int)$chk_channels->fetch_row()[0] === 0) {
+        $c_res = $conn->query("SELECT id, code, name, adviser_user_id FROM `clubs` WHERE deleted_at IS NULL ORDER BY id");
+        $ssc_res = $conn->query("SELECT id FROM `users` WHERE `role` = 'ssc' LIMIT 1");
+        $ssc_user_id = ($ssc_res && $row = $ssc_res->fetch_assoc()) ? (int)$row['id'] : null;
+
+        if ($c_res) {
+            $chan_stmt = $conn->prepare("INSERT INTO `chat_channels` (`name`, `type`, `club_id`, `description`, `created_by`) VALUES (?, ?, ?, ?, ?)");
+            $mem_stmt = $conn->prepare("INSERT IGNORE INTO `chat_members` (`channel_id`, `user_id`) VALUES (?, ?)");
+            $msg_stmt = $conn->prepare("INSERT INTO `chat_messages` (`channel_id`, `sender_id`, `message`, `created_at`) VALUES (?, ?, ?, ?)");
+
+            while ($club = $c_res->fetch_assoc()) {
+                $cId = (int)$club['id'];
+                $cCode = $club['code'];
+                $cName = $club['name'];
+                $advId = !empty($club['adviser_user_id']) ? (int)$club['adviser_user_id'] : null;
+
+                // Channel 1: Club Group Room (For students & adviser of this club)
+                $gName = "{$cName} Club Lounge";
+                $gType = 'club_group';
+                $gDesc = "Official organization room for active student members and faculty adviser.";
+                if ($chan_stmt) {
+                    $chan_stmt->bind_param('ssisi', $gName, $gType, $cId, $gDesc, $advId);
+                    $chan_stmt->execute();
+                    $gChanId = (int)$chan_stmt->insert_id;
+
+                    if ($gChanId > 0 && $mem_stmt) {
+                        // Subscribe adviser
+                        if ($advId) {
+                            $mem_stmt->bind_param('ii', $gChanId, $advId);
+                            $mem_stmt->execute();
+                        }
+                        // Subscribe active student members
+                        $m_res = $conn->query("SELECT user_id FROM `club_memberships` WHERE club_id = {$cId} AND status = 'Active'");
+                        if ($m_res) {
+                            while ($m = $m_res->fetch_assoc()) {
+                                $uId = (int)$m['user_id'];
+                                $mem_stmt->bind_param('ii', $gChanId, $uId);
+                                $mem_stmt->execute();
+                            }
+                        }
+
+                        // Initial welcome message from adviser if adviser exists
+                        if ($advId && $msg_stmt) {
+                            $welcomeMsg = "Welcome {$cName} members! This is our dedicated club communication room. Please use this space for official announcements, project coordination, and committee discussions.";
+                            $msgTime = date('Y-m-d H:i:s', strtotime('-1 day'));
+                            $msg_stmt->bind_param('iiss', $gChanId, $advId, $welcomeMsg, $msgTime);
+                            $msg_stmt->execute();
+                        }
+                    }
+                }
+
+                // Channel 2: Adviser & SSC Management Desk (For Adviser and SSC Officers)
+                $mName = "{$cCode} Adviser & SSC Management Desk";
+                $mType = 'adviser_ssc';
+                $mDesc = "Executive consultation desk between faculty adviser and Supreme Student Council officers.";
+                if ($chan_stmt) {
+                    $chan_stmt->bind_param('ssisi', $mName, $mType, $cId, $mDesc, $advId);
+                    $chan_stmt->execute();
+                    $mChanId = (int)$chan_stmt->insert_id;
+
+                    if ($mChanId > 0 && $mem_stmt) {
+                        // Subscribe adviser
+                        if ($advId) {
+                            $mem_stmt->bind_param('ii', $mChanId, $advId);
+                            $mem_stmt->execute();
+                        }
+                        // Subscribe SSC officer(s)
+                        if ($ssc_user_id) {
+                            $mem_stmt->bind_param('ii', $mChanId, $ssc_user_id);
+                            $mem_stmt->execute();
+                        }
+
+                        // Initial coordination conversation
+                        if ($advId && $ssc_user_id && $msg_stmt) {
+                            $advMsg = "Good day SSC Council leaders. We are preparing our proposed activity calendar and project endorsements for the upcoming period.";
+                            $t1 = date('Y-m-d H:i:s', strtotime('-2 hours'));
+                            $msg_stmt->bind_param('iiss', $mChanId, $advId, $advMsg, $t1);
+                            $msg_stmt->execute();
+
+                            $sscMsg = "Good day Adviser! Received and acknowledged. Please ensure all proposal documents and venue conflict checks are submitted so we can proceed with endorsement.";
+                            $t2 = date('Y-m-d H:i:s', strtotime('-1 hour'));
+                            $msg_stmt->bind_param('iiss', $mChanId, $ssc_user_id, $sscMsg, $t2);
+                            $msg_stmt->execute();
+                        }
+                    }
+                }
+            }
+
+            if ($chan_stmt) $chan_stmt->close();
+            if ($mem_stmt) $mem_stmt->close();
+            if ($msg_stmt) $msg_stmt->close();
+        }
     }
 
     $messages[] = "✨ Database schemas patched, club metadata categorized, Faculty Advisers linked, authentic events seeded, and clean transactional tables ready for live user input.";
@@ -1260,7 +1449,10 @@ $expected_tables = [
     'permissions'               => 'Granular Module & Action Permissions Catalog',
     'role_permissions'          => 'Role-to-Permission Mapping Matrix',
     'user_roles'                => 'User-to-Role Granular Assignment Ledger',
-    'mfa_codes'                 => 'Multi-Factor Authentication (Email Verification Codes & OTP Security)'
+    'mfa_codes'                 => 'Multi-Factor Authentication (Email Verification Codes & OTP Security)',
+    'chat_channels'             => 'Inter-Club Communication Channels (Groups, Adviser-SSC & Direct)',
+    'chat_members'              => 'Channel Access & Member Subscriptions',
+    'chat_messages'             => 'Role-Governed Inter-Club & Management Chat Messages'
 ];
 
 $existing_tables = [];

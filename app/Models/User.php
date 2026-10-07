@@ -23,6 +23,8 @@ class User extends Authenticatable
         'password_hash',
         'profile_pic',
         'last_login',
+        'last_password_change',
+        'last_mfa_verified_at',
     ];
 
     protected $hidden = [
@@ -30,17 +32,17 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    /**
-     * Get the password for authentication.
-     */
+    protected $casts = [
+        'last_login' => 'datetime',
+        'last_password_change' => 'datetime',
+        'last_mfa_verified_at' => 'datetime',
+    ];
+
     public function getAuthPassword()
     {
         return $this->password_hash;
     }
 
-    /**
-     * Alias password attribute to password_hash
-     */
     public function getPasswordAttribute()
     {
         return $this->password_hash;
@@ -51,11 +53,43 @@ class User extends Authenticatable
         $this->attributes['password_hash'] = $value;
     }
 
-    /**
-     * Relationship to Student profile
-     */
     public function student()
     {
         return $this->hasOne(Student::class, 'user_id');
+    }
+
+    public function advisedClub()
+    {
+        return $this->hasOne(Club::class, 'adviser_user_id');
+    }
+
+    public function memberships()
+    {
+        return $this->hasMany(ClubMembership::class, 'user_id');
+    }
+
+    public function attendanceLogs()
+    {
+        return $this->hasMany(AttendanceLog::class, 'user_id');
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isSsc(): bool
+    {
+        return $this->role === 'ssc';
+    }
+
+    public function isClubAdviser(): bool
+    {
+        return $this->role === 'club_adviser';
+    }
+
+    public function isStudent(): bool
+    {
+        return $this->role === 'student';
     }
 }

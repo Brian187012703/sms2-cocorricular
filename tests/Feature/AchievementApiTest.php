@@ -13,6 +13,7 @@ class AchievementApiTest extends TestCase
             'username' => $username,
             'password' => $password,
         ]);
+
         return $loginRes->json('token') ?? '';
     }
 
@@ -26,8 +27,8 @@ class AchievementApiTest extends TestCase
     {
         $token = $this->getBearerToken('scc.admin', 'Bcp@Admin2026!');
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
-                         ->getJson('/api/achievements');
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/achievements');
 
         $response->assertStatus(200);
         $this->assertIsArray($response->json());
@@ -38,12 +39,12 @@ class AchievementApiTest extends TestCase
         $token = $this->getBearerToken('cssec.adviser', 'Bcp@Adviser2026!');
 
         // Club 2 (ACADS) is advised by Mark Velo, not Alex Reyes (CSSEC)
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/achievements', [
-                'club_id'     => 2,
-                'title'       => 'Unauthorized Hackathon 1st Place',
+                'club_id' => 2,
+                'title' => 'Unauthorized Hackathon 1st Place',
                 'competition' => 'Regional IT Competition',
-                'award_date'  => '2026-03-15',
+                'award_date' => '2026-03-15',
             ]);
 
         $response->assertStatus(403);
@@ -54,12 +55,12 @@ class AchievementApiTest extends TestCase
         $token = $this->getBearerToken('cssec.adviser', 'Bcp@Adviser2026!');
 
         // Club 1 (CSSEC) is advised by cssec.adviser
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/achievements', [
-                'club_id'     => 1,
-                'title'       => 'Authorized Tech Symposium Champion',
+                'club_id' => 1,
+                'title' => 'Authorized Tech Symposium Champion',
                 'competition' => 'National Inter-Collegiate Coding Olympiad',
-                'award_date'  => '2026-03-20',
+                'award_date' => '2026-03-20',
             ]);
 
         $response->assertStatus(201);
@@ -70,12 +71,12 @@ class AchievementApiTest extends TestCase
         $token = $this->getBearerToken('bsit.student', 'Bcp@Test2026!');
 
         // bsit.student is member of CSSEC (club 1), not ACADS (club 2)
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/achievements', [
-                'club_id'     => 2,
-                'title'       => 'Unauthorized Non-Member Achievement',
+                'club_id' => 2,
+                'title' => 'Unauthorized Non-Member Achievement',
                 'competition' => 'Engineering Robotics Expo',
-                'award_date'  => '2026-03-25',
+                'award_date' => '2026-03-25',
             ]);
 
         $response->assertStatus(403);

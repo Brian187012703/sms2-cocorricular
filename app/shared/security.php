@@ -507,7 +507,7 @@ function verify_club_adviser_scope(mysqli $conn, int $club_id, ?int $user_id = n
 }
 
 /**
- * Apply Standard Security Headers (Section 15)
+ * Apply Standard Security Headers & TLS 1.3 Transport Policy
  */
 function apply_security_headers(): void {
     if (headers_sent()) return;
@@ -515,6 +515,40 @@ function apply_security_headers(): void {
     header('X-Frame-Options: SAMEORIGIN');
     header('X-XSS-Protection: 1; mode=block');
     header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
+    header('Permissions-Policy: geolocation=(), microphone=(), camera=(self)');
+}
+
+/**
+ * Encrypt sensitive database information using AES-256-CBC with HMAC validation.
+ */
+function encrypt_aes256(string $plainText, ?string $key = null): string {
+    $encryptionKey = $key ?? (defined('APP_KEY') ? APP_KEY : hash('sha256', 'BCP_SECURE_ENCRYPTION_KEY_2026'));
+    $ivLength = openssl_cipher_iv_length('aes-256-cbc');
+    $iv = openssl_random_pseudo_bytes($ivLength);
+    $ciphertextRaw = openssl_encrypt($plainText, 'aes-256-cbc', substr($encryptionKey, 0, 32), OPENSSL_RAW_DATA, $iv);
+    $hmac = hash_hmac('sha256', $ciphertextRaw, $encryptionKey, true);
+    return base64_encode($iv . $hmac . $ciphertextRaw);
+}
+
+/**
+ * Decrypt AES-256-CBC encrypted ciphertext with HMAC integrity verification.
+ */
+function decrypt_aes256(string $encodedCiphertext, ?string $key = null): ?string {
+    $encryptionKey = $key ?? (defined('APP_KEY') ? APP_KEY : hash('sha256', 'BCP_SECURE_ENCRYPTION_KEY_2026'));
+    $raw = base64_decode($encodedCiphertext, true);
+    if (!$raw) return null;
+    $ivLength = openssl_cipher_iv_length('aes-256-cbc');
+    if (strlen($raw) < $ivLength + 32) return null;
+    $iv = substr($raw, 0, $ivLength);
+    $hmac = substr($raw, $ivLength, 32);
+    $ciphertextRaw = substr($raw, $ivLength + 32);
+    $calculatedHmac = hash_hmac('sha256', $ciphertextRaw, $encryptionKey, true);
+    if (!hash_equals($hmac, $calculatedHmac)) {
+        return null;
+    }
+    $decrypted = openssl_decrypt($ciphertextRaw, 'aes-256-cbc', substr($encryptionKey, 0, 32), OPENSSL_RAW_DATA, $iv);
+    return $decrypted !== false ? $decrypted : null;
 }
 
 // Auto-apply security headers

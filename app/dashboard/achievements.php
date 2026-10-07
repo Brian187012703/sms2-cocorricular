@@ -52,23 +52,31 @@ if ($sess_role === 'student') {
 
 // ── 5 Metric Cards Telemetry (Database Driven) ────────────────
 
-// 1. Pending Verifications
-$q_pending = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status = 'Pending'";
-$stmt = $conn->prepare($q_pending);
+// 1. Pending SSC Verification
+$q_pending_ssc = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status IN ('Pending SSC', 'Pending')";
+$stmt = $conn->prepare($q_pending_ssc);
 if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
 $stmt->execute();
-$stat_pending = (int)$stmt->get_result()->fetch_row()[0];
+$stat_pending_ssc = (int)$stmt->get_result()->fetch_row()[0];
 $stmt->close();
 
-// 2. Verified Achievements
-$q_verified = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status = 'Verified'";
-$stmt = $conn->prepare($q_verified);
+// 2. Pending Admin Clearance
+$q_pending_admin = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status = 'Pending Admin'";
+$stmt = $conn->prepare($q_pending_admin);
 if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
 $stmt->execute();
-$stat_verified = (int)$stmt->get_result()->fetch_row()[0];
+$stat_pending_admin = (int)$stmt->get_result()->fetch_row()[0];
 $stmt->close();
 
-// 3. Rejected Submissions
+// 3. Approved & Published Achievements
+$q_approved = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status IN ('Approved', 'Verified')";
+$stmt = $conn->prepare($q_approved);
+if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
+$stmt->execute();
+$stat_approved = (int)$stmt->get_result()->fetch_row()[0];
+$stmt->close();
+
+// 4. Rejected Submissions
 $q_rejected = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status = 'Rejected'";
 $stmt = $conn->prepare($q_rejected);
 if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
@@ -76,24 +84,8 @@ $stmt->execute();
 $stat_rejected = (int)$stmt->get_result()->fetch_row()[0];
 $stmt->close();
 
-// 4. Top Organizations (Participation / achievement distribution)
-$q_top = "SELECT c.code, c.name, COUNT(a.id) as cnt
-          FROM achievements a
-          JOIN clubs c ON c.id = a.club_id
-          $scope_where AND a.status = 'Verified'
-          GROUP BY a.club_id
-          ORDER BY cnt DESC, c.name ASC
-          LIMIT 1";
-$stmt = $conn->prepare($q_top);
-if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
-$stmt->execute();
-$top_row = $stmt->get_result()->fetch_assoc();
-$stmt->close();
-$stat_top_org = $top_row ? $top_row['code'] : 'None';
-$stat_top_org_count = $top_row ? (int)$top_row['cnt'] : 0;
-
-// 5. Achievements This Year (Annual achievement volume)
-$q_year = "SELECT COUNT(*) FROM achievements a $scope_where AND YEAR(a.award_date) = YEAR(CURDATE())";
+// 5. Achievements This Year
+$q_year = "SELECT COUNT(*) FROM achievements a $scope_where AND a.status IN ('Approved', 'Verified') AND YEAR(a.award_date) = YEAR(CURDATE())";
 $stmt = $conn->prepare($q_year);
 if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
 $stmt->execute();
@@ -104,13 +96,15 @@ $stmt->close();
 $sql = "SELECT a.id, a.title, a.competition, a.award_date, a.proof_file, a.status, a.notes, a.created_at,
                c.id AS club_id, c.name AS club_name, c.code AS club_code,
                u.id AS submitter_id, u.first_name AS sub_first, u.last_name AS sub_last, u.role AS sub_role,
-               v.id AS verifier_id, v.first_name AS ver_first, v.last_name AS ver_last, v.role AS ver_role
+               v.id AS verifier_id, v.first_name AS ver_first, v.last_name AS ver_last, v.role AS ver_role,
+               ap.id AS approver_id, ap.first_name AS app_first, ap.last_name AS app_last, ap.role AS app_role
         FROM achievements a
         JOIN clubs c ON c.id = a.club_id
         JOIN users u ON u.id = a.submitted_by
         LEFT JOIN users v ON v.id = a.verified_by
+        LEFT JOIN users ap ON ap.id = a.approved_by
         $scope_where
-        ORDER BY FIELD(a.status, 'Pending', 'Verified', 'Rejected'), a.award_date DESC, a.created_at DESC";
+        ORDER BY FIELD(a.status, 'Pending SSC', 'Pending', 'Pending Admin', 'Approved', 'Verified', 'Rejected'), a.award_date DESC, a.created_at DESC";
 $stmt = $conn->prepare($sql);
 if ($scope_params) $stmt->bind_param($scope_types, ...$scope_params);
 $stmt->execute();
@@ -153,7 +147,8 @@ if ($sess_role === 'club_adviser') {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Achievements & Organizational Recognition – BCP Co-Curricular Portal</title>
+  <meta name="csrf-token" content="<?= csrf_token() ?>"/>
+  <title>Achievements &amp; Organizational Recognition – BCP Co-Curricular Portal</title>
   <link rel="stylesheet" href="../css/dashboard.css?v=<?= filemtime(__DIR__ . '/../css/dashboard.css') ?>"/>
   <link rel="stylesheet" href="../css/page-loader.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
@@ -217,7 +212,7 @@ if ($sess_role === 'club_adviser') {
       backdrop-filter: blur(3px);
     }
     .modal-overlay.active {
-      display: flex;
+      display: flex !important;
       animation: modalFadeIn 0.2s ease;
     }
     @keyframes modalFadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -362,27 +357,27 @@ require_once __DIR__ . '/../shared/sidebar.php';
       <!-- 5 Metric Cards (Pure Database-Driven & Zero Hardcoded Definitions) -->
       <div class="metrics-grid-5">
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-hourglass-half" style="color:#d97706;"></i> Pending Verifications</div>
-          <div class="card-amount"><?= number_format($stat_pending) ?></div>
+          <div class="card-label"><i class="fa-solid fa-clock" style="color:#d97706;"></i> Pending SSC</div>
+          <div class="card-amount"><?= number_format($stat_pending_ssc) ?></div>
         </div>
 
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> Verified Achievements</div>
-          <div class="card-amount"><?= number_format($stat_verified) ?></div>
+          <div class="card-label"><i class="fa-solid fa-hourglass-half" style="color:#7e22ce;"></i> Pending Admin</div>
+          <div class="card-amount"><?= number_format($stat_pending_admin) ?></div>
         </div>
 
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-circle-xmark" style="color:#dc2626;"></i> Rejected Submissions</div>
+          <div class="card-label"><i class="fa-solid fa-circle-check" style="color:#16a34a;"></i> Approved &amp; Published</div>
+          <div class="card-amount"><?= number_format($stat_approved) ?></div>
+        </div>
+
+        <div class="info-card">
+          <div class="card-label"><i class="fa-solid fa-circle-xmark" style="color:#dc2626;"></i> Rejected</div>
           <div class="card-amount"><?= number_format($stat_rejected) ?></div>
         </div>
 
         <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-sitemap" style="color:#2563eb;"></i> Top Organizations</div>
-          <div class="card-amount" style="font-size:1.35rem;"><?= htmlspecialchars($stat_top_org) ?></div>
-        </div>
-
-        <div class="info-card">
-          <div class="card-label"><i class="fa-solid fa-calendar-check" style="color:#9333ea;"></i> Achievements This Year</div>
+          <div class="card-label"><i class="fa-solid fa-calendar-check" style="color:#2563eb;"></i> Achievements This Year</div>
           <div class="card-amount"><?= number_format($stat_this_year) ?></div>
         </div>
       </div>
@@ -395,11 +390,14 @@ require_once __DIR__ . '/../shared/sidebar.php';
             <button type="button" class="status-tab active" data-filter="all" onclick="filterStatus('all', this)">
               All <span style="font-size:0.75rem; background:#e2e8f0; color:#1e293b; padding:1px 6px; border-radius:10px;"><?= count($achievements) ?></span>
             </button>
-            <button type="button" class="status-tab" data-filter="Pending" onclick="filterStatus('Pending', this)">
-              Pending <span style="font-size:0.75rem; background:#fef3c7; color:#b45309; padding:1px 6px; border-radius:10px;"><?= $stat_pending ?></span>
+            <button type="button" class="status-tab" data-filter="Pending SSC" onclick="filterStatus('Pending SSC', this)">
+              Pending SSC <span style="font-size:0.75rem; background:#fef3c7; color:#b45309; padding:1px 6px; border-radius:10px;"><?= $stat_pending_ssc ?></span>
             </button>
-            <button type="button" class="status-tab" data-filter="Verified" onclick="filterStatus('Verified', this)">
-              Verified <span style="font-size:0.75rem; background:#dcfce7; color:#15803d; padding:1px 6px; border-radius:10px;"><?= $stat_verified ?></span>
+            <button type="button" class="status-tab" data-filter="Pending Admin" onclick="filterStatus('Pending Admin', this)">
+              Pending Admin <span style="font-size:0.75rem; background:#f3e8ff; color:#7e22ce; padding:1px 6px; border-radius:10px;"><?= $stat_pending_admin ?></span>
+            </button>
+            <button type="button" class="status-tab" data-filter="Approved" onclick="filterStatus('Approved', this)">
+              Approved <span style="font-size:0.75rem; background:#dcfce7; color:#15803d; padding:1px 6px; border-radius:10px;"><?= $stat_approved ?></span>
             </button>
             <button type="button" class="status-tab" data-filter="Rejected" onclick="filterStatus('Rejected', this)">
               Rejected <span style="font-size:0.75rem; background:#fee2e2; color:#b91c1c; padding:1px 6px; border-radius:10px;"><?= $stat_rejected ?></span>
@@ -410,8 +408,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
               <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:0.85rem;"></i>
               <input type="text" id="achSearchInput" placeholder="Filter achievements..." oninput="filterAchTable()" style="width:100%; padding:8px 12px 8px 34px; border:1.5px solid #cbd5e1; border-radius:8px; font-size:0.85rem; outline:none; box-sizing:border-box;"/>
             </div>
-            <?php if (can('achievements.submit')): ?>
-            <button type="button" class="card-btn" id="openSubmitBtn" style="background:#2563eb; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px; display:inline-flex; align-items:center; gap:8px; border:none; cursor:pointer; font-size:0.85rem; white-space:nowrap; box-shadow:0 2px 6px rgba(37,99,235,0.22);">
+            <?php if (in_array($sess_role, ['club_adviser', 'admin'])): ?>
+            <button type="button" class="card-btn" id="openSubmitBtn" onclick="openSubmitModal()" style="background:#2563eb; color:#fff; font-weight:700; padding:8px 16px; border-radius:8px; display:inline-flex; align-items:center; gap:8px; border:none; cursor:pointer; font-size:0.85rem; white-space:nowrap; box-shadow:0 2px 6px rgba(37,99,235,0.22);">
               <i class="fa-solid fa-plus-circle"></i> Submit Achievement
             </button>
             <?php endif; ?>
@@ -434,9 +432,8 @@ require_once __DIR__ . '/../shared/sidebar.php';
                 <th>Competition</th>
                 <th>Award Date</th>
                 <th>Submitted By</th>
-                <th>Evidence</th>
                 <th>Status</th>
-                <th>Verified By</th>
+                <th>Verification Flow</th>
                 <th style="text-align:center;">Action</th>
               </tr>
             </thead>
@@ -477,45 +474,49 @@ require_once __DIR__ . '/../shared/sidebar.php';
                   <span style="font-size:0.70rem; color:#64748b; text-transform:capitalize;"><?= htmlspecialchars(str_replace('_', ' ', $a['sub_role'])) ?></span>
                 </td>
 
-                <!-- 6. Evidence -->
+                <!-- 6. Status -->
                 <td>
-                  <?php if (!empty($a['proof_file'])): ?>
-                    <button type="button" class="card-btn" style="padding:4px 8px; font-size:0.75rem; background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; border-radius:6px; cursor:pointer;" onclick="openProofModal(<?= htmlspecialchars(json_encode($a), ENT_QUOTES) ?>)">
-                      <i class="fa-solid fa-paperclip"></i> View Proof
-                    </button>
+                  <?php if (in_array($a['status'], ['Approved', 'Verified'])): ?>
+                    <span class="badge-status badge-verified" style="background:#dcfce7; color:#15803d;"><i class="fa-solid fa-circle-check"></i> Approved</span>
+                  <?php elseif ($a['status'] === 'Pending Admin'): ?>
+                    <span class="badge-status badge-pending-admin" style="background:#f3e8ff; color:#7e22ce;"><i class="fa-solid fa-hourglass-half"></i> Pending Admin</span>
+                  <?php elseif (in_array($a['status'], ['Pending SSC', 'Pending'])): ?>
+                    <span class="badge-status badge-pending" style="background:#fef3c7; color:#b45309;"><i class="fa-solid fa-clock"></i> Pending SSC</span>
                   <?php else: ?>
-                    <span style="color:#94a3b8; font-size:0.76rem; font-style:italic;">No attachment</span>
+                    <span class="badge-status badge-rejected" style="background:#fee2e2; color:#b91c1c;"><i class="fa-solid fa-circle-xmark"></i> Rejected</span>
                   <?php endif; ?>
                 </td>
 
-                <!-- 7. Status -->
+                <!-- 7. Verification Flow (SSC & Admin) -->
                 <td>
-                  <?php if ($a['status'] === 'Verified'): ?>
-                    <span class="badge-status badge-verified"><i class="fa-solid fa-circle-check"></i> Verified</span>
-                  <?php elseif ($a['status'] === 'Pending'): ?>
-                    <span class="badge-status badge-pending"><i class="fa-solid fa-clock"></i> Pending</span>
-                  <?php else: ?>
-                    <span class="badge-status badge-rejected"><i class="fa-solid fa-circle-xmark"></i> Rejected</span>
-                  <?php endif; ?>
+                  <div style="font-size:0.78rem; line-height:1.4;">
+                    <?php if (!empty($a['ver_first'])): ?>
+                      <div style="color:#0f172a;">
+                        <span style="font-size:0.68rem; background:#eff6ff; color:#2563eb; padding:1px 5px; border-radius:4px; font-weight:700;">SSC</span>
+                        <?= htmlspecialchars($a['ver_first'] . ' ' . $a['ver_last']) ?>
+                      </div>
+                    <?php else: ?>
+                      <div style="color:#d97706; font-size:0.74rem;"><i class="fa-solid fa-clock"></i> Awaiting SSC</div>
+                    <?php endif; ?>
+
+                    <?php if (!empty($a['app_first'])): ?>
+                      <div style="color:#0f172a; margin-top:2px;">
+                        <span style="font-size:0.68rem; background:#f0fdf4; color:#16a34a; padding:1px 5px; border-radius:4px; font-weight:700;">ADMIN</span>
+                        <?= htmlspecialchars($a['app_first'] . ' ' . $a['app_last']) ?>
+                      </div>
+                    <?php elseif ($a['status'] === 'Pending Admin'): ?>
+                      <div style="color:#7e22ce; font-size:0.74rem; margin-top:2px;"><i class="fa-solid fa-hourglass-half"></i> Awaiting Admin</div>
+                    <?php endif; ?>
+                  </div>
                 </td>
 
-                <!-- 8. Verified By -->
-                <td>
-                  <?php if (!empty($a['ver_first'])): ?>
-                    <div style="font-weight:600; color:#0f172a; font-size:0.84rem;"><?= htmlspecialchars($a['ver_first'] . ' ' . $a['ver_last']) ?></div>
-                    <span style="font-size:0.68rem; background:#eff6ff; color:#2563eb; padding:1px 5px; border-radius:4px; font-weight:700;"><?= strtoupper(htmlspecialchars($a['ver_role'] ?? 'SSC')) ?></span>
-                  <?php else: ?>
-                    <span style="color:#94a3b8; font-style:italic; font-size:0.78rem;">Awaiting Review</span>
-                  <?php endif; ?>
-                </td>
-
-                <!-- 9. Action (View proof / verify / reject / clarify) -->
+                <!-- 8. Action (Verify / Approve / Reject / Clarify / Details) -->
                 <td>
                   <div class="action-btn-group" style="justify-content:center; gap:4px; flex-wrap:nowrap;">
-                    <?php if (can_any(['achievements.verify.ssc', 'achievements.admin'])): ?>
-                      <?php if ($a['status'] === 'Pending'): ?>
-                        <button type="button" class="card-btn" style="background:#16a34a; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Verify and endorse achievement" onclick="verifyAch(<?= $a['id'] ?>, 'verify')">
-                          <i class="fa-solid fa-check"></i> Verify
+                    <?php if ($sess_role === 'ssc'): ?>
+                      <?php if (in_array($a['status'], ['Pending SSC', 'Pending'])): ?>
+                        <button type="button" class="card-btn" style="background:#16a34a; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Verify achievement and forward to Admin" onclick="verifyAch(<?= $a['id'] ?>, 'verify_ssc')">
+                          <i class="fa-solid fa-check"></i> Verify &amp; Pass to Admin
                         </button>
                         <button type="button" class="card-btn btn-danger" style="padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:pointer; white-space:nowrap;" title="Reject submission" onclick="openRejectModal(<?= $a['id'] ?>, '<?= htmlspecialchars(addslashes($a['title'])) ?>')">
                           <i class="fa-solid fa-times"></i> Reject
@@ -523,20 +524,32 @@ require_once __DIR__ . '/../shared/sidebar.php';
                         <button type="button" class="card-btn" style="background:#f59e0b; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Request Clarification" onclick="openClarifyModal(<?= $a['id'] ?>, '<?= htmlspecialchars(addslashes($a['title'])) ?>')">
                           <i class="fa-solid fa-comment-dots"></i> Clarify
                         </button>
-                      <?php else: ?>
-                        <button type="button" class="card-btn btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; border:1px solid #cbd5e1; padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:not-allowed; opacity:0.65; white-space:nowrap;" title="Achievement already <?= htmlspecialchars(strtolower($a['status'])) ?>">
-                          <i class="fa-solid fa-check"></i> Verify
+                      <?php endif; ?>
+                    <?php elseif ($sess_role === 'admin'): ?>
+                      <?php if ($a['status'] === 'Pending Admin'): ?>
+                        <button type="button" class="card-btn" style="background:#2563eb; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Approve and post to Student Org Directory" onclick="approveAch(<?= $a['id'] ?>)">
+                          <i class="fa-solid fa-circle-check"></i> Approve &amp; Publish
                         </button>
-                        <button type="button" class="card-btn btn-disabled" disabled style="background:#e2e8f0; color:#94a3b8; border:1px solid #cbd5e1; padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:not-allowed; opacity:0.65; white-space:nowrap;" title="Rejection unavailable (Status: <?= htmlspecialchars($a['status']) ?>)">
+                        <button type="button" class="card-btn btn-danger" style="padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:pointer; white-space:nowrap;" title="Reject submission" onclick="openRejectModal(<?= $a['id'] ?>, '<?= htmlspecialchars(addslashes($a['title'])) ?>')">
                           <i class="fa-solid fa-times"></i> Reject
                         </button>
-                        <button type="button" class="card-btn" style="background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:pointer; white-space:nowrap;" title="View/Update Clarification Note" onclick="openClarifyModal(<?= $a['id'] ?>, '<?= htmlspecialchars(addslashes($a['title'])) ?>')">
+                        <button type="button" class="card-btn" style="background:#f59e0b; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Request Clarification" onclick="openClarifyModal(<?= $a['id'] ?>, '<?= htmlspecialchars(addslashes($a['title'])) ?>')">
                           <i class="fa-solid fa-comment-dots"></i> Clarify
+                        </button>
+                      <?php elseif (in_array($a['status'], ['Pending SSC', 'Pending'])): ?>
+                        <button type="button" class="card-btn" style="background:#16a34a; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Verify as SSC and advance to Pending Admin" onclick="verifyAch(<?= $a['id'] ?>, 'verify_ssc')">
+                          <i class="fa-solid fa-check"></i> Verify (SSC)
+                        </button>
+                        <button type="button" class="card-btn" style="background:#2563eb; color:#fff; padding:4px 8px; font-size:0.73rem; border-radius:6px; border:none; cursor:pointer; white-space:nowrap;" title="Directly Approve and Publish" onclick="approveAch(<?= $a['id'] ?>)">
+                          <i class="fa-solid fa-circle-check"></i> Direct Approve
+                        </button>
+                        <button type="button" class="card-btn btn-danger" style="padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:pointer; white-space:nowrap;" title="Reject submission" onclick="openRejectModal(<?= $a['id'] ?>, '<?= htmlspecialchars(addslashes($a['title'])) ?>')">
+                          <i class="fa-solid fa-times"></i> Reject
                         </button>
                       <?php endif; ?>
                     <?php endif; ?>
                     <!-- Universal View Details & Proof button -->
-                    <button type="button" class="card-btn" style="background:#f8fafc; color:#334155; border:1px solid #cbd5e1; padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:pointer; white-space:nowrap;" title="View Details & Proof" onclick="openProofModal(<?= htmlspecialchars(json_encode($a), ENT_QUOTES) ?>)">
+                    <button type="button" class="card-btn" style="background:#f8fafc; color:#334155; border:1px solid #cbd5e1; padding:4px 8px; font-size:0.73rem; border-radius:6px; cursor:pointer; white-space:nowrap;" title="View Details & Proof" onclick="openProofModal(<?= (int)$a['id'] ?>)">
                       <i class="fa-solid fa-eye"></i> Details
                     </button>
                   </div>
@@ -684,6 +697,22 @@ require_once __DIR__ . '/../shared/sidebar.php';
 <script src="../js/dashboard.js?v=<?= filemtime(__DIR__ . '/../js/dashboard.js') ?>"></script>
 <script src="../js/table-pagination.js"></script>
 <script>
+// -- CSRF Token & Data Registry --------------------------------
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '<?= csrf_token() ?>';
+const achDataList = <?= json_encode($achievements, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?> || [];
+const achDataMap = {};
+achDataList.forEach(item => { if (item && item.id) achDataMap[item.id] = item; });
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 // -- Alert Helper ----------------------------------------------
 function showAlert(msg, type) {
   const el = document.getElementById('achAlert');
@@ -723,10 +752,25 @@ function applyFilters() {
 
 // -- Submit Modal Handling ------------------------------------
 const submitModal = document.getElementById('submitAchModal');
-document.getElementById('openSubmitBtn')?.addEventListener('click', () => { submitModal?.classList.add('active'); });
-document.getElementById('closeAchModal')?.addEventListener('click', () => { submitModal?.classList.remove('active'); });
-document.getElementById('cancelAchBtn')?.addEventListener('click', () => { submitModal?.classList.remove('active'); });
-submitModal?.addEventListener('click', e => { if (e.target === submitModal) submitModal.classList.remove('active'); });
+
+function openSubmitModal() {
+  if (!submitModal) return;
+  submitModal.style.display = 'flex';
+  submitModal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeSubmitModal() {
+  if (!submitModal) return;
+  submitModal.classList.remove('active');
+  submitModal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+document.getElementById('openSubmitBtn')?.addEventListener('click', openSubmitModal);
+document.getElementById('closeAchModal')?.addEventListener('click', closeSubmitModal);
+document.getElementById('cancelAchBtn')?.addEventListener('click', closeSubmitModal);
+submitModal?.addEventListener('click', e => { if (e.target === submitModal) closeSubmitModal(); });
 
 document.getElementById('submitAchBtn')?.addEventListener('click', function() {
   const title       = document.getElementById('achTitle').value.trim();
@@ -745,6 +789,7 @@ document.getElementById('submitAchBtn')?.addEventListener('click', function() {
   this.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Submitting...';
 
   const fd = new FormData();
+  if (CSRF_TOKEN) fd.set('csrf_token', CSRF_TOKEN);
   fd.set('action', 'submit');
   fd.set('title', title);
   fd.set('competition', competition);
@@ -761,7 +806,7 @@ document.getElementById('submitAchBtn')?.addEventListener('click', function() {
       this.disabled = false;
       this.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Submit for Verification';
       if (data.success) {
-        submitModal.classList.remove('active');
+        closeSubmitModal();
         showAlert(data.message || 'Achievement submitted for SSC verification.', 'success');
         ['achTitle','achCompetition','achDate','achNotes'].forEach(id => {
           const el = document.getElementById(id);
@@ -782,10 +827,28 @@ document.getElementById('submitAchBtn')?.addEventListener('click', function() {
 
 // -- Proof & Details Modal ------------------------------------
 const proofModal = document.getElementById('proofDetailsModal');
-function closeProofModal() { proofModal?.classList.remove('active'); }
+
+function closeProofModal() {
+  if (proofModal) {
+    proofModal.classList.remove('active');
+    proofModal.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+}
+
 proofModal?.addEventListener('click', e => { if (e.target === proofModal) closeProofModal(); });
 
-function openProofModal(item) {
+function openProofModal(itemOrId) {
+  let item = null;
+  if (typeof itemOrId === 'object' && itemOrId !== null) {
+    item = itemOrId;
+  } else if (achDataMap[itemOrId]) {
+    item = achDataMap[itemOrId];
+  } else if (Array.isArray(achDataList)) {
+    item = achDataList.find(a => a.id == itemOrId) || null;
+  }
+  if (!item) return;
+
   const body = document.getElementById('proofModalBody');
   if (!body) return;
 
@@ -810,7 +873,7 @@ function openProofModal(item) {
           <div style="display:flex; align-items:center; gap:10px;">
             <i class="fa-solid fa-file-pdf" style="font-size:2rem; color:#dc2626;"></i>
             <div>
-              <div style="font-weight:600; color:#0f172a; font-size:0.88rem;">${item.proof_file}</div>
+              <div style="font-weight:600; color:#0f172a; font-size:0.88rem;">${escapeHtml(item.proof_file)}</div>
               <div style="font-size:0.75rem; color:#64748b;">PDF Document Attachment</div>
             </div>
           </div>
@@ -823,19 +886,21 @@ function openProofModal(item) {
   }
 
   let statusBadge = '';
-  if (item.status === 'Verified') {
-    statusBadge = '<span class="badge-status badge-verified"><i class="fa-solid fa-circle-check"></i> Verified</span>';
-  } else if (item.status === 'Pending') {
-    statusBadge = '<span class="badge-status badge-pending"><i class="fa-solid fa-clock"></i> Pending</span>';
+  if (item.status === 'Approved' || item.status === 'Verified') {
+    statusBadge = '<span class="badge-status badge-verified" style="background:#dcfce7; color:#15803d;"><i class="fa-solid fa-circle-check"></i> Approved</span>';
+  } else if (item.status === 'Pending Admin') {
+    statusBadge = '<span class="badge-status badge-pending-admin" style="background:#f3e8ff; color:#7e22ce;"><i class="fa-solid fa-hourglass-half"></i> Pending Admin</span>';
+  } else if (item.status === 'Pending SSC' || item.status === 'Pending') {
+    statusBadge = '<span class="badge-status badge-pending" style="background:#fef3c7; color:#b45309;"><i class="fa-solid fa-clock"></i> Pending SSC</span>';
   } else {
-    statusBadge = '<span class="badge-status badge-rejected"><i class="fa-solid fa-circle-xmark"></i> Rejected</span>';
+    statusBadge = '<span class="badge-status badge-rejected" style="background:#fee2e2; color:#b91c1c;"><i class="fa-solid fa-circle-xmark"></i> Rejected</span>';
   }
 
   body.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:14px;">
       <div>
-        <h4 style="margin:0; font-size:1.15rem; color:#0f172a; font-weight:700;">${item.title}</h4>
-        <div style="color:#2563eb; font-weight:600; font-size:0.88rem; margin-top:2px;">${item.competition}</div>
+        <h4 style="margin:0; font-size:1.15rem; color:#0f172a; font-weight:700;">${escapeHtml(item.title)}</h4>
+        <div style="color:#2563eb; font-weight:600; font-size:0.88rem; margin-top:2px;">${escapeHtml(item.competition)}</div>
       </div>
       <div>${statusBadge}</div>
     </div>
@@ -843,26 +908,30 @@ function openProofModal(item) {
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; font-size:0.84rem;">
       <div style="background:#f8fafc; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0;">
         <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Recipient Organization</span>
-        <strong style="color:#0f172a;">${item.club_name} (${item.club_code})</strong>
+        <strong style="color:#0f172a;">${escapeHtml(item.club_name)} (${escapeHtml(item.club_code)})</strong>
       </div>
       <div style="background:#f8fafc; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0;">
         <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Date of Recognition</span>
-        <strong style="color:#0f172a;">${item.award_date}</strong>
+        <strong style="color:#0f172a;">${escapeHtml(item.award_date)}</strong>
       </div>
       <div style="background:#f8fafc; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0;">
-        <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Submitted By</span>
-        <strong style="color:#0f172a;">${item.sub_first} ${item.sub_last}</strong> (${item.sub_role})
+        <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Submitted By (Adviser)</span>
+        <strong style="color:#0f172a;">${escapeHtml(item.sub_first)} ${escapeHtml(item.sub_last)}</strong> (${escapeHtml(item.sub_role || 'club_adviser')})
       </div>
       <div style="background:#f8fafc; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0;">
-        <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Verified By</span>
-        <strong style="color:#0f172a;">${item.ver_first ? (item.ver_first + ' ' + item.ver_last) : 'Awaiting Review'}</strong>
+        <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Stage 2: SSC Verification</span>
+        <strong style="color:#0f172a;">${item.ver_first ? (escapeHtml(item.ver_first) + ' ' + escapeHtml(item.ver_last)) : '<span style="color:#d97706;">Awaiting SSC</span>'}</strong>
+      </div>
+      <div style="background:#f8fafc; padding:10px 12px; border-radius:8px; border:1px solid #e2e8f0; grid-column: span 2;">
+        <span style="color:#64748b; font-size:0.75rem; font-weight:700; text-transform:uppercase; display:block;">Stage 3: Admin Approval</span>
+        <strong style="color:#0f172a;">${item.app_first ? (escapeHtml(item.app_first) + ' ' + escapeHtml(item.app_last) + ' (Approved)') : (item.status === 'Pending Admin' ? '<span style="color:#7e22ce;">Awaiting Admin Final Clearance</span>' : '<span style="color:#94a3b8;">Pending Review</span>')}</strong>
       </div>
     </div>
 
     ${item.notes ? `
     <div style="margin-bottom:16px; background:#eff6ff; border-left:4px solid #2563eb; padding:10px 14px; border-radius:0 8px 8px 0;">
       <div style="font-size:0.75rem; font-weight:700; color:#1e40af; text-transform:uppercase; margin-bottom:4px;">Notes &amp; Review Remarks</div>
-      <div style="font-size:0.86rem; color:#1e3a8a;">${item.notes}</div>
+      <div style="font-size:0.86rem; color:#1e3a8a;">${escapeHtml(item.notes)}</div>
     </div>
     ` : ''}
 
@@ -872,42 +941,67 @@ function openProofModal(item) {
     </div>
   `;
 
-  proofModal?.classList.add('active');
+  if (proofModal) {
+    proofModal.style.display = 'flex';
+    proofModal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
 }
 
 // -- Clarify Modal --------------------------------------------
 const clarifyModal = document.getElementById('clarifyModal');
-function closeClarifyModal() { clarifyModal?.classList.remove('active'); }
+
+function closeClarifyModal() {
+  if (clarifyModal) {
+    clarifyModal.classList.remove('active');
+    clarifyModal.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+}
+
 clarifyModal?.addEventListener('click', e => { if (e.target === clarifyModal) closeClarifyModal(); });
 
 function openClarifyModal(id, title) {
-  document.getElementById('clarifyAchId').value = id;
-  document.getElementById('clarifyAchTitle').textContent = 'Achievement: ' + title;
-  document.getElementById('clarifyNotes').value = '';
-  clarifyModal?.classList.add('active');
+  const idEl = document.getElementById('clarifyAchId');
+  const titleEl = document.getElementById('clarifyAchTitle');
+  const notesEl = document.getElementById('clarifyNotes');
+  if (idEl) idEl.value = id;
+  if (titleEl) titleEl.textContent = 'Achievement: ' + title;
+  if (notesEl) notesEl.value = '';
+  if (clarifyModal) {
+    clarifyModal.style.display = 'flex';
+    clarifyModal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
 }
 
-function submitClarify() {
+async function submitClarify() {
   const id    = document.getElementById('clarifyAchId').value;
   const notes = document.getElementById('clarifyNotes').value.trim();
   const btn   = document.getElementById('submitClarifyBtn');
 
   if (!notes) {
-    window.alert('Please enter clarification notes for the requester.', 'warning');
+    alert('Please enter clarification notes for the requester.');
     return;
   }
 
-  const confirmed = await window.showConfirmModal(
-    'Request Clarification?',
-    'Do you want to request clarification from the student for this achievement application?',
-    { type: 'warning', warning: true, confirmText: 'Yes, Send Clarification' }
-  );
+  let confirmed = true;
+  if (typeof window.showConfirmModal === 'function') {
+    confirmed = await window.showConfirmModal(
+      'Request Clarification?',
+      'Do you want to request clarification from the student for this achievement application?',
+      { type: 'warning', warning: true, confirmText: 'Yes, Send Clarification' }
+    );
+  } else {
+    confirmed = confirm('Do you want to request clarification from the student for this achievement application?');
+  }
   if (!confirmed) return;
 
   btn.disabled = true;
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending...';
 
   const fd = new FormData();
+  if (CSRF_TOKEN) fd.set('csrf_token', CSRF_TOKEN);
   fd.set('action', 'clarify');
   fd.set('id', id);
   fd.set('notes', notes);
@@ -922,26 +1016,41 @@ function submitClarify() {
         showAlert(data.message || 'Clarification request saved and sent.', 'success');
         setTimeout(() => location.reload(), 1200);
       } else {
-        window.alert(data.message || 'Failed to send clarification.', 'error');
+        alert(data.message || 'Failed to send clarification.');
       }
     })
     .catch(() => {
       btn.disabled = false;
       btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Send Clarification';
-      window.alert('Network error occurred.', 'error');
+      alert('Network error occurred.');
     });
 }
 
 // -- Reject Modal ---------------------------------------------
 const rejectModal = document.getElementById('rejectModal');
-function closeRejectModal() { rejectModal?.classList.remove('active'); }
+
+function closeRejectModal() {
+  if (rejectModal) {
+    rejectModal.classList.remove('active');
+    rejectModal.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+}
+
 rejectModal?.addEventListener('click', e => { if (e.target === rejectModal) closeRejectModal(); });
 
 function openRejectModal(id, title) {
-  document.getElementById('rejectAchId').value = id;
-  document.getElementById('rejectAchTitle').textContent = 'Achievement: ' + title;
-  document.getElementById('rejectNotes').value = '';
-  rejectModal?.classList.add('active');
+  const idEl = document.getElementById('rejectAchId');
+  const titleEl = document.getElementById('rejectAchTitle');
+  const notesEl = document.getElementById('rejectNotes');
+  if (idEl) idEl.value = id;
+  if (titleEl) titleEl.textContent = 'Achievement: ' + title;
+  if (notesEl) notesEl.value = '';
+  if (rejectModal) {
+    rejectModal.style.display = 'flex';
+    rejectModal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
 }
 
 async function submitReject() {
@@ -950,21 +1059,27 @@ async function submitReject() {
   const btn   = document.getElementById('submitRejectBtn');
 
   if (!notes) {
-    window.alert('Please provide a reason for rejection.', 'warning');
+    alert('Please provide a reason for rejection.');
     return;
   }
 
-  const confirmed = await window.showConfirmModal(
-    'Reject Achievement Application?',
-    'Do you want to reject this achievement application with the stated reason?',
-    { type: 'error', danger: true, confirmText: 'Yes, Reject Application' }
-  );
+  let confirmed = true;
+  if (typeof window.showConfirmModal === 'function') {
+    confirmed = await window.showConfirmModal(
+      'Reject Achievement Application?',
+      'Do you want to reject this achievement application with the stated reason?',
+      { type: 'error', danger: true, confirmText: 'Yes, Reject Application' }
+    );
+  } else {
+    confirmed = confirm('Do you want to reject this achievement application?');
+  }
   if (!confirmed) return;
 
   btn.disabled = true;
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Rejecting...';
 
   const fd = new FormData();
+  if (CSRF_TOKEN) fd.set('csrf_token', CSRF_TOKEN);
   fd.set('action', 'reject');
   fd.set('id', id);
   fd.set('notes', notes);
@@ -979,29 +1094,65 @@ async function submitReject() {
         showAlert(data.message || 'Achievement marked as Rejected.', 'success');
         setTimeout(() => location.reload(), 1200);
       } else {
-        window.alert(data.message || 'Failed to reject.', 'error');
+        alert(data.message || 'Failed to reject.');
       }
     })
     .catch(() => {
       btn.disabled = false;
       btn.innerHTML = '<i class="fa-solid fa-times"></i> Confirm Rejection';
-      window.alert('Network error occurred.', 'error');
+      alert('Network error occurred.');
     });
 }
 
 // -- Direct Verify Action (SSC / Admin) -----------------------
 async function verifyAch(id, action) {
-  if (action === 'verify') {
-    const confirmed = await window.showConfirmModal(
-      'Verify Achievement Application?',
-      'Do you want to verify and endorse this achievement application on the official ledger?',
-      { type: 'decision', confirmText: 'Yes, Verify & Endorse' }
+  let confirmed = true;
+  if (typeof window.showConfirmModal === 'function') {
+    confirmed = await window.showConfirmModal(
+      'Verify Achievement & Forward to Admin?',
+      'Do you want to verify and endorse this achievement and forward it to the Admin for final clearance?',
+      { type: 'decision', confirmText: 'Yes, Verify & Pass to Admin' }
     );
-    if (!confirmed) return;
+  } else {
+    confirmed = confirm('Do you want to verify and endorse this achievement and forward it to the Admin for final clearance?');
   }
+  if (!confirmed) return;
 
   const fd = new FormData();
-  fd.set('action', action);
+  if (CSRF_TOKEN) fd.set('csrf_token', CSRF_TOKEN);
+  fd.set('action', action || 'verify_ssc');
+  fd.set('id', id);
+
+  fetch('../shared/achievement_actions.php', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        showAlert(data.message, 'success');
+        setTimeout(() => location.reload(), 1200);
+      } else {
+        showAlert(data.message, 'error');
+      }
+    })
+    .catch(() => showAlert('Network error occurred.', 'error'));
+}
+
+// -- Stage 3: Admin Final Approval Action ---------------------
+async function approveAch(id) {
+  let confirmed = true;
+  if (typeof window.showConfirmModal === 'function') {
+    confirmed = await window.showConfirmModal(
+      'Approve & Publish Achievement?',
+      'Do you want to approve this achievement and officially publish it to the Student Organizations Directory?',
+      { type: 'decision', confirmText: 'Yes, Approve & Publish' }
+    );
+  } else {
+    confirmed = confirm('Do you want to approve this achievement and officially publish it to the Student Organizations Directory?');
+  }
+  if (!confirmed) return;
+
+  const fd = new FormData();
+  if (CSRF_TOKEN) fd.set('csrf_token', CSRF_TOKEN);
+  fd.set('action', 'approve_admin');
   fd.set('id', id);
 
   fetch('../shared/achievement_actions.php', { method: 'POST', body: fd })

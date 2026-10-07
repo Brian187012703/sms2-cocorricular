@@ -16,9 +16,11 @@ class Event extends Model
     protected $fillable = [
         'club_id',
         'event_type',
+        'audience_type',
         'title',
         'description',
         'event_date',
+        'end_time',
         'venue',
         'expected_attendees',
         'attachment',
@@ -26,6 +28,11 @@ class Event extends Model
         'endorsement_notes',
         'rejection_note',
         'created_by',
+    ];
+
+    protected $casts = [
+        'event_date' => 'datetime',
+        'end_time' => 'datetime',
     ];
 
     public function club()

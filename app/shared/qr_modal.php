@@ -115,10 +115,10 @@ if (isset($conn) && $conn instanceof mysqli) {
       <!-- Staff Student Badge Selector -->
       <div class="qr-picker-container">
         <label for="qrStudentPickerSelect" class="qr-picker-label">
-          <i class="fa-solid fa-users" style="color:#2563eb;"></i> Select Student Badge to View:
+          <i class="fa-solid fa-users" style="color:#2563eb;"></i> Select Student Badge:
         </label>
         <select id="qrStudentPickerSelect" class="form-control qr-picker-select" onchange="onQrStudentPickerChange(this.value)">
-          <option value="self">-- My Personal Staff Badge (<?= htmlspecialchars($qr_first . ' ' . $qr_last) ?>) --</option>
+          <option value="self">-- My Personal Badge (<?= htmlspecialchars($qr_first . ' ' . $qr_last) ?>) --</option>
           <optgroup label="Enrolled Students (16 Academic Programs)">
             <?php foreach ($all_students_list as $st): ?>
               <?php
@@ -141,21 +141,20 @@ if (isset($conn) && $conn instanceof mysqli) {
       <?php endif; ?>
 
       <div class="qr-badge-role" id="qrBadgeRoleBox">
-        <i class="fa-solid fa-id-badge"></i>
         <span id="qrBadgeRoleText"><?= htmlspecialchars($qr_role_lbl) ?></span>
       </div>
       <div class="qr-code-frame" id="qrCodeFrame">
-        <div class="qr-scan-line"></div>
         <div id="myQrCanvasBox" class="qr-canvas-box"></div>
       </div>
       <div class="qr-student-name" id="qrStudentNameText"><?= $qr_first . ' ' . $qr_last ?></div>
-      <div id="qrStudentNumBox" style="font-size:0.84rem; font-weight:700; color:#2563eb; margin:2px 0; <?= empty($qr_student_num) ? 'display:none;' : '' ?>">
-        <i class="fa-solid fa-id-card-clip"></i> <span id="qrStudentNumText"><?= htmlspecialchars($qr_student_num) ?></span>
+      <div id="qrStudentNumBox" class="qr-student-sub" style="<?= empty($qr_student_num) ? 'display:none;' : '' ?>">
+        ID: <span id="qrStudentNumText"><?= htmlspecialchars($qr_student_num) ?></span>
       </div>
-      <div id="qrCourseBox" style="font-size:0.76rem; color:#64748b; margin-bottom:4px;">
+      <div id="qrCourseBox" class="qr-student-course">
         <?= htmlspecialchars($qr_course . ' ' . $qr_year_sec) ?>
       </div>
-      <div class="qr-student-id"><strong id="qrPayloadText"><?= htmlspecialchars($qr_code_str) ?></strong></div>
+      <!-- Hidden technical payload pill to keep UI simple and clean -->
+      <div class="qr-student-id" style="display:none;"><strong id="qrPayloadText"><?= htmlspecialchars($qr_code_str) ?></strong></div>
       <div class="qr-action-btn-row">
         <button type="button" onclick="downloadQR()" class="btn-download-qr" id="btnDownloadQrBadge">
           <i class="fa-solid fa-download"></i> Download QR
@@ -186,20 +185,17 @@ if (isset($conn) && $conn instanceof mysqli) {
         </select>
       </div>
       <?php else: ?>
-      <!-- Student Event Check-in Banner -->
-      <div class="qr-info-banner" style="margin-bottom:10px;">
-        <div class="qr-banner-icon"><i class="fa-solid fa-circle-info"></i></div>
-        <div class="qr-banner-text">
-          <strong>Event Self Check-In</strong>
-          <span>Scan the venue <code>BCP-EVENT-{id}</code> QR poster.</span>
-        </div>
+      <!-- Student Event Check-in Subtle Guidance -->
+      <div class="qr-scan-guide">
+        <i class="fa-solid fa-qrcode"></i>
+        <span>Scan the event poster or enter code below</span>
       </div>
       <?php endif; ?>
 
       <!-- Camera Viewport -->
       <div class="qr-camera-wrap" id="qrCameraWrap" style="cursor:pointer;" title="Camera Viewport">
-        <div id="html5GlobalQrReader" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:12px;overflow:hidden;"></div>
-        <video id="qrGlobalVideo" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;border-radius:12px;"></video>
+        <div id="html5GlobalQrReader" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:14px;overflow:hidden;"></div>
+        <video id="qrGlobalVideo" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:cover;border-radius:14px;"></video>
         <canvas id="qrGlobalCanvas" style="display:none;"></canvas>
         <div class="qr-camera-overlay"></div>
         <div class="qr-scanner-line" id="qrGlobalScannerLine" style="display:none;"></div>
@@ -219,23 +215,23 @@ if (isset($conn) && $conn instanceof mysqli) {
       </div>
 
       <!-- Controls & Image Upload -->
-      <div style="display:flex; gap:8px; width:100%; margin-bottom:8px;">
-        <button class="qr-scan-start-btn" id="startGlobalScanBtn" type="button" style="flex:1; margin-top:0;">
+      <div class="qr-scanner-controls">
+        <button class="qr-scan-start-btn" id="startGlobalScanBtn" type="button">
           <i class="fa-solid fa-camera"></i> Start Scanner
         </button>
-        <button class="qr-scan-start-btn" id="globalUploadQrBtn" type="button" style="width:auto; padding:0 14px; margin-top:0; background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;" title="Upload QR badge image file">
+        <button class="qr-upload-btn" id="globalUploadQrBtn" type="button" title="Upload QR badge image file">
           <i class="fa-solid fa-image"></i>
         </button>
         <input type="file" id="globalQrFileInput" accept="image/*" style="display:none;" />
       </div>
 
       <!-- Manual Code Entry Row -->
-      <div style="display:flex; gap:6px; width:100%; margin-bottom:8px;">
-        <div style="position:relative; flex:1;">
-          <i class="fa-solid fa-barcode" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#94a3b8; font-size:0.8rem;"></i>
-          <input type="text" id="manualGlobalQrInput" placeholder="Enter QR ID or Student #" style="width:100%; height:34px; padding:0 8px 0 28px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.78rem; outline:none; box-sizing:border-box;" />
+      <div class="qr-manual-row">
+        <div class="qr-manual-input-box">
+          <i class="fa-solid fa-barcode"></i>
+          <input type="text" id="manualGlobalQrInput" placeholder="Enter QR ID or Student #" />
         </div>
-        <button type="button" id="manualGlobalQrSubmitBtn" style="height:34px; padding:0 12px; background:#2563eb; color:#fff; border:none; border-radius:6px; font-weight:600; font-size:0.78rem; cursor:pointer; display:flex; align-items:center; gap:4px; white-space:nowrap;">
+        <button type="button" id="manualGlobalQrSubmitBtn">
           <i class="fa-solid fa-check"></i> Submit
         </button>
       </div>

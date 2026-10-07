@@ -1490,6 +1490,7 @@ if ($adviser_club_id > 0) {
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <button type="button" class="btn-export-csv" onclick="exportReportToCSV()"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+          <button type="button" class="btn-export-csv" style="background:#107c41; color:#fff; border-color:#0b5e31;" onclick="exportReportToExcel()"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
           <button type="button" class="btn-print" onclick="window.print()"><i class="fa-solid fa-print"></i> Print / PDF</button>
           <button type="button" class="btn-close-report" onclick="closeReportOutput()" title="Close report popup"><i class="fa-solid fa-xmark"></i> Close</button>
         </div>
@@ -1709,6 +1710,37 @@ function exportReportToCSV() {
   const link = document.createElement('a');
   link.setAttribute('href', csvContent);
   const fname = (currentReportData.title || 'Report').replace(/[^a-zA-Z0-9]/g, '_') + '_' + Date.now() + '.csv';
+  link.setAttribute('download', fname);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function exportReportToExcel() {
+  if (!currentReportData || !currentReportData.columns || !currentReportData.data) {
+    alert('Please generate a report first before exporting.');
+    return;
+  }
+  const title = currentReportData.title || 'Report';
+  const cols = currentReportData.columns;
+  const rows = currentReportData.data;
+
+  let excelHtml = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
+  excelHtml += '<head><meta charset="utf-8"/><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>' + title.substring(0, 31).replace(/[\\/\\?\\*\\[\\]]/g, '') + '</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>';
+  excelHtml += '<table border="1"><thead><tr style="background:#0f172a; color:#ffffff; font-weight:bold;">';
+  cols.forEach(c => { excelHtml += '<th style="padding:6px 12px; background:#0f172a; color:#ffffff;">' + c + '</th>'; });
+  excelHtml += '</tr></thead><tbody>';
+  rows.forEach(r => {
+    excelHtml += '<tr>';
+    r.forEach(val => { excelHtml += '<td style="padding:4px 8px;">' + String(val !== null && val !== undefined ? val : '') + '</td>'; });
+    excelHtml += '</tr>';
+  });
+  excelHtml += '</tbody></table></body></html>';
+
+  const blob = new Blob([excelHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  const fname = title.replace(/[^a-zA-Z0-9]/g, '_') + '_' + Date.now() + '.xls';
   link.setAttribute('download', fname);
   document.body.appendChild(link);
   link.click();

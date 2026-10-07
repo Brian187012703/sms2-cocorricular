@@ -209,13 +209,6 @@ switch ($action) {
             }
             rRespond(false, 'Failed to upload Letter of Intent. Error code: ' . $_FILES['letter_intent']['error']);
         }
-        if (!empty($_FILES['letter_endorsement']['error']) && $_FILES['letter_endorsement']['error'] !== UPLOAD_ERR_OK && $_FILES['letter_endorsement']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['letter_endorsement']['error'] === UPLOAD_ERR_INI_SIZE || $_FILES['letter_endorsement']['error'] === UPLOAD_ERR_FORM_SIZE) {
-                rRespond(false, 'Letter of Endorsement exceeds the server upload limit.');
-            }
-            rRespond(false, 'Failed to upload Letter of Endorsement. Error code: ' . $_FILES['letter_endorsement']['error']);
-        }
-
         $letter_intent_path = null;
         if (!empty($_FILES['letter_intent']['name']) && $_FILES['letter_intent']['error'] === UPLOAD_ERR_OK) {
             if ($_FILES['letter_intent']['size'] > $max_bytes) {
@@ -243,32 +236,8 @@ switch ($action) {
             }
         }
 
+        // Students do not provide letter of endorsement; reserved exclusively for Faculty Adviser Stage 1 review
         $letter_endorsement_path = null;
-        if (!empty($_FILES['letter_endorsement']['name']) && $_FILES['letter_endorsement']['error'] === UPLOAD_ERR_OK) {
-            if ($_FILES['letter_endorsement']['size'] > $max_bytes) {
-                rRespond(false, 'Letter of Endorsement exceeds the 10MB size limit.');
-            }
-            $ext = strtolower(trim(pathinfo($_FILES['letter_endorsement']['name'], PATHINFO_EXTENSION)));
-            if (!in_array($ext, $allowed_exts, true)) {
-                rRespond(false, 'Invalid file type for Letter of Endorsement. Allowed formats: PDF, DOC, DOCX, JPG, PNG, WEBP.');
-            }
-            $mime = '';
-            if (function_exists('finfo_open')) {
-                $finfo = finfo_open(FILEINFO_MIME_TYPE);
-                $mime  = finfo_file($finfo, $_FILES['letter_endorsement']['tmp_name']);
-                finfo_close($finfo);
-            } elseif (function_exists('mime_content_type')) {
-                $mime = mime_content_type($_FILES['letter_endorsement']['tmp_name']);
-            }
-            if (!empty($mime) && !in_array($mime, $allowed_mimes, true)) {
-                rRespond(false, 'Invalid file content for Letter of Endorsement. Only genuine PDF, Word documents, and images are accepted.');
-            }
-
-            $fname = 'endorsement_' . $user_id . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-            if (move_uploaded_file($_FILES['letter_endorsement']['tmp_name'], $upload_dir . $fname)) {
-                $letter_endorsement_path = $fname;
-            }
-        }
 
         // Extract form fields & auto-populate from database
         $first_name    = trim($_POST['first_name'] ?? $_SESSION['first_name'] ?? '');
@@ -365,18 +334,31 @@ switch ($action) {
         $old_status = $cm['status'];
         if ($user_role === 'club_adviser') {
             $new_mem_status = 'Pending';
-            $adv_sql = ", adviser_review='Endorsed'";
+            $adv_letter = trim($_POST['letter_endorsement'] ?? $_POST['review_notes'] ?? '');
+            if (empty($adv_letter)) {
+                $adv_letter = "MEMORANDUM OF FACULTY ENDORSEMENT\n\nTo the Supreme Student Council (SSC):\nThis is to officially endorse the membership application of the candidate. The applicant has completed compliance verification and is recommended for admission.";
+            }
+            $esc_letter = $conn->real_escape_string($adv_letter);
+            $adv_sql = ", adviser_review='Endorsed', letter_endorsement='$esc_letter', review_notes='$esc_letter'";
             $ssc_sql = "";
-            $app_status = 'PENDING_SSC';
+            $app_status = 'Pending';
             $action_type = 'adviser_endorse';
-            $history_remarks = 'Application endorsed by Club Adviser';
-        } else {
-            $new_mem_status = 'Active';
+            $history_remarks = 'Application endorsed by Club Adviser with official Letter of Endorsement';
+        } elseif ($user_role === 'ssc') {
+            $new_mem_status = 'Pending';
             $adv_sql = "";
             $ssc_sql = ", ssc_review='Approved'";
-            $app_status = 'Approved';
+            $app_status = 'Pending';
             $action_type = 'ssc_approve';
-            $history_remarks = 'Application approved by SSC / System Administration';
+            $history_remarks = 'Application reviewed and endorsed by SSC; forwarded for Admin clearance';
+        } else {
+            // Admin final clearance and activation
+            $new_mem_status = 'Active';
+            $adv_sql = "";
+            $ssc_sql = ", ssc_review=IF(ssc_review='Pending SSC', 'Approved', ssc_review)";
+            $app_status = 'Approved';
+            $action_type = 'admin_approve';
+            $history_remarks = 'Application cleared and approved by System Administration';
         }
 
         $stmt = $conn->prepare(
@@ -387,7 +369,7 @@ switch ($action) {
         $stmt->close();
 
         // Sync club_applications
-        $app_up = $conn->prepare("UPDATE club_applications SET status=?, adviser_status=IF(?='club_adviser', 'Endorsed', adviser_status), ssc_status=IF(?!='club_adviser', 'Approved', ssc_status), reviewed_by=?, reviewed_at=NOW() $adv_sql $ssc_sql WHERE club_id=? AND user_id=? AND status IN ('Pending', 'PENDING_ADVISER', 'PENDING_SSC')");
+        $app_up = $conn->prepare("UPDATE club_applications SET status=?, adviser_status=IF(?='club_adviser', 'Endorsed', adviser_status), ssc_status=IF(?='ssc', 'Approved', ssc_status), reviewed_by=?, reviewed_at=NOW() $adv_sql $ssc_sql WHERE club_id=? AND user_id=? AND status IN ('Pending', 'PENDING_ADVISER', 'PENDING_SSC', 'PENDING_ADMIN')");
         $app_up->bind_param('sssiii', $app_status, $user_role, $user_role, $user_id, $cm['club_id'], $cm['user_id']);
         $app_up->execute();
         $app_up->close();
@@ -396,17 +378,22 @@ switch ($action) {
 
         if ($user_role === 'club_adviser') {
             push_notification($conn, (int)$cm['user_id'], 'Application Endorsed',
-                "Your application to join {$cm['club_name']} was endorsed by your Adviser and forwarded for SSC oversight.", 'info', 'club_application', $id, '../dashboard/roster.php');
+                "Your application to join {$cm['club_name']} was endorsed by your Adviser with official Letter of Endorsement and forwarded for SSC review.", 'info', 'club_application', $id, '../dashboard/roster.php');
+            $msg = 'Applicant endorsed with official Letter of Endorsement and forwarded to SSC.';
+        } elseif ($user_role === 'ssc') {
+            push_notification($conn, (int)$cm['user_id'], 'Application Reviewed by SSC',
+                "Your application to join {$cm['club_name']} was reviewed by the Supreme Student Council and forwarded for final Administrative clearance.", 'info', 'club_application', $id, '../dashboard/roster.php');
+            $msg = 'Applicant reviewed by SSC and forwarded to Administration for clearance.';
         } else {
             push_notification($conn, (int)$cm['user_id'], 'Membership Approved!',
                 "Your application to join {$cm['club_name']} has been approved! Welcome aboard!", 'success', 'club_membership', $id, '../dashboard/roster.php');
             // Auto-sync dedicated organization database
             require_once __DIR__ . '/org_db_manager.php';
             sync_org_data_to_dedicated_db($conn, (int)$cm['club_id']);
+            $msg = 'Applicant cleared and activated by Administration successfully.';
         }
 
         log_audit($conn, $user_id, 'roster_approve', 'club_memberships', $id, "Approved/Endorsed membership #$id");
-        $msg = ($user_role === 'club_adviser') ? 'Applicant endorsed and forwarded to SSC.' : 'Applicant approved successfully.';
         rRespond(true, $msg);
     }
 
@@ -580,16 +567,26 @@ switch ($action) {
         $types  = '';
 
         if ($user_role === 'club_adviser') {
-            $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
-            $cm->bind_param('i', $user_id);
-            $cm->execute();
-            $cm->bind_result($my_club_id);
-            $cm->fetch();
-            $cm->close();
+            $c_stmt = $conn->prepare("SELECT id FROM clubs WHERE adviser_user_id = ? AND status = 'Active' AND deleted_at IS NULL LIMIT 1");
+            $c_stmt->bind_param('i', $user_id);
+            $c_stmt->execute();
+            $c_res = $c_stmt->get_result()->fetch_assoc();
+            $c_stmt->close();
+            $my_club_id = $c_res['id'] ?? 0;
+            if (!$my_club_id) {
+                $cm = $conn->prepare("SELECT club_id FROM club_memberships WHERE user_id=? AND status='Active' LIMIT 1");
+                $cm->bind_param('i', $user_id);
+                $cm->execute();
+                $cm->bind_result($my_club_id);
+                $cm->fetch();
+                $cm->close();
+            }
             if (!empty($my_club_id)) {
                 $club_filter = 'AND cm.club_id = ?';
                 $params[] = (int)$my_club_id;
                 $types .= 'i';
+            } else {
+                $club_filter = 'AND 1=0';
             }
         } elseif (!empty($_GET['club_id']) || !empty($_POST['club_id'])) {
             $req_club_id = (int)($_GET['club_id'] ?? $_POST['club_id']);

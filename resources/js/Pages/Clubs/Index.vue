@@ -1,134 +1,123 @@
 <template>
-  <div class="min-h-screen bg-slate-950 text-slate-100 flex font-sans selection:bg-blue-500 selection:text-white">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-slate-900/90 backdrop-blur-xl border-r border-slate-800 flex flex-col justify-between p-4 shrink-0">
-      <div>
-        <div class="flex items-center space-x-3 px-2 py-4 mb-6 border-b border-slate-800">
-          <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-xl shadow-lg shadow-blue-500/30 text-white">
-            S
-          </div>
-          <div>
-            <h1 class="font-bold text-lg leading-none tracking-tight text-white">BCP SMS</h1>
-            <span class="text-xs text-blue-400 font-medium">Laravel &amp; Vue 3 Stack</span>
-          </div>
-        </div>
-
-        <nav class="space-y-1">
-          <a
-            href="/dashboard"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 00-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-            <span>Dashboard</span>
-          </a>
-          <a
-            href="/students"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-            <span>Student Roster</span>
-          </a>
-          <a
-            href="/clubs"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg bg-blue-600/20 text-blue-400 font-medium border border-blue-500/30 transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-            <span>Clubs &amp; Orgs</span>
-          </a>
-          <a
-            href="/achievements"
-            class="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-slate-200 font-medium transition"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
-            <span>Achievements</span>
-          </a>
-        </nav>
-      </div>
-
-      <div class="space-y-3">
-        <div class="p-3 bg-slate-950/60 rounded-xl border border-slate-800 flex items-center justify-between">
-          <div class="flex items-center space-x-2.5 truncate">
-            <div class="h-8 w-8 rounded-lg bg-blue-600/30 text-blue-400 font-bold flex items-center justify-center text-xs shrink-0 border border-blue-500/20">
-              {{ (currentUser?.first_name || 'U').charAt(0) }}
-            </div>
-            <div class="truncate text-xs">
-              <div class="font-bold text-white truncate">{{ currentUser?.first_name }} {{ currentUser?.last_name }}</div>
-              <div class="text-[10px] text-slate-400 capitalize font-mono">{{ currentUser?.role }}</div>
-            </div>
-          </div>
-          <button
-            type="button"
-            @click="logout"
-            title="Sign Out"
-            class="text-slate-400 hover:text-red-400 p-1.5 rounded-lg hover:bg-slate-800 transition shrink-0"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-          </button>
+  <AppLayout>
+    <div class="space-y-6">
+      <!-- Header -->
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-extrabold text-white tracking-tight">Recognized Student Organizations</h1>
+          <p class="text-sm text-slate-400 mt-1">
+            Directory of campus academic societies, special interest clubs, and cultural organizations.
+          </p>
         </div>
       </div>
-    </aside>
 
-    <!-- Main Content -->
-    <main class="flex-1 overflow-y-auto p-8 space-y-6">
-      <header class="pb-6 border-b border-slate-800">
-        <h2 class="text-2xl font-extrabold text-white tracking-tight">Accredited Campus Organizations</h2>
-        <p class="text-slate-400 text-sm mt-1">Recognized student governance bodies, academic societies, and interest clubs</p>
-      </header>
+      <!-- Filters -->
+      <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row gap-3 items-center justify-between">
+        <div class="w-full sm:w-80 relative">
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Search organization by name or code..."
+            class="w-full pl-9 pr-4 py-2 bg-slate-950/80 border border-slate-700/80 rounded-xl text-white placeholder-slate-500 text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            @keyup.enter="handleSearch"
+          />
+          <svg class="w-4 h-4 text-slate-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
 
-      <div v-if="clubs.length === 0" class="py-12 text-center text-slate-500 bg-slate-900/50 rounded-2xl border border-slate-800">
-        No clubs currently registered.
+        <div class="flex items-center space-x-2 w-full sm:w-auto">
+          <select
+            v-model="categoryFilter"
+            class="w-full sm:w-auto px-3 py-2 bg-slate-950/80 border border-slate-700/80 rounded-xl text-white text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            @change="handleSearch"
+          >
+            <option value="">All Categories</option>
+            <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+          </select>
+        </div>
       </div>
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+
+      <!-- Clubs Grid -->
+      <div v-if="clubs.data && clubs.data.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         <div
-          v-for="club in clubs"
-          :key="club.id"
-          class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 backdrop-blur-xl hover:border-blue-500/40 transition shadow-lg flex flex-col justify-between"
+          v-for="c in clubs.data"
+          :key="c.id"
+          class="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition flex flex-col justify-between space-y-4 shadow-lg"
         >
           <div>
-            <div class="flex items-center justify-between mb-3">
-              <span class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                {{ club.code }}
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                {{ c.code }}
               </span>
-              <span class="text-xs text-slate-400 font-medium px-2 py-0.5 rounded bg-slate-800">
-                {{ club.category }}
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                {{ c.status }}
               </span>
             </div>
-            <h3 class="font-bold text-base text-white mb-2">{{ club.name }}</h3>
-            <p class="text-xs text-slate-400 leading-relaxed">{{ club.description }}</p>
+
+            <h3 class="text-base font-bold text-white mt-2 leading-snug">{{ c.name }}</h3>
+            <p class="text-xs text-slate-400 mt-1 line-clamp-2">{{ c.description || 'Active BCP accredited student organization.' }}</p>
+
+            <div class="mt-4 space-y-1.5 text-xs text-slate-300">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">Category:</span>
+                <span class="font-medium text-white">{{ c.category }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">Program / Department:</span>
+                <span class="font-medium text-white">{{ c.program || 'Institutional' }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400">Faculty Adviser:</span>
+                <span class="font-medium text-blue-400 truncate max-w-[160px]">{{ c.adviser_name || 'Not assigned' }}</span>
+              </div>
+            </div>
           </div>
 
-          <div class="mt-5 pt-3.5 border-t border-slate-800/80 flex items-center justify-between text-xs">
-            <div class="text-slate-400">
-              Adviser: <span class="text-white font-medium">{{ club.adviser_name || (club.adviser?.first_name ? `${club.adviser.first_name} ${club.adviser.last_name}` : 'Assigned') }}</span>
-            </div>
-            <span
-              class="px-2 py-0.5 rounded text-[10px] font-semibold uppercase"
-              :class="club.status === 'Active' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-700/50 text-slate-400'"
+          <div class="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
+            <span class="text-slate-500 font-mono text-[11px]">{{ c.memberships_count || 0 }} Members</span>
+            <Link
+              v-if="userRole === 'student'"
+              href="/roster"
+              class="text-blue-400 hover:text-blue-300 font-semibold"
             >
-              {{ club.status }}
-            </span>
+              Apply to Join &rarr;
+            </Link>
           </div>
         </div>
       </div>
-    </main>
-  </div>
+
+      <!-- Empty State -->
+      <div v-else class="p-12 text-center rounded-2xl bg-slate-900/40 border border-slate-800">
+        <svg class="w-12 h-12 mx-auto text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+        <h3 class="mt-4 text-base font-bold text-white">No Organizations Found</h3>
+        <p class="text-xs text-slate-400 mt-1 max-w-sm mx-auto">No student clubs match the selected filters.</p>
+      </div>
+    </div>
+    <Pagination :page="clubs" />
+  </AppLayout>
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { usePage, router } from '@inertiajs/vue3';
+import Pagination from '@/Components/Pagination.vue';
+import { ref, computed } from 'vue';
+import { Link, usePage, router } from '@inertiajs/vue3';
+import AppLayout from '@/Layouts/AppLayout.vue';
 
 const props = defineProps({
-  clubs: {
-    type: Array,
-    default: () => [],
-  },
+  clubs: Object,
+  filters: Object,
+  categories: Array,
 });
 
 const page = usePage();
-const currentUser = computed(() => page.props.auth?.user || null);
+const userRole = computed(() => page.props.auth?.user?.role || 'student');
 
-const logout = () => {
-  router.post('/logout');
+const searchQuery = ref(props.filters?.search || '');
+const categoryFilter = ref(props.filters?.category || '');
+
+const handleSearch = () => {
+  router.get('/clubs', {
+    search: searchQuery.value,
+    category: categoryFilter.value,
+  }, { preserveState: true, replace: true });
 };
 </script>

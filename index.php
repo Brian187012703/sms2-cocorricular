@@ -1,11 +1,30 @@
 <?php
 // ============================================================
-//  INDEX.PHP — Laravel 11 + Vue 3 / Inertia Entry Point
-//  Directs all incoming traffic to the modern Laravel front controller
+//  INDEX.PHP — Root Entry Point & Smart Setup Router
 // ============================================================
-$target = 'public/';
-if (!empty($_SERVER['QUERY_STRING'])) {
-    $target .= '?' . $_SERVER['QUERY_STRING'];
+
+// If explicitly configured for Laravel frontend
+if (getenv('FRONTEND_DRIVER') === 'laravel' && file_exists(__DIR__ . '/public/index.php')) {
+    require __DIR__ . '/public/index.php';
+    exit;
 }
-header('Location: ' . $target);
+
+require_once __DIR__ . '/app/shared/db.php';
+
+// If DB connection error, route to setup wizard
+if (!isset($conn) || $conn->connect_error) {
+    header('Location: app/shared/setup.php?error=db_connect');
+    exit;
+}
+
+// Check if tables are installed
+$tableCheck = $conn->query("SHOW TABLES LIKE 'users'");
+
+if (!$tableCheck || $tableCheck->num_rows === 0) {
+    // Database empty -> auto-launch setup wizard
+    header('Location: app/shared/setup.php');
+} else {
+    // Database ready -> go to sign in
+    header('Location: app/auth/signin.php');
+}
 exit;

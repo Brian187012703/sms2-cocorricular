@@ -38,9 +38,9 @@ if (!empty($_SESSION['user_id'])) {
   }
 }
 
-// Check if user has an active pending Multi-Factor Authentication challenge (strictly 'ssc' or 'admin' roles)
+// Check if user has an active pending Multi-Factor Authentication challenge
 $mfa_pending = !empty($_SESSION['mfa_pending']) && !empty($_SESSION['mfa_user_id']);
-if ($mfa_pending && !in_array($_SESSION['mfa_role'] ?? '', ['ssc', 'admin'], true)) {
+if ($mfa_pending && !in_array($_SESSION['mfa_role'] ?? '', ['ssc', 'admin', 'club_adviser', 'student'], true)) {
   unset(
     $_SESSION['mfa_pending'], $_SESSION['mfa_user_id'], $_SESSION['mfa_username'],
     $_SESSION['mfa_email'], $_SESSION['mfa_name'], $_SESSION['mfa_role'],

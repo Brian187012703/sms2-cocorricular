@@ -24,6 +24,7 @@ class ClubMembership extends Model
         'letter_endorsement',
         'adviser_review',
         'ssc_review',
+        'admin_review',
         'review_notes',
     ];
 
