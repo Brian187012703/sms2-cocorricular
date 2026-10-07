@@ -59,12 +59,18 @@ if (!defined('DB_PORT')) define('DB_PORT', $port);
 
 $is_setup_script = (basename($_SERVER['PHP_SELF'] ?? '') === 'setup.php');
 
-// 3. Connect to MySQL server
-$conn = @new mysqli($host, $user, $pass, $is_setup_script ? '' : $db, $port);
+// 3. Connect to MySQL server with 3-second timeout to prevent cloud health hangs
+$conn = mysqli_init();
+if ($conn) {
+    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
+    @$conn->real_connect($host, $user, $pass, $is_setup_script ? '' : $db, $port);
+}
 
 // If database does not exist (MySQL error 1049: Unknown database), auto-connect and create it
-if (!$is_setup_script && $conn->connect_errno === 1049) {
-    $conn = @new mysqli($host, $user, $pass, '', $port);
+if (!$is_setup_script && $conn && $conn->connect_errno === 1049) {
+    $conn = mysqli_init();
+    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
+    @$conn->real_connect($host, $user, $pass, '', $port);
     if (!$conn->connect_error) {
         $conn->query("CREATE DATABASE IF NOT EXISTS `" . $db . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
         $conn->select_db($db);

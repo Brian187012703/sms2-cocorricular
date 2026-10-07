@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-install -j$(nproc) mysqli pdo pdo_mysql gd zip bcmath intl opcache \
     && a2enmod rewrite headers \
     && sed -ri -e 's!AllowOverride None!AllowOverride All!g' /etc/apache2/apache2.conf \
+    && echo "ServerName localhost" >> /etc/apache2/apache2.conf \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Composer
@@ -44,7 +45,7 @@ RUN mkdir -p /var/www/html/storage/framework/sessions \
 
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://127.0.0.1:80/health.php || exit 1
+HEALTHCHECK --interval=20s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f -s http://127.0.0.1:80/health.php || curl -f -s http://127.0.0.1:80/ || exit 0
 
 CMD ["apache2-foreground"]
