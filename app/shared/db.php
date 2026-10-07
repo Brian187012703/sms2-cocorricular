@@ -59,34 +59,44 @@ if (!defined('DB_PORT')) define('DB_PORT', $port);
 
 $is_setup_script = (basename($_SERVER['PHP_SELF'] ?? '') === 'setup.php');
 
-// 3. Connect to MySQL server with 3-second timeout to prevent cloud health hangs
-$conn = mysqli_init();
-if ($conn) {
-    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
-    @$conn->real_connect($host, $user, $pass, $is_setup_script ? '' : $db, $port);
-}
+// Disable throwing fatal exceptions on mysqli errors so we can handle them gracefully
+mysqli_report(MYSQLI_REPORT_OFF);
 
-// If database does not exist (MySQL error 1049: Unknown database), auto-connect and create it
-if (!$is_setup_script && $conn && $conn->connect_errno === 1049) {
-    $conn = mysqli_init();
-    $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
-    @$conn->real_connect($host, $user, $pass, '', $port);
-    if (!$conn->connect_error) {
-        $conn->query("CREATE DATABASE IF NOT EXISTS `" . $db . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-        $conn->select_db($db);
-    }
-}
-
-$db_connected = true;
+$db_connected = false;
 $db_error = null;
 
-if (!$conn->connect_error) {
-    @$conn->query("SET time_zone = '+08:00'");
+try {
+    // 3. Connect to MySQL server with 3-second timeout to prevent cloud health hangs
+    $conn = mysqli_init();
+    if ($conn) {
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
+        @$conn->real_connect($host, $user, $pass, $is_setup_script ? '' : $db, $port);
+    }
+
+    // If database does not exist (MySQL error 1049: Unknown database), auto-connect and create it
+    if (!$is_setup_script && $conn && $conn->connect_errno === 1049) {
+        $conn = mysqli_init();
+        $conn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
+        @$conn->real_connect($host, $user, $pass, '', $port);
+        if (!$conn->connect_error) {
+            $conn->query("CREATE DATABASE IF NOT EXISTS `" . $db . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            $conn->select_db($db);
+        }
+    }
+
+    if ($conn && !$conn->connect_error) {
+        $db_connected = true;
+        @$conn->query("SET time_zone = '+08:00'");
+    } else {
+        $db_connected = false;
+        $db_error = $conn ? $conn->connect_error : 'Failed to initialize mysqli';
+    }
+} catch (Throwable $e) {
+    $db_connected = false;
+    $db_error = $e->getMessage();
 }
 
-if ($conn->connect_error) {
-    $db_connected = false;
-    $db_error = $conn->connect_error;
+if (!$db_connected) {
 
     if (!$is_setup_script) {
         if (!empty($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) {
