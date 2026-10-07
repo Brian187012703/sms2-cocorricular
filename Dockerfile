@@ -43,9 +43,6 @@ RUN mkdir -p /var/www/html/storage/framework/sessions \
     && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache /var/www/html/app/uploads \
     && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache /var/www/html/app/uploads
 
-EXPOSE 80
+EXPOSE 80 8080
 
-HEALTHCHECK --interval=20s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f -s http://127.0.0.1:80/health.php || curl -f -s http://127.0.0.1:80/ || exit 0
-
-CMD ["apache2-foreground"]
+CMD ["/bin/bash", "-c", "PORT=${PORT:-80}; if [ \"$PORT\" != \"80\" ]; then echo \"Listen $PORT\" >> /etc/apache2/ports.conf; sed -i \"s/<VirtualHost \\*:80>/<VirtualHost \\*:80 \\*:$PORT>/g\" /etc/apache2/sites-available/000-default.conf; fi; exec apache2-foreground"]
