@@ -64,17 +64,36 @@ if (!empty($dbUrl)) {
 }
 
 // 3. Normalize database environment variables / aliases & clean placeholders
+if (preg_match('/^<.*>$/', (string)getenv('DB_PASSWORD'))) {
+    putenv('DB_PASSWORD=' . (getenv('DB_PASS') ?: ''));
+    $_ENV['DB_PASSWORD'] = getenv('DB_PASSWORD');
+}
+
 if (!getenv('DB_USER') && getenv('DB_USERNAME')) {
     putenv('DB_USER=' . getenv('DB_USERNAME'));
     $_ENV['DB_USER'] = getenv('DB_USERNAME');
 }
+if (getenv('DB_USER') && (!getenv('DB_USERNAME') || getenv('DB_USERNAME') !== getenv('DB_USER'))) {
+    putenv('DB_USERNAME=' . getenv('DB_USER'));
+    $_ENV['DB_USERNAME'] = getenv('DB_USER');
+}
+
 if (getenv('DB_PASS') === false && getenv('DB_PASSWORD') !== false) {
     putenv('DB_PASS=' . getenv('DB_PASSWORD'));
     $_ENV['DB_PASS'] = getenv('DB_PASSWORD');
 }
+if (getenv('DB_PASS') && (!getenv('DB_PASSWORD') || preg_match('/^<.*>$/', (string)getenv('DB_PASSWORD')))) {
+    putenv('DB_PASSWORD=' . getenv('DB_PASS'));
+    $_ENV['DB_PASSWORD'] = getenv('DB_PASS');
+}
+
 if (!getenv('DB_NAME') && getenv('DB_DATABASE')) {
     putenv('DB_NAME=' . getenv('DB_DATABASE'));
     $_ENV['DB_NAME'] = getenv('DB_DATABASE');
+}
+if (getenv('DB_NAME') && (!getenv('DB_DATABASE') || getenv('DB_DATABASE') !== getenv('DB_NAME'))) {
+    putenv('DB_DATABASE=' . getenv('DB_NAME'));
+    $_ENV['DB_DATABASE'] = getenv('DB_NAME');
 }
 
 $host = getenv('DB_HOST') ?: 'localhost';
