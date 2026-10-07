@@ -30,7 +30,40 @@ if (file_exists($envFile)) {
     }
 }
 
-// 2. Normalize database environment variables / aliases
+// 2. Parse DATABASE_URL if provided (HostForge, Railway, Heroku standard)
+$dbUrl = getenv('DATABASE_URL') ?: ($_ENV['DATABASE_URL'] ?? ($_SERVER['DATABASE_URL'] ?? ''));
+if (!empty($dbUrl)) {
+    $parsedUrl = parse_url($dbUrl);
+    if (!empty($parsedUrl['host'])) {
+        putenv('DB_HOST=' . $parsedUrl['host']);
+        $_ENV['DB_HOST'] = $parsedUrl['host'];
+    }
+    if (!empty($parsedUrl['user'])) {
+        putenv('DB_USER=' . $parsedUrl['user']);
+        $_ENV['DB_USER'] = $parsedUrl['user'];
+        putenv('DB_USERNAME=' . $parsedUrl['user']);
+        $_ENV['DB_USERNAME'] = $parsedUrl['user'];
+    }
+    if (isset($parsedUrl['pass'])) {
+        putenv('DB_PASS=' . $parsedUrl['pass']);
+        $_ENV['DB_PASS'] = $parsedUrl['pass'];
+        putenv('DB_PASSWORD=' . $parsedUrl['pass']);
+        $_ENV['DB_PASSWORD'] = $parsedUrl['pass'];
+    }
+    if (!empty($parsedUrl['path'])) {
+        $dbFromUrl = ltrim($parsedUrl['path'], '/');
+        putenv('DB_NAME=' . $dbFromUrl);
+        $_ENV['DB_NAME'] = $dbFromUrl;
+        putenv('DB_DATABASE=' . $dbFromUrl);
+        $_ENV['DB_DATABASE'] = $dbFromUrl;
+    }
+    if (!empty($parsedUrl['port'])) {
+        putenv('DB_PORT=' . $parsedUrl['port']);
+        $_ENV['DB_PORT'] = (int)$parsedUrl['port'];
+    }
+}
+
+// 3. Normalize database environment variables / aliases & clean placeholders
 if (!getenv('DB_USER') && getenv('DB_USERNAME')) {
     putenv('DB_USER=' . getenv('DB_USERNAME'));
     $_ENV['DB_USER'] = getenv('DB_USERNAME');
@@ -46,9 +79,14 @@ if (!getenv('DB_NAME') && getenv('DB_DATABASE')) {
 
 $host = getenv('DB_HOST') ?: 'localhost';
 $user = getenv('DB_USER') ?: 'root';
-$pass = getenv('DB_PASS') ?: '';
+$pass = getenv('DB_PASS') !== false ? getenv('DB_PASS') : '';
 $db   = getenv('DB_NAME') ?: 'sms_db';
 $port = (int)(getenv('DB_PORT') ?: 3306);
+
+// If pass is an unreplaced template placeholder like <ang_password...>, clear it
+if (preg_match('/^<.*>$/', $pass)) {
+    $pass = '';
+}
 
 // Define DB constants for backward compatibility across modules
 if (!defined('DB_HOST')) define('DB_HOST', $host);
